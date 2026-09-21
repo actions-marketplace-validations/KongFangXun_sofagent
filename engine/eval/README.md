@@ -1,11 +1,11 @@
 # @sofagent/eval
 
-sofagent 质量评估引擎——量化指标、评分逻辑、evals 接口。v1.2.0 从 audit 包迁出。
+sofagent 质量评估模块——量化指标、评分逻辑、evals 接口。v1.2.0 从 audit 包迁出。
 
 ## CLI
 
 ```bash
-# 运行 golden set 评估（使用 audit 引擎作为 runner）
+# 运行 golden set 评估（使用 audit 模块作为 runner）
 sofagent-eval run [options]
 
 # 选项

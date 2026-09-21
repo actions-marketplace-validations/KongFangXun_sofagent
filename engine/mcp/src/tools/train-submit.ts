@@ -1,5 +1,5 @@
 // ============================================================
-// train-submit.ts · MCP tool：train_submit（v1.4.3 块二）
+// train-submit.ts · MCP tool：train_submit（v1.5.0 块二）
 // ============================================================
 //
 // 训练任务提交——dataPath + baseModel + algorithm（sft/dpo/grpo）+
@@ -86,7 +86,7 @@ export async function trainSubmit(args: TrainSubmitArgs): Promise<TrainSubmitToo
   }
 
   try {
-    const orch = await import('@sofagent/orchestrator');
+    const orch = await import('@sofagent/train');
     const dataDir = getDataDir();
 
     // 委托编排层：createTrainJob（协议校验 + enterpriseId 必填 + 幂等）

@@ -13,11 +13,18 @@ import {
   appendHistory,
   loadHistory,
   clearHistory,
-  checkHistoryChainIntegrity,
   checkHistoryChainDetailed,
   getHistoryFilePath,
   type AuditHistoryEntry,
 } from './audit-history';
+
+// vitest 5：vi.mock 必须在文件顶层声明（hoist 语义显式化，嵌套声明编译期报错）。
+// 默认透传真实 fs；仅 chmodSync 包为 vi.fn，供个别测试切换「chmod 不可用」行为
+//（见 chmod false alarm 用例），其余测试走真实 fs 不受影响。
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>();
+  return { ...actual, chmodSync: vi.fn(actual.chmodSync) };
+});
 
 function tmpDir(): string {
   const dir = join(tmpdir(), `sofagent-history-test-${Date.now()}-${randomBytes(4).toString('hex')}`);
@@ -124,6 +131,89 @@ describe('audit-history', () => {
     expect(content).not.toContain('REDACTED');
   });
 
+  // S2 写入字段脱敏策略强制声明（v1.4.5）：嵌套对象（actionGovernance.context）
+  // 是 baseSanitized 显式面之外的盲区——顶层 commitMsg 打码、同一内容从
+  // context 通道明文落盘曾是实洞。深扫兜底层必须把它拦下。
+  it('appendHistory 对 actionGovernance.context 嵌套自由文本深扫脱敏（S2 兜底）', () => {
+    const leakKey = ['sk-', 'b'.repeat(40)].join('');
+    const entry = makeEntry('2026-01-01T00:00:00.000Z', 0);
+    entry.actionGovernance = {
+      actor: 'test-agent',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      targetEntity: 'src/config.ts',
+      // context 与顶层 commitMsg 同源（args.task || commitMsg）——历史盲区通道
+      context: `部署配置更新，密钥 ${leakKey} 已轮换`,
+      decisionProvenance: {
+        who: 'test-agent',
+        when: '2026-01-01T00:00:00.000Z',
+        whichDataVersion: '',
+        whichApp: 'sofagent-audit',
+      },
+    };
+    appendHistory(entry, testDir);
+
+    const content = readFileSync(getHistoryFilePath(testDir), 'utf-8');
+    // 嵌套通道密钥原文不得落盘（S2 核心断言）
+    expect(content).not.toContain(leakKey);
+    // 走了 REDACTION_PATTERNS 管道（占位符在嵌套字段内）
+    expect(content).toContain('sk-***REDACTED***');
+    // 非密钥文本保留（不误伤嵌套自由文本）
+    expect(content).toContain('部署配置更新');
+  });
+
+  it('appendHistory 深扫不破坏 HMAC 验签（先脱敏再签名语义延伸到嵌套面）', () => {
+    // 深扫结果必须是签名输入——读侧 recordForSig 复算需一致。
+    // 用 checkHistoryChainDetailed 走一遍：写入两条（一条带嵌套密钥），
+    // 链完整性校验必须通过（写读两侧同一深扫管道 → 验签恒一致）。
+    const leakKey = ['sk-', 'c'.repeat(40)].join('');
+    const e1 = makeEntry('2026-01-01T00:00:00.000Z', 0);
+    e1.actionGovernance = {
+      actor: 'test-agent',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      targetEntity: 'src/a.ts',
+      context: `key ${leakKey}`,
+      decisionProvenance: { who: 'test-agent', when: '2026-01-01T00:00:00.000Z', whichDataVersion: '', whichApp: 'sofagent-audit' },
+    };
+    appendHistory(e1, testDir);
+    appendHistory(makeEntry('2026-01-02T00:00:00.000Z', 0), testDir);
+
+    // 写读两侧脱敏一致 → 链校验通过（不因深扫差异误判篡改）
+    // 契约：checkHistoryChainDetailed 返回 status === 'ok'（三态语义）
+    expect(checkHistoryChainDetailed(testDir).status).toBe('ok');
+  });
+
+  it('appendHistory 深扫脱敏未知嵌套字段（新字段未声明策略时 fail-safe 默认脱敏）', () => {
+    // S2 守卫语义：未来新增字段没在 types.ts 声明脱敏策略 → 深扫层默认
+    // 按自由文本处理（fail-safe），命中即脱敏——「声明漏了」不等于「裸奔」。
+    const leakKey = ['sk-', 'd'.repeat(40)].join('');
+    const entry = makeEntry('2026-01-01T00:00:00.000Z', 0);
+    // 模拟未来新增的未声明嵌套字段（TS 面外注入，运行时存在）
+    (entry as unknown as Record<string, unknown>).futureField = {
+      note: `新字段携带密钥 ${leakKey}`,
+    };
+    appendHistory(entry, testDir);
+
+    const content = readFileSync(getHistoryFilePath(testDir), 'utf-8');
+    expect(content).not.toContain(leakKey);
+    expect(content).toContain('sk-***REDACTED***');
+  });
+
+  it('appendHistory 深层字段名碰豁免白名单(engine)但持长secret自由串——不被误豁免仍脱敏（P1值维收窄）', () => {
+    // 回归断言：SANITIZE_EXEMPT_KEYS 曾按裸 key 名在每层整键豁免——若某嵌套对象
+    // 一个字段恰与白名单同名（engine/agentId…通用短词）却持长 secret-ish 自由串，
+    // 整棵子树被跳过深扫 → 明文被 HMAC 固化。收窄后豁免须值形可证：长串不再豁免。
+    const leakKey = ['sk-', 'e'.repeat(60)].join(''); // 长 secret token（无空白但 ≥64 → 非 code 形）
+    const entry = makeEntry('2026-01-01T00:00:00.000Z', 0);
+    (entry as unknown as Record<string, unknown>).actionGovernance = {
+      context: { engine: `密钥 ${leakKey} 由对手字段撞名注入` }, // 该串同时含 long token + 空白
+    };
+    appendHistory(entry, testDir);
+
+    const content = readFileSync(getHistoryFilePath(testDir), 'utf-8');
+    expect(content).not.toContain(leakKey);
+    expect(content).toContain('sk-***REDACTED***');
+  });
+
   it('loadHistory 返回按时间倒序的数组', () => {
     // 验证：加载历史，最新（时间戳最大）的排前面
     appendHistory(makeEntry('2026-01-01T00:00:00.000Z', 0), testDir);
@@ -198,52 +288,61 @@ describe('audit-history', () => {
     // 场景：用户从 v1.0.5 升级到 v1.0.6
     // history.jsonl 前两条是旧格式（无 hashVersion，旧算法 hash 不含指纹）
     // 第三条是新格式（hashVersion:2，新算法 hash 含环境指纹）
-    // checkHistoryChainIntegrity 应返回 true（逐条判断，不误报）
+    // checkHistoryChainDetailed 应返回 ok（逐条判断，不误报）
+    // v1.4.8 起：密钥在场 + 条目无签名 = 不可复验（黄）——本测试只验证 hashVersion
+    // 混合算法选择，与密钥态无关，指向不存在的密钥路径屏蔽机器 ~/.sofagent-key 差异。
+    const savedKeyPath = process.env.SOFAGENT_KEY_PATH;
+    try {
+      process.env.SOFAGENT_KEY_PATH = join(tmpdir(), `no-such-key-${randomBytes(4).toString('hex')}`);
 
-    mkdirSync(join(testDir, 'audit'), { recursive: true });
-    const histPath = getHistoryFilePath(testDir);
+      mkdirSync(join(testDir, 'audit'), { recursive: true });
+      const histPath = getHistoryFilePath(testDir);
 
-    // 旧格式条目 1（无 hashVersion）
-    const e1 = {
-      timestamp: '2026-07-01T00:00:00Z',
-      diffRange: 'HEAD~1..HEAD',
-      exitCode: 0,
-      ruleResults: [],
-      diffFileCount: 1,
-      prevHash: 'genesis',
-    };
+      // 旧格式条目 1（无 hashVersion）
+      const e1 = {
+        timestamp: '2026-07-01T00:00:00Z',
+        diffRange: 'HEAD~1..HEAD',
+        exitCode: 0,
+        ruleResults: [],
+        diffFileCount: 1,
+        prevHash: 'genesis',
+      };
 
-    // 旧格式条目 2（无 hashVersion，prevHash 用旧算法 = SHA-256(e1 without prevHash/hashVersion)）
-    const e1ForHash = { ...e1, prevHash: undefined, hashVersion: undefined };
-    const hash1 = createHash('sha256').update(JSON.stringify(e1ForHash)).digest('hex').slice(0, 16);
-    const e2 = {
-      timestamp: '2026-07-02T00:00:00Z',
-      diffRange: 'HEAD~2..HEAD~1',
-      exitCode: 0,
-      ruleResults: [],
-      diffFileCount: 1,
-      prevHash: hash1,
-    };
+      // 旧格式条目 2（无 hashVersion，prevHash 用旧算法 = SHA-256(e1 without prevHash/hashVersion)）
+      const e1ForHash = { ...e1, prevHash: undefined, hashVersion: undefined };
+      const hash1 = createHash('sha256').update(JSON.stringify(e1ForHash)).digest('hex').slice(0, 16);
+      const e2 = {
+        timestamp: '2026-07-02T00:00:00Z',
+        diffRange: 'HEAD~2..HEAD~1',
+        exitCode: 0,
+        ruleResults: [],
+        diffFileCount: 1,
+        prevHash: hash1,
+      };
 
-    // 写两条旧格式到文件
-    writeFileSync(histPath, JSON.stringify(e1) + '\n' + JSON.stringify(e2) + '\n');
+      // 写两条旧格式到文件
+      writeFileSync(histPath, JSON.stringify(e1) + '\n' + JSON.stringify(e2) + '\n');
 
-    // 验证纯旧格式时链完整
-    expect(checkHistoryChainIntegrity(testDir)).toBe(true);
+      // 验证纯旧格式时链完整
+      expect(checkHistoryChainDetailed(testDir).status).toBe('ok');
 
-    // 追加一条新格式（appendHistory 自动用 hashVersion:2 + 环境指纹）
-    appendHistory({
-      timestamp: '2026-07-03T00:00:00Z',
-      diffRange: 'HEAD~3..HEAD~2',
-      exitCode: 0,
-      ruleResults: [],
-      diffFileCount: 1,
-    } as AuditHistoryEntry, testDir);
+      // 追加一条新格式（appendHistory 自动用 hashVersion:2 + 环境指纹）
+      appendHistory({
+        timestamp: '2026-07-03T00:00:00Z',
+        diffRange: 'HEAD~3..HEAD~2',
+        exitCode: 0,
+        ruleResults: [],
+        diffFileCount: 1,
+      } as AuditHistoryEntry, testDir);
 
-    // 混合格式——不应误报链断裂
-    // 关键：e2→e3 这一步用 curr(e3).hashVersion === 2 决定算法（含指纹）
-    //      e1→e2 这一步用 curr(e2).hashVersion === undefined 决定算法（不含指纹）
-    expect(checkHistoryChainIntegrity(testDir)).toBe(true);
+      // 混合格式——不应误报链断裂
+      // 关键：e2→e3 这一步用 curr(e3).hashVersion === 2 决定算法（含指纹）
+      //      e1→e2 这一步用 curr(e2).hashVersion === undefined 决定算法（不含指纹）
+      expect(checkHistoryChainDetailed(testDir).status).toBe('ok');
+    } finally {
+      if (savedKeyPath === undefined) delete process.env.SOFAGENT_KEY_PATH;
+      else process.env.SOFAGENT_KEY_PATH = savedKeyPath;
+    }
   });
 
   describe('Action Governance schema (A4 研读落地)', () => {
@@ -316,7 +415,7 @@ describe('audit-history', () => {
       // P0-3: 单条不足 2 条 → insufficient（不可信）；≥2 条才能验证链
       appendHistory(makeEntry('2026-02-01T00:00:00Z', 0), testDir);
       appendHistory(makeEntry('2026-02-01T00:00:01Z', 0), testDir);
-      expect(checkHistoryChainIntegrity(testDir)).toBe(true);
+      expect(checkHistoryChainDetailed(testDir).status).toBe('ok');
       const lines = readFileSync(getHistoryFilePath(testDir), 'utf-8').trim().split('\n');
       const parsed = JSON.parse(lines[0]!);
       expect(parsed.hmacSig).toBeUndefined();
@@ -326,11 +425,145 @@ describe('audit-history', () => {
       writeFileSync(KEY_PATH, 'test-hmac-key-1234567890', { mode: 0o600 });
       appendHistory(makeEntry('2026-02-02T00:00:00Z', 0), testDir);
       appendHistory(makeEntry('2026-02-02T00:00:01Z', 0), testDir);
-      expect(checkHistoryChainIntegrity(testDir)).toBe(true);
+      expect(checkHistoryChainDetailed(testDir).status).toBe('ok');
       const lines = readFileSync(getHistoryFilePath(testDir), 'utf-8').trim().split('\n');
       const parsed = JSON.parse(lines[0]!);
       expect(typeof parsed.hmacSig).toBe('string');
       expect(parsed.hmacSig.length).toBeGreaterThan(0);
+    });
+
+    it('签名剥离攻击：密钥在场但整链被剥掉签名并重算 prevHash → unverifiable 而非 ok（v1.4.8 fresh-eyes 回归）', () => {
+      // 攻击链：同用户攻击者无需读取 ~/.sofagent-key，剥掉全部条目的 hmacSig 伪装成
+      // legacy unsigned 条目，并用无密钥 SHA-256 重算 prevHash 链 + 重写链头锚点。
+      // 修复前：无签名的密钥在场条目被静默跳过验签 → 链报干净 ok（零告警）。
+      // 修复后：密钥在场但条目无签名 → 不可复验（黄），不再静默放行。
+      writeFileSync(KEY_PATH, 'test-hmac-key-1234567890', { mode: 0o600 });
+      appendHistory(makeEntry('2026-06-10T00:00:00Z', 0), testDir);
+      appendHistory(makeEntry('2026-06-11T00:00:00Z', 0), testDir);
+      expect(checkHistoryChainDetailed(testDir).status).toBe('ok');
+
+      const histPath = getHistoryFilePath(testDir);
+      const lines = readFileSync(histPath, 'utf-8').trim().split('\n');
+      const entries = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+      for (const entry of entries) {
+        delete entry.hmacSig;
+        delete entry.hmacAlgo;
+        delete entry.hashVersion;
+        delete entry.envFingerprint;
+      }
+      // 无密钥重算 prevHash（无指纹算法 = SHA-256(去 prevHash/hashVersion 的前一条)，可离线重算）
+      for (let i = 1; i < entries.length; i++) {
+        entries[i]!.prevHash = createHash('sha256')
+          .update(JSON.stringify({ ...entries[i - 1]!, prevHash: undefined, hashVersion: undefined }))
+          .digest('hex')
+          .slice(0, 16);
+      }
+      writeFileSync(histPath, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
+
+      // 同步重写链头锚点（headHash 无密钥可重算，锚点文件在同用户可写范围）——
+      // 不重写锚点会在锚点检查就报 tampered，攻击根本走不到链校验
+      const anchorPath = join(dirname(histPath), 'history-chain-head');
+      const anchor = JSON.parse(readFileSync(anchorPath, 'utf-8')) as Record<string, unknown>;
+      anchor.headHash = createHash('sha256')
+        .update(JSON.stringify({ ...entries[entries.length - 1]!, prevHash: undefined, hashVersion: undefined }) + '|' + anchor.envFingerprint)
+        .digest('hex')
+        .slice(0, 16);
+      writeFileSync(anchorPath, JSON.stringify(anchor) + '\n');
+
+      expect(checkHistoryChainDetailed(testDir).status).toBe('unverifiable');
+    });
+
+    // ── v1.4.9 G-5：黄色 verdict 必须 localize 到具体记录 ──
+    // 旧实现：8 个 foundUnverifiable 置位点最后共用**同一段静态文案** ⇒
+    // `(undefined)` 与 `(…, 100)` 两种坏输入输出**逐字相同**，用户无法得知「是哪一条」。
+
+    /** 辅助：剥掉指定（**全量**）序号的 hmacSig，并同步重写链头锚点 */
+    function stripSigAndReanchor(dir: string, idx: number): void {
+      const histPath = getHistoryFilePath(dir);
+      const lines = readFileSync(histPath, 'utf-8').trim().split('\n');
+      const entries = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+      delete entries[idx]!.hmacSig;
+      writeFileSync(histPath, entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
+      // 不重写锚点会在锚点检查先报 tampered，根本走不到链校验（同「签名剥离攻击」用例口径）
+      const anchorPath = join(dirname(histPath), 'history-chain-head');
+      const anchor = JSON.parse(readFileSync(anchorPath, 'utf-8')) as Record<string, unknown>;
+      anchor.headHash = createHash('sha256')
+        .update(JSON.stringify({ ...entries[entries.length - 1]!, prevHash: undefined, hashVersion: undefined }) + '|' + anchor.envFingerprint)
+        .digest('hex')
+        .slice(0, 16);
+      writeFileSync(anchorPath, JSON.stringify(anchor) + '\n');
+    }
+
+    it('G-5 负向断言：两种不同坏输入 ⇒ 输出必须不同（否则「定位」是假的）', () => {
+      writeFileSync(KEY_PATH, 'test-hmac-key-1234567890', { mode: 0o600 });
+      const dirA = tmpDir();
+      const dirB = tmpDir();
+      const stamps = ['2026-08-01T00:00:00Z', '2026-08-02T00:00:00Z', '2026-08-03T00:00:00Z'];
+      for (const d of [dirA, dirB]) {
+        for (const ts of stamps) appendHistory(makeEntry(ts, 0), d);
+      }
+      stripSigAndReanchor(dirA, 0); // 坏记录 = #0（创世条目）
+      stripSigAndReanchor(dirB, 2); // 坏记录 = #2（链头）
+
+      const a = checkHistoryChainDetailed(dirA);
+      const b = checkHistoryChainDetailed(dirB);
+
+      expect(a.status).toBe('unverifiable');
+      expect(b.status).toBe('unverifiable');
+      // 🔴 旧实现：两段 detail 逐字相同 ⇒ 下面这一行在旧实现下必红（这就是「定位是假的」的判据）
+      expect(a.detail).not.toBe(b.detail);
+      // 定位信息落地：序号 + 时间戳 + prevHash 前缀 / 原因码
+      expect(a.detail).toContain('定位：#0');
+      expect(b.detail).toContain('定位：#2');
+      expect(a.detail).toContain(stamps[0]!);
+      expect(b.detail).toContain(stamps[2]!);
+      // 不退化成 (undefined)（原缺陷的外观特征）
+      expect(a.detail).not.toContain('undefined');
+      expect(b.detail).not.toContain('undefined');
+
+      rmSync(dirA, { recursive: true, force: true });
+      rmSync(dirB, { recursive: true, force: true });
+    });
+
+    it('G-5 校验窗口截断时仍报**全量**序号（窗口口径不影响定位）', () => {
+      writeFileSync(KEY_PATH, 'test-hmac-key-1234567890', { mode: 0o600 });
+      const d = tmpDir();
+      for (const ts of ['2026-09-01T00:00:00Z', '2026-09-02T00:00:00Z', '2026-09-03T00:00:00Z', '2026-09-04T00:00:00Z']) {
+        appendHistory(makeEntry(ts, 0), d);
+      }
+      stripSigAndReanchor(d, 3); // 坏记录 = 全量 #3（同时是链头）
+
+      const full = checkHistoryChainDetailed(d);
+      const win = checkHistoryChainDetailed(d, 2); // 窗口 = 最近 2 条（#2 / #3）
+
+      expect(full.status).toBe('unverifiable');
+      expect(win.status).toBe('unverifiable');
+      expect(full.detail).toContain('定位：#3');
+      // 关键：窗口内该记录是第 2 条（窗口序号 #1），但报告必须是**全量序号 #3**
+      expect(win.detail).toContain('定位：#3');
+      expect(win.detail).not.toContain('定位：#1');
+      // 截断时显式说明窗口口径（解释「为什么只报了这些」）
+      expect(win.detail).toContain('校验窗口');
+      expect(full.detail).not.toContain('校验窗口');
+
+      rmSync(d, { recursive: true, force: true });
+    });
+
+    it('G-5 原因码与条数可见（定位串自证不是空壳）', () => {
+      writeFileSync(KEY_PATH, 'test-hmac-key-1234567890', { mode: 0o600 });
+      const d = tmpDir();
+      for (const ts of ['2026-10-01T00:00:00Z', '2026-10-02T00:00:00Z']) appendHistory(makeEntry(ts, 0), d);
+      stripSigAndReanchor(d, 0); // 创世条目无签名（密钥在场）→ genesis-signature-stripped
+      const r = checkHistoryChainDetailed(d);
+      expect(r.status).toBe('unverifiable');
+      expect(r.detail).toContain('genesis-signature-stripped');
+      // 注意：剥掉 #0 的 hmacSig 会**连带**让 #1 的 prevHash 失配
+      //（prevHash 覆盖前一条记录的全部内容，含 hmacSig）⇒ 报告 2 条，且两条各有独立定位串。
+      // 这正是「定位面」的价值：旧实现只说「部分历史段无法复验」，看不出是两条、也看不出是哪两条。
+      expect(r.detail).toContain('不可复验记录 2 条');
+      expect(r.detail).toContain('定位：#0');
+      expect(r.detail).toContain('#1');
+      rmSync(d, { recursive: true, force: true });
     });
 
     it('有 HMAC 密钥：含 A2/A9 结果的 ≥2 条干净链 append + check 通过（P0-3 回归）', () => {
@@ -344,7 +577,7 @@ describe('audit-history', () => {
       appendHistory(makeEntry('2026-03-01T00:00:00Z', 2, a2a9), testDir);
       appendHistory(makeEntry('2026-03-02T00:00:00Z', 2, a2a9), testDir);
       // 写侧基于脱敏记录签名、读侧校验脱敏记录 → 必须一致（不因 A2/A9 脱敏差异误判篡改）
-      expect(checkHistoryChainIntegrity(testDir)).toBe(true);
+      expect(checkHistoryChainDetailed(testDir).status).toBe('ok');
     });
 
     it('有 HMAC 密钥：篡改条目 → HMAC 校验失败（链断裂）', () => {
@@ -352,14 +585,14 @@ describe('audit-history', () => {
       appendHistory(makeEntry('2026-02-03T00:00:00Z', 0), testDir);
       appendHistory(makeEntry('2026-02-04T00:00:00Z', 0), testDir);
       // 篡改前干净链必须通过（确保不是因 A2/A9 脱敏不一致而“假通过”）
-      expect(checkHistoryChainIntegrity(testDir)).toBe(true);
+      expect(checkHistoryChainDetailed(testDir).status).toBe('ok');
       // 篡改最后一条（exitCode 从 0 改成 2）→ HMAC 验签失败 → 链断裂
       const histPath = getHistoryFilePath(testDir);
       const lines = readFileSync(histPath, 'utf-8').trim().split('\n');
       const tampered = JSON.parse(lines[lines.length - 1]!);
       tampered.exitCode = 2;
       writeFileSync(histPath, lines.slice(0, -1).concat(JSON.stringify(tampered)).join('\n') + '\n');
-      expect(checkHistoryChainIntegrity(testDir)).toBe(false);
+      expect(checkHistoryChainDetailed(testDir).status).toBe('tampered');
     });
 
     it('P0-3(2026-08-02 复核修正): stable 条目 + hashVersion=2 + HMAC 不匹配且环境指纹一致 → tampered', () => {
@@ -559,25 +792,17 @@ describe('audit-history', () => {
       appendHistory(makeEntry('2026-09-01T00:00:00Z', 0), testDir);
       const histPath = getHistoryFilePath(testDir);
 
-      // 正常 append 后权限已被收紧为 0600——vi.mock 'fs' 替换 chmodSync 抛错，
-      // 模拟「chmod 不可用但权限已收紧」的 false alarm 场景（ESSM namespace
-      // 不可 spyOn，vi.mock + importOriginal 是官方路径）。
+      // 正常 append 后权限已被收紧为 0600——通过顶层 fs mock 工厂把 chmodSync
+      // 切换为抛错实现，模拟「chmod 不可用但权限已收紧」的 false alarm 场景
+      //（ESSM namespace 不可 spyOn，顶厂 + vi.mocked 行为切换是 vitest 5 官方路径）。
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      vi.mock('fs', async (importOriginal) => {
-        const actual = await importOriginal<typeof import('fs')>();
-        return {
-          ...actual,
-          chmodSync: () => { throw new Error('chmod EPERM (mock)'); },
-        };
+      vi.mocked(fs.chmodSync).mockImplementation(() => {
+        throw new Error('chmod EPERM (mock)');
       });
-      // vi.mock 是 hoisted 的——需重新 import 被测模块拿新图
-      vi.resetModules();
-      const { appendHistory: appendHistoryFresh } = await import('./audit-history');
       try {
-        appendHistoryFresh(makeEntry('2026-09-01T01:00:00Z', 0), testDir);
+        appendHistory(makeEntry('2026-09-01T01:00:00Z', 0), testDir);
       } finally {
-        vi.doUnmock('fs');
-        vi.resetModules();
+        vi.mocked(fs.chmodSync).mockRestore();
         warnSpy.mockRestore();
       }
 

@@ -1,8 +1,8 @@
-# sofagent cordis-plugin-sofagent-evolve bundle patch——sofagent 品牌插件，注册为 DSH profile layer
+# sofagent cordis-plugin-sofagent-evolve bundle patch v1.5.0——注册为 DSH profile layer
 - insert:
     - id: sofagent-evolve
       name: 'cordis-plugin-sofagent-evolve'
       inject: [settings, dynamicCordisRunner]
       config:
-        seam: "任务结束 hook + refine tool"
-        description: "经验沉淀——think.md 反思 + Dream Cycle + skillopt——桥接 @sofagent/think generateThinkEntry（sofagent 品牌 · #16B8F3）"
+        seam: "session/event"    # 语义：会话事件流中的 Turn 结束（turn/end）→ 经验沉淀（think.md 反思）
+        description: "给宿主加上经验沉淀——任务收尾自动写 think.md 反思条目——桥接 @sofagent/think generateThinkEntry / @sofagent/core parseDiff / @sofagent/audit runRules / @sofagent/core getDataDir"

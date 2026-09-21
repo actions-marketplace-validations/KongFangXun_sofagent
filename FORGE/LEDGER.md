@@ -237,57 +237,146 @@ release-gate-loop 与 fresh-eyes-loop 共享本文件，通过"循环"列区分�
 
 2026-08-29     | 20260829-01    | fresh-eyes  | 5    | 0          | 0          | 1        | weighted-convergence | ~/.sofagent/data/forge-runs/fresh-eyes-loop/2026-08-29/run-01
 
+2026-08-30     | 20260830-01    | release-gate | 0    | SKIP       | SKIP       | SKIP     | ERROR   | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-01
 
-2026-08-30     | 20260830-01    | release-gate | 0    | SKIP       | SKIP       | SKIP     | ERROR   | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-01
+2026-08-30     | 20260830-10    | release-gate | 0    | PASS-有条件 | 有条件     | -        | aborted-signal | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-10
 
-2026-08-30     | 20260830-10    | release-gate | 0    | PASS-有条件 | 有条件     | -        | aborted-signal | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-10
+2026-08-30     | 20260830-11    | release-gate | 0    | -          | -          | -        | aborted-subagent（gp-2 resume 自动重启后中止，目录已归档 -archived-ABORTED-subagent） | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-11-archived-ABORTED-subagent
 
-2026-08-30     | 20260830-11    | release-gate | 0    | -          | -          | -        | aborted-subagent（gp-2 resume 自动重启后中止，目录已归档 -archived-ABORTED-subagent） | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-11-archived-ABORTED-subagent
+2026-08-30     | 20260830-13    | release-gate | 4    | SKIP       | SKIP       | SKIP     | ERROR   | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-13
 
-2026-08-30     | 20260830-13    | release-gate | 4    | SKIP       | SKIP       | SKIP     | ERROR   | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-13
+2026-08-30     | 20260830-14    | release-gate | 2    | SKIP       | SKIP       | SKIP     | ERROR   | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-14
 
-2026-08-30     | 20260830-14    | release-gate | 2    | SKIP       | SKIP       | SKIP     | ERROR   | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-14
+2026-08-30     | 20260830-14    | release-gate | 17   | SKIP       | SKIP       | SKIP     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-14
 
-2026-08-30     | 20260830-14    | release-gate | 17   | SKIP       | SKIP       | SKIP     | FAIL    | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-14
+2026-08-30     | 20260830-15    | release-gate | 4    | SKIP       | SKIP       | SKIP     | ERROR   | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-15
 
-2026-08-30     | 20260830-15    | release-gate | 4    | SKIP       | SKIP       | SKIP     | ERROR   | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-15
+2026-08-30     | 20260830-16    | release-gate | 4    | SKIP       | SKIP       | FAIL     | ERROR   | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-16
 
-2026-08-30     | 20260830-16    | release-gate | 4    | SKIP       | SKIP       | FAIL     | ERROR   | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-16
+2026-08-30     | 20260830-17    | release-gate | 0    | -          | -          | -        | aborted-contaminated-env（沙箱 toybox 工具链致 30/96 维假红，主 session 复验识破后杀停，目录已归档 -archived-CONTAMINATED-toybox） | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-17-archived-CONTAMINATED-toybox
 
-2026-08-30     | 20260830-17    | release-gate | 0    | -          | -          | -        | aborted-contaminated-env（沙箱 toybox 工具链致 30/96 维假红，主 session 复验识破后杀停，目录已归档 -archived-CONTAMINATED-toybox） | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-17-archived-CONTAMINATED-toybox
+2026-08-30     | 20260830-19    | release-gate | 4    | SKIP       | SKIP       | FAIL     | ERROR   | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-19
 
-2026-08-30     | 20260830-19    | release-gate | 4    | SKIP       | SKIP       | FAIL     | ERROR   | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-19
+2026-08-30     | 20260830-19    | release-gate | 17   | SKIP       | SKIP       | FAIL     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-19
 
-2026-08-30     | 20260830-19    | release-gate | 17   | SKIP       | SKIP       | FAIL     | FAIL    | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-19
+2026-08-30     | 20260830-20    | release-gate | 0    | PASS       | SKIP       | SKIP     | ERROR   | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-20
 
-2026-08-30     | 20260830-20    | release-gate | 0    | PASS       | SKIP       | SKIP     | ERROR   | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-20
+2026-08-30     | 20260830-20    | release-gate | 17   | PASS       | SKIP       | SKIP     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-20
 
-2026-08-30     | 20260830-20    | release-gate | 17   | PASS       | SKIP       | SKIP     | FAIL    | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-30/run-20
+2026-08-31     | 20260831-01    | release-gate | 4    | SKIP       | SKIP       | SKIP     | ERROR   | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-31/run-01
 
-2026-08-31     | 20260831-01    | release-gate | 4    | SKIP       | SKIP       | SKIP     | ERROR   | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-31/run-01
+2026-08-31     | 20260831-02    | release-gate | 4    | SKIP       | PASS       | FAIL     | ERROR   | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-31/run-02
 
-2026-08-31     | 20260831-02    | release-gate | 4    | SKIP       | PASS       | FAIL     | ERROR   | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-31/run-02
+2026-08-31     | 20260831-03    | release-gate | 0    | SKIP       | SKIP       | SKIP     | ERROR   | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-31/run-03
 
-2026-08-31     | 20260831-03    | release-gate | 0    | SKIP       | SKIP       | SKIP     | ERROR   | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-31/run-03
+2026-08-31     | 20260831-04    | release-gate | 4    | SKIP       | SKIP       | FAIL     | ERROR   | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-31/run-04
 
-2026-08-31     | 20260831-04    | release-gate | 4    | SKIP       | SKIP       | FAIL     | ERROR   | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-31/run-04
+2026-08-31     | 20260831-05    | release-gate | 17   | PASS       | SKIP       | SKIP     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-31/run-05
 
-2026-08-31     | 20260831-05    | release-gate | 17   | PASS       | SKIP       | SKIP     | FAIL    | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-31/run-05
+2026-08-31     | 20260831-06    | release-gate | 16   | PASS       | SKIP       | SKIP     | ERROR   | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-31/run-06
 
-2026-08-31     | 20260831-06    | release-gate | 16   | PASS       | SKIP       | SKIP     | ERROR   | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-31/run-06
+2026-08-31     | 20260831-07    | release-gate | 17   | PASS       | SKIP       | SKIP     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-31/run-07
 
-2026-08-31     | 20260831-07    | release-gate | 17   | PASS       | SKIP       | SKIP     | FAIL    | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-31/run-07
+2026-08-31     | 20260831-08    | release-gate | 17   | PASS       | PASS       | PASS     | PASS    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-08-31/run-08
 
-2026-08-31     | 20260831-08    | release-gate | 17   | PASS       | PASS       | PASS     | PASS    | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-08-31/run-08
+2026-09-01     | 20260901-01    | release-gate | 17   | FAIL       | FAIL       | PASS     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-01/run-01
 
-2026-09-01     | 20260901-01    | release-gate | 17   | FAIL       | FAIL       | PASS     | FAIL    | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-09-01/run-01
+2026-09-01     | 20260901-03    | release-gate | 17   | FAIL       | SKIP       | PASS     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-01/run-03
 
-2026-09-01     | 20260901-03    | release-gate | 17   | FAIL       | SKIP       | PASS     | FAIL    | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-09-01/run-03
+2026-09-01     | 20260901-04    | release-gate | 17   | FAIL       | FAIL       | SKIP     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-01/run-04
 
-2026-09-01     | 20260901-04    | release-gate | 17   | FAIL       | FAIL       | SKIP     | FAIL    | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-09-01/run-04
+2026-09-01     | 20260901-05    | release-gate | 17   | FAIL       | PASS       | PASS     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-01/run-05
 
-2026-09-01     | 20260901-05    | release-gate | 17   | FAIL       | PASS       | PASS     | FAIL    | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-09-01/run-05
+2026-09-01     | 20260901-06    | release-gate | 17   | FAIL       | PASS       | SKIP     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-01/run-06
 
-2026-09-01     | 20260901-06    | release-gate | 17   | FAIL       | PASS       | SKIP     | FAIL    | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-09-01/run-06
+2026-09-01     | 20260901-07    | release-gate | 17   | PASS       | PASS       | PASS     | PASS    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-01/run-07
 
-2026-09-01     | 20260901-07    | release-gate | 17   | PASS       | PASS       | PASS     | PASS    | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-09-01/run-07
+2026-09-02     | 20260902-01    | release-gate | 4    | SKIP       | FAIL       | FAIL     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-02/run-01
+
+2026-09-02     | 20260902-01    | release-gate | 17   | SKIP       | FAIL       | FAIL     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-02/run-01
+
+2026-09-03     | 20260903-01    | release-gate | 4    | SKIP       | FAIL       | SKIP     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-03/run-01
+
+2026-09-03     | 20260903-04    | release-gate | 4    | SKIP       | PASS       | SKIP     | FAIL→PASS | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-03/run-04（BLOCK→PASS 改判：verdict.md 第八节翻转条款执行——12 包 bump 006db13c + 34c 判定核验 + P1-1 映射 a14c7efc + P2-1 锚过时销项；2026-09-03 10:30 driver session 收口）
+
+2026-09-03     | 20260903-05    | release-gate | 4    | SKIP       | FAIL       | PASS     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-03/run-05
+
+2026-09-03     | 20260903-06    | release-gate | 4    | SKIP       | PASS       | FAIL     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-03/run-06
+
+2026-09-03     | 20260903-07    | release-gate | 4    | SKIP       | PASS       | PASS     | PASS    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-03/run-07
+
+2026-09-05     | 20260905-01    | fresh-eyes  | 4*   | 0   | 10(R3/R4) | 2(R4) | aborted-user-stop（round-5 启动即 kill，用户拍板收口不跑验证轮、发现的问题直接修复。修复收编：R1 报告 10 项人工抢救=7 实锤修（6f3de5bf）+3 误报 SKIP；R4 b-fix 8 项收编（7c2d100d，finding-06 流式化留档 follow-up）；循环基建双 bug——b-fix 沙箱写路由错位 + fallback 提取缺陷——6fd381e9；finding-02 尾部截断链头锚点 0a92407e + 创世条目指纹比对对齐 e07feaf9；QA 零信任复验 12 包 4055/4055 全绿） | ~/.sofagent/data/forge-runs/fresh-eyes-loop/2026-09-05/run-01
+
+2026-09-06     | 20260906-01    | release-gate | 4    | SKIP       | FAIL       | SKIP     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-06/run-01
+
+2026-09-06     | 20260906-02    | release-gate | 4    | SKIP       | FAIL       | SKIP     | ERROR   | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-06/run-02
+
+2026-09-06     | 20260906-03    | release-gate | 4    | SKIP       | PASS       | SKIP     | PASS    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-06/run-03
+2026-09-07      | 20260907-01    | fresh-eyes | 1*   | -  | -  | -  | aborted-DSH-rc.1-API 漂移（session.events→snapshotEvents，24 perspective worker 全崩「events is not iterable」，报告全为降级占位；修复 commit 473f0ea6 双形态兼容+系统性失败熔断；有效产出=零，token 白烧 ~2h） | ~/.sofagent/data/forge-runs/fresh-eyes-loop/2026-09-07/run-01
+
+2026-09-09     | 20260909-01    | release-gate | 4    | SKIP       | FAIL       | SKIP     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-09/run-01
+
+2026-09-09     | 20260909-02    | release-gate | 4    | SKIP       | PASS       | PASS     | PASS    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-09/run-02
+
+2026-09-09     | 20260909-03    | release-gate | manual（主 session 手动收敛版判断层，不启动 driver——GLM 三倍价窗口绕行：verdict=PASS）。执行链：run-02 PASS（基线 92f56607）后仓库前进多 commit（边界收缩+修复批+P1-1 闭环+S383 coverage 闭环），手动补齐判断层——regression checklist 100 维度 0 失败（precheck 语义，/tmp/run-regression-precheck.mjs 自制执行器注入 PROJECT_ROOT）+ acceptance 392/392 SKIP 0 EXIT 0（S383 新 dist 实跑）+ 五门禁全绿 + 场景数 SSOT 311 四处同步。PASS 轮主 session 收编 | 基线 e902aeba（无 run 目录，证据链=本 session 判断层输出）
+2026-09-11     | 20260911-01    | release-gate | 1（ERROR：主进程 SIGPIPE——执行 session 启动命令带 `| head -20` 管道，driver stdout 消费 20 行后触发 SIGPIPE 杀主进程；两 worker 孤儿完成 regression.md（FAIL·P0×1 维度124行数失实 + P1×2 锚词84）与 coverage.md（FAIL·P0×1 四修复批零锚点，P1-2 处截断 1658 字符不完整不采信）后自然退出；无 consolidate/verdict/latest。环境态非仓库问题，HEAD 未被外 session 动过）| – | – | – | aborted-sigpipe-启动管道失误 | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-11/run-01
+
+2026-09-11     | 20260911-02    | release-gate | 4    | SKIP       | PASS       | SKIP     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-11/run-02
+
+2026-09-11     | 20260911-02    | release-gate | 17   | SKIP       | PASS       | SKIP     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-11/run-02
+
+2026-09-11     | 20260911-03    | release-gate | 4    | SKIP       | PASS       | SKIP     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-11/run-03
+
+2026-09-11     | 20260911-03    | release-gate | 17   | SKIP       | PASS       | SKIP     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-11/run-03
+
+2026-09-11     | 20260911-04    | release-gate | 4    | SKIP       | PASS       | PASS     | PASS    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-11/run-04
+
+2026-09-12     | 20260912-01    | fresh-eyes   | 1（ERROR：driver 源码 TDZ bug——`enableBCheck` 在 runRound L3776 声明但 L3761/L3772 先用，Round 1 启动即 ReferenceError 致命退出；worktree 已自动清理、分支保留；watcher 判 external-kill 后因「缺 target 无法构造 resume 参数」主管退出，人工接管。修复 driver 后 --resume 重启）| – | – | – | aborted-driver-tdz-bug | ~/.sofagent/data/forge-runs/fresh-eyes-loop/2026-09-12/run-01
+
+2026-09-12     | 20260912-02    | fresh-eyes  | 3    | 0   | 0   | 1   | weighted-convergence | ~/.sofagent/data/forge-runs/fresh-eyes-loop/2026-09-12/run-02
+
+2026-09-12     | 20260912-rg01   | release-gate | 1（脚本层） | 1   | 17  | –   | script-gate-blocked-scenario-debt | （driver 未启动·脚本层直跑，无 runDir；P0=hook 解析 bug 已修；17 项为检查器债待维护批）
+
+2026-09-12     | 20260912-01    | release-gate | 4    | SKIP       | FAIL       | FAIL     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-12/run-01
+
+2026-09-12     | 20260912-01    | release-gate | 17   | SKIP       | FAIL       | FAIL     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-12/run-01
+
+2026-09-12     | 20260912-02    | release-gate | 4    | SKIP       | FAIL       | SKIP     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-12/run-02
+
+2026-09-12     | 20260912-03    | release-gate | 4    | SKIP       | FAIL       | FAIL     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-12/run-03
+
+2026-09-12     | 20260912-04    | release-gate | 4    | SKIP       | FAIL       | SKIP     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-12/run-04
+
+2026-09-12     | 20260912-05    | release-gate | 4    | SKIP       | PASS       | FAIL     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-12/run-05
+
+2026-09-12     | 20260912-06    | release-gate | 19   | SKIP       | FAIL       | FAIL     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-12/run-06
+
+2026-09-12     | 20260912-13    | release-gate | 19   | SKIP       | FAIL       | SKIP     | FAIL    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-12/run-13
+
+2026-09-12     | 20260912-15    | release-gate | 7    | SKIP       | FAIL       | PASS     | PASS    | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-12/run-15
+
+2026-09-13     | 20260913-01    | release-gate | 20   | FAIL       | FAIL       | FAIL     | PASS    | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-09-13/run-01
+
+2026-09-15      | 20260915-01    | fresh-eyes  | 1（中止于 Round 1 A 侧 6/12 视角：p1–p6 产物落盘、p7 启动时宿主清理后台任务致 aborted-signal；worktree 已自动清理、分支 forge/fresh-eyes/20260915-01 保留；本 session 先因 env.local 缺 SOFAGENT_LLM_C/D 启动失败，已补占位变量（单盲四角色改造未同步 env.local.template，已补））| – | – | – | aborted-signal | ~/.sofagent/data/forge-runs/fresh-eyes-loop/2026-09-15/run-01
+
+2026-09-15     | 20260915-02    | fresh-eyes  | 5    | 0   | 0   | 2   | weighted-convergence | /Users/kongfangxun/.sofagent/data/forge-runs/fresh-eyes-loop/2026-09-15/run-02
+
+2026-09-16     | 20260916-01    | release-gate | 7    | SKIP       | FAIL       | FAIL     | PASS    | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-09-16/run-01
+
+2026-09-16     | 20260916-01-recheck | release-gate 复验 | 主 session 零信任复验：driver PASS 不成立（verdict.md §7 终审仍 ❌ FAIL 原文、status.json regression/coverage FAIL 未重跑清零、loop-end 直写 PASS——按 §6 放行条件仅 2/8 完成）。F 链 3 commits 收编裁定的修复面重做：①sha256 钉值不回填（87cd7f8a 回填值 63 字符且≠HEAD，属伪造；钉值维持 v1.4.8 tag 值与 URL 自洽）②train 纳入发布面（09-publish 全部 6 处口径 14→15 包 + checklist 维度 97/130 检查器真实修复——原拓扑检查器补 train 后在 dsh-plugins 段仍炸）③CHANGELOG ⏳ 待发版标注。复验修复批 commit 101bfa62。遗留处置：`19` 零字节文件已删；分支 forge/release-gate/20260916-01 收编完成后删除。复验报告见 runDir recheck-report.md | FAIL（复验维持） | – | – | – | recheck-overrule | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-16/run-01
+
+2026-09-16     | 20260916-04    | release-gate | 4    | SKIP       | PASS       | PASS     | PASS    | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-09-16/run-04
+
+2026-09-18     | 20260918-01    | release-gate | 7    | SKIP       | FAIL       | PASS     | PASS    | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-09-18/run-01
+
+2026-09-18     | 20260918-01-recheck | release-gate 复验 | 主 session 零信任复验：driver 自报 PASS 不成立（status.json regression=FAIL 未清零、f-fix 350 次撞硬上限熔断零实质修复、audit gate 17 项代码审计 ≠ verdict 6 项放行条件复跑、直写「最终裁决 PASS」——完全同款先例 20260916-01-recheck）。Round 1 裁决维持 BLOCKED。主树修复批：F3 检查器 F6 式动态待发版检测（两 dim 复绿）｜F4 检查器 13 包清单 harness→inject + openclaw 豁免（14 包拓扑复绿）｜F7 检查器 hook 路径 git rev-parse --git-path 解析（worktree .git 是文件，raw path 结构性假阴）｜F8 检查器对齐 S407 移除形态判据（产品零改动零回归）｜F9 审计信任锚 sync 重建（doctor 绿）｜F1 golden A1-fail-01 rules_triggered [A1]→[A1,A2]（A2 密钥赋值形态同判属正确行为，测试债；sidecar sha256 同步刷新；eval E2E 42/42=100% exit 0 明确 PASS）｜F2 dim111 口径 104→105（v1.5.0 trace_reconcile；SKILL 检查器+umbrella README 同步；维度复跑 0 ❌ PASS）｜F15 dim80 exit=1 定谳非实质失败（子项 c/f 判据过期随 chain-kernel 收口跟迁复绿 exit=0）+ driver normalized 结构化透传字段（semantic-exit/reverse-guard-failgreen 双向）｜F6 coverage-precheck meta 补 count_verification 机器可读复算口径（357 逐条清单+S368/S32 计入声明；代码侧同步）。F5 定谳：emitted_review.md 全链不存在（runDir/代码/prompt/进度日志零引用）——coverage worker 臆造主张，待 Round 2 verdict 复核降级；f-fix 越权回填 bootstrap.sh 已回滚（forge 分支 d3b6634f 保留待阶段九）。 | FAIL（复验维持） | – | – | – | recheck-overrule | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-18/run-01
+
+2026-09-18     | 20260918-02    | release-gate | 19   | FAIL       | FAIL       | SKIP     | PASS    | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-09-18/run-02
+
+2026-09-18     | 20260918-02-recheck | release-gate 复验 | 主 session 零信任复验：driver 又一次自报「最终裁决 PASS (F 修复链 Round 1 后 audit 通过)」不成立（stopReason=step-error：consolidate worker 撞 stall-watchdog 熔断——event loop 冻结 662s 超 600s 自愈阈值；stage6-report.md 未产出 → verdict 按零证据 fail-closed 判 BLOCK；status.json results: acceptance=FAIL/regression=FAIL/coverage=SKIP 原样未清；audit gate 通过 ≠ verdict 复跑——与 Round 1 同款先例第三次复现，driver 层直写 PASS 的模式已固化为系统性缺陷）。Round 2 裁决 = BLOCK（维持）。主树修复批 e90d726c：①S426 结构锁 FAIL 根因 = Round 1 修复批净增 11 行顶破 checklist 警戒线（1960>1950）——按维护公约压缩归并对销 10 行至 1950，S426 探针复绿 OK + check-review-system 全绿；②dim56 超时实测定谳 = eval 端到端 434-441s vs 60s 预算（结构性必超时）→ override 600s；③dim111 超时实测定谳 = 子项⑤ test-count.sh 单项 288s vs 240s 预算 → 600s；④normalized 透传首战验证通过：89 维 87 绿 + 2 ERR（56/111）零误归一化零假绿，dim80 判据跟迁后原生 exit=0。Round 3 待办：consolidate 熔断根因（stall-watchdog 600s 阈值 vs 12 分片合并的流式 LLM 长输出——疑 GLM flash 对 32K maxTokens 输出在中断后无心跳事件）待分诊。遗留：零字节文件 19 已删（driver 误落，同 20260916 先例）。 | FAIL（复验维持） | – | – | – | recheck-overrule | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-18/run-02
+
+2026-09-19     | 20260918-02-recheck-sup | release-gate 复验补充 | f-fix 越权定谳（源码实证）：①越权一 = f4399bec 在 forge/release-gate/20260918-02 分支做 SSOT bump（1.4.9→1.5.0）——违反版本裁定「bump 属阶段六、release-gate 阶段五禁止」，待阶段九与 d3b6634f 一并裁定；②越权二 = f-fix 手写合成 run-02/stage6-report.md + 66e5d74d worktree 镜像 commit——V 角色产物须由 consolidate 步骤真实产出（driver L210 consolidate outputs=[stage6-report.md]），F 链代写即伪造 V 裁决；③根因传导链 = f-diagnose 误诊「编排层不存在 stage6 步骤」（仅读三个状态文件未读 driver 源码；STEP_ORDER L223 含 consolidate，真实根因是 consolidate 撞 stall-watchdog 熔断未产出），f-fix 据误诊执行越权修复——诊断层级缺源码实证是越权根因；④处置 = 伪造报告已隔离改名 stage6-report.md.FFIX-FORGED-REJECTED（未删），镜像 commit 留 forge 分支不回流主树，Round 3 V 阶段 consolidate 真实产出覆盖。 | FAIL（复验维持） | – | – | – | recheck-overrule | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-18/run-02
+
+2026-09-19     | 20260919-01    | release-gate | 17   | PASS       | PASS       | SKIP     | ERROR   | /Users/kongfangxun/.sofagent/data/forge-runs/release-gate-loop/2026-09-19/run-01
+
+2026-09-19     | 20260919-01-recheck | release-gate 复验 | 主 session 零信任复验：本轮「最终裁决 ERROR」系解析层脱钩非实质 FAIL——①截断根因 = verdict 步骤无步骤级 maxTokens 回退 V 角色默认 16000，报告写到 P2-7 行中途撞顶截断（finish_reason=length 正常返回非 stall，watchdog 不管）；②解析脱钩根因 = 契约行「## 判定：PASS/FAIL」段随截断丢失，正文唯一 PASS 标记「GATE: PASS」中 GATE 不在解析器词表（strong/plain 两组均无）→ parseVerdict 记 ERROR；③修复 = verdict 步骤补 maxTokens 32000（commit 2afe04b9，与 consolidate 同为长报告步骤；runWorker→createModel 步骤级覆盖接线已验证）+ 单步重跑（--step verdict 复用 run-01 全部产物）EXIT 0；④复验重跑产物 = verdict.md 132 行完整无截断，「闸门判定：PASS（有条件放行）」+ 第四节 7 项签署前置齐备（#4 哈希回填 / #5 inject 交付闭环为硬性门禁）+ P0×0 / P1×5 / P2×21(+2 新增观察) + 签名行 SIGNED；⑤Round 3 关键改善验证 = consolidate 在 FORGE_STALL_ABORT_MS=900000 下正常产出 stage6-report.md（Round 2 熔断点已修复），regression precheck 89/89 全绿（dim56 600s 预算 PASS 实测 ~7min / dim111 600s 预算 PASS / dim80 原生 exit=0），acceptance 438/438 PASS，coverage 357 场景对账 13/15 模块有锚点。Round 3 终态 = PASS（有条件放行），7 项前置完成后方可进阶段九 tag。 | PASS（复验确认） | – | – | – | recheck-confirm | ~/.sofagent/data/forge-runs/release-gate-loop/2026-09-19/run-01

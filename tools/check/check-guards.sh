@@ -1,18 +1,20 @@
 #!/bin/bash
 # check-guards.sh — 守卫的守卫（meta-guard）
 # ============================================================
-# 职责：门禁脚本自身会烂。本脚本静态扫四类「检查器腐烂模式」，
+# 职责：门禁脚本自身会烂。本脚本静态扫五类「检查器腐烂模式」，
 # 并提供 --inject 注入实测（每门禁注入坏样本验证必红、清掉必绿——
 # 红不了的门禁是装饰品）。
 #
-# 四类静态模式（每类都有真实实案）：
+# 五类静态模式（每类都有真实实案）：
 #   ① sed/grep 用 \s \b（BSD sed 不认 \s、BSD grep BRE 无 \b）——跨平台炸弹
 #   ② $VAR 后紧跟全角标点（bash 把多字节首字节拼进变量名）——调度 check-cjk-var.sh
 #   ③ || echo 0 静默兜底（检查器故障伪装成零违规=假绿）——run-10 教训家族
 #   ④ 扫描范围对账（守卫声称扫了 N 文件 vs find 实际 M 文件）——失明防御
+#   ⑤ echo|grep -q SIGPIPE 毒方（`echo "$VAR" | grep -q PAT` 在 pipefail 下，
+#      变量大输出 + grep -q 提前退出 → 假红）——详见下方第⑤段
 #
 # 用法：
-#   bash tools/check/check-guards.sh           # 静态四扫（默认，只读，无副作用）
+#   bash tools/check/check-guards.sh           # 静态五扫（默认，只读，无副作用）
 #   bash tools/check/check-guards.sh --inject  # 静态扫 + 注入实测（会短暂改仓内文件，
 #                                              #   故前置 git 工作树干净检查；并行
 #                                              #   session 工作期间勿跑）
@@ -49,13 +51,13 @@ WARNINGS=0
 SELF="tools/check/check-guards.sh"
 
 # ── 扫描范围（守卫的守卫必须覆盖全部检查器脚本，不能只扫 tools/）──
-# 实案：FORGE/playbook/acceptance-test.sh 存在 9 处 `grep -c ... || echo 0` 双零陷阱，
+# 实案：playbook/acceptance-test.sh 存在 9 处 `grep -c ... || echo 0` 双零陷阱，
 # 本脚本原先只 `find tools -name "*.sh"`，导致该漏检长期存在。范围在此集中定义，
 # 目录重组后只改这一处，避免 ①② 两处 find 各自漂移。
 # 可用环境变量覆盖：GUARD_SCAN_PATHS / GUARD_SCAN_FILES。
 # 注：④ 段刻意不复用本函数——它对账的是 check-cjk-var.sh 自身的扫描范围，
 # 期望值必须与对方实际范围一致，否则永久假红。
-GUARD_SCAN_PATHS="${GUARD_SCAN_PATHS:-tools FORGE/playbook engine/scripts}"
+GUARD_SCAN_PATHS="${GUARD_SCAN_PATHS:-tools playbook engine/scripts}"
 GUARD_SCAN_FILES="${GUARD_SCAN_FILES:-install.sh bootstrap.sh}"
 # shellcheck disable=SC2206
 GUARD_SCAN_PATHS_ARR=(${GUARD_SCAN_PATHS})
@@ -158,17 +160,53 @@ GLOB_ACCOUNT_FAIL=0
 # 期望值 = find 总数 - 1：check-cjk-var 自排除自身（SELF 豁免），属正常扣减而非失明
 # 注意：此处刻意保持 tools/ 原范围，不复用 guard_scan_files——本段对账的是
 # check-cjk-var.sh 自己报告的扫描数，期望值必须等于对方的实际范围，否则永久假红。
-# 若将来把 check-cjk-var.sh 的扫描面也扩到 FORGE/playbook、engine/scripts，此处同步扩。
+# 若将来把 check-cjk-var.sh 的扫描面也扩到 playbook、engine/scripts，此处同步扩。
 _cjk_expect=$(find tools -name "*.sh" -type f | grep -v "check-cjk-var.sh" | wc -l | tr -d ' ')
-# check-cjk-var 的输出两种格式：成功「N 个 shell 脚本无违规」/ 失败「N 个文件扫描」
-_cjk_report=$(bash tools/check/check-cjk-var.sh 2>/dev/null | grep -oE '[0-9]+ 个 (shell 脚本|文件)' | grep -oE '^[0-9]+' | head -1 || true)
-_cjk_report=${_cjk_report:-0}
-if [ "$_cjk_report" -ne "$_cjk_expect" ]; then
-  echo "  ✗ check-cjk-var 报告扫描 ${_cjk_report} 文件 ≠ find 实际 ${_cjk_expect}（已扣 SELF 豁免）——守卫失明（glob 未跟随目录重组）"
+# 提取口径：check-cjk-var 的扫描数一律是「N 个文件扫描」这一个 token（其三条退出路径
+# 同一措辞）。**提取为空与数字不等必须分成两条判定**——合并成一条会给出错误归因：
+#   曾因对方两套措辞并存，违规分支提取落空 → 回落 0 → 报「守卫失明（glob 未跟随目录重组）」，
+#   而真因是「有违规」。判据：提取为空 = 对方输出契约变了/没跑起来，与 glob 范围无关。
+_cjk_raw=$(bash tools/check/check-cjk-var.sh 2>/dev/null | grep -oE '[0-9]+ 个文件扫描' | grep -oE '^[0-9]+' | head -1 || true)
+if [ -z "$_cjk_raw" ]; then
+  echo "  ✗ check-cjk-var 未输出扫描数（「N 个文件扫描」token 缺失）——输出契约变更或脚本未运行，本项无法判绿"
+  VIOL=$((VIOL + 1))
+  GLOB_ACCOUNT_FAIL=1
+elif [ "$_cjk_raw" -ne "$_cjk_expect" ]; then
+  echo "  ✗ check-cjk-var 报告扫描 ${_cjk_raw} 文件 ≠ find 实际 ${_cjk_expect}（已扣 SELF 豁免）——守卫失明（glob 未跟随目录重组）"
   VIOL=$((VIOL + 1))
   GLOB_ACCOUNT_FAIL=1
 else
-  echo "  ✓ check-cjk-var 扫描面 ${_cjk_report} = find 实际 ${_cjk_expect}（含 SELF 豁免扣减）"
+  echo "  ✓ check-cjk-var 扫描面 ${_cjk_raw} = find 实际 ${_cjk_expect}（含 SELF 豁免扣减）"
+fi
+
+# ============================================================
+# ⑤ echo|grep -q SIGPIPE 毒方：`echo "$VAR" | grep -q PAT` 在 set -o pipefail 下，
+#    变量大输出 + grep -q 提前退出 → echo 收 SIGPIPE exit 141 → pipefail 判失败。
+#    实案：acceptance-test.sh S378 bump dry-run（71462 字节）在 bash 下确定性假红。
+#    修法：字面量改 [[ "$VAR" == *PAT* ]]；正则改 grep -q PAT <<< "$VAR"。
+# ============================================================
+echo ""
+echo "── ⑤ echo|grep -q SIGPIPE 毒方（pipefail 下假红源）──"
+SIGPIPE_HITS=0
+_SIGPIPE_SCAN=$(guard_scan_files | while IFS= read -r _sh; do
+    [ "$_sh" = "$SELF" ] && continue
+    # 匹配 echo "$VAR" | grep -q —— 变量展开后接管道 grep 的形态（含 ${!VAR} 间接形态）
+    grep -nE 'echo[[:space:]]+\"\$[A-Za-z_{][^\"]*\"[[:space:]]*\|[[:space:]]*grep[[:space:]]+-[A-Za-z]*q' "$_sh" 2>/dev/null \
+      | grep -vE '^[0-9]+:[[:space:]]*#' \
+      | grep -v 'guards-allow' \
+      | sed "s|^|${_sh}:|" || true
+  done | sort -u)
+while IFS= read -r _line; do
+  [ -z "$_line" ] && continue
+  echo "  ✗ ${_line}"
+  echo "      修法：字面量匹配改 [[ \"\$VAR\" == *PAT* ]]（bash 内建零管道）；正则改 grep -q PAT <<< \"\$VAR\"（herestring 无 SIGPIPE 面）"
+  VIOL=$((VIOL + 1))
+  SIGPIPE_HITS=$((SIGPIPE_HITS + 1))
+done <<EOF
+${_SIGPIPE_SCAN}
+EOF
+if [ "$SIGPIPE_HITS" -eq 0 ]; then
+  echo "  ✓ 无 echo|grep -q 毒方残留（herestring/内建匹配形态）"
 fi
 
 # ============================================================
@@ -179,9 +217,11 @@ if [ "$MODE" = "inject" ]; then
   echo "════════════════════════════════════════════"
   echo "── --inject 注入实测 ──"
   echo "════════════════════════════════════════════"
-  # 前置：注入目标文件必须干净（注入还原用 git checkout -- <file>，只还原注入
-  # 时触碰的那几个文件；并行 session 在其他文件上的工作不受影响。检查收窄到
-  # 文件级而非全仓级——全仓检查会让并行协作期间永远无法跑 --inject）
+  # 前置：注入目标文件必须干净。还原自 v1.4.8 第2批起改为 **cp 备份副本**
+  # （原先用 `git checkout -- <file>` 还原：目标文件若带未提交改动，还原会把
+  #   它们整片抹掉——实测发生过一次误伤并行 session 的事故，故彻底弃用 git 还原）。
+  # 「不干净即拒绝」语义保留：cp 还原能保住注入前的字节，但注入窗口内若有并行
+  # 写入仍会被覆盖，故仍拒绝在他人未提交改动上开窗口。
   INJECT_TARGETS="tools/check/check-action-pins.sh README.md tools/check/check-deps.sh"
   _dirty_targets=""
   for _t in $INJECT_TARGETS; do
@@ -190,10 +230,34 @@ if [ "$MODE" = "inject" ]; then
     fi
   done
   if [ -n "$_dirty_targets" ]; then
-    echo "❌ 注入目标文件不干净：${_dirty_targets}——还原步骤（git checkout --）会吞掉这些改动，拒绝执行"
-    echo "   先 commit/stash 上述文件后再跑 --inject"
+    echo "❌ 注入目标文件不干净：${_dirty_targets}——注入窗口内会覆盖并行 session 的未提交改动，拒绝执行"
+    echo "   先 commit 上述文件后再跑 --inject"
     exit 1
   fi
+
+  # 备份副本：注入前逐字节快照，还原 = cp 回写（全程不调用 git，零误伤面）
+  GUARDS_BACKUP_DIR="$(mktemp -d 2>/dev/null || echo "/tmp/guards-inject-backup-$$")"
+  mkdir -p "${GUARDS_BACKUP_DIR}" || { echo "❌ 无法创建备份目录 ${GUARDS_BACKUP_DIR}"; exit 2; }
+  for _t in $INJECT_TARGETS; do
+    cp "$_t" "${GUARDS_BACKUP_DIR}/$(echo "$_t" | tr '/' '_')" || {
+      echo "❌ 备份失败：$_t —— 拒绝在无备份的情况下注入"
+      exit 2
+    }
+  done
+  # 还原函数：cp 备份回写（备份缺失 = fail-loud，不静默跳过）
+  # 注：用 local 避免覆盖调用方循环变量（本脚本多处用 _t 作循环变量）
+  guards_restore() {
+    local _t="$1"
+    local _bak
+    _bak="${GUARDS_BACKUP_DIR}/$(echo "$_t" | tr '/' '_')"
+    if [ ! -f "${_bak}" ]; then
+      echo "❌ 还原失败：备份缺失 ${_bak}（注入产物可能残留，请手工核对 ${_t}）"
+      return 1
+    fi
+    cp "${_bak}" "$_t"
+  }
+  # 退出时清理备份目录（含异常路径——不让 /tmp 残留快照）
+  trap 'rm -rf "${GUARDS_BACKUP_DIR}"' EXIT
 
   INJECT_FAIL=0
 
@@ -210,7 +274,7 @@ if [ "$MODE" = "inject" ]; then
     echo "  ❌ 坏样本未红——check-cjk-var 是装饰品！"
     INJECT_FAIL=$((INJECT_FAIL + 1))
   fi
-  git checkout -- tools/check/check-action-pins.sh
+  guards_restore tools/check/check-action-pins.sh
   if bash tools/check/check-cjk-var.sh > /dev/null 2>&1; then echo "  ✓ 还原后必绿"; else echo "  ❌ 还原后未绿——注入未清干净"; INJECT_FAIL=$((INJECT_FAIL + 1)); fi
 
   # ── 注入用例二：check-docs 死链扫描 ──
@@ -227,7 +291,7 @@ if [ "$MODE" = "inject" ]; then
     echo "  ❌ 坏样本未红或未点名——check-docs 死链扫描可疑（exit=${_rc}，点名 ${_hit} 次）"
     INJECT_FAIL=$((INJECT_FAIL + 1))
   fi
-  git checkout -- README.md
+  guards_restore README.md
   rm -f /tmp/guards-inject-docs.log
 
   # ── 注入用例三：check-version 版本漂移 ──
@@ -245,7 +309,7 @@ if [ "$MODE" = "inject" ]; then
       echo "  ❌ badge 版本漂移未红——check-version 装饰品警报"
       INJECT_FAIL=$((INJECT_FAIL + 1))
     fi
-    git checkout -- README.md
+    guards_restore README.md
     rm -f /tmp/guards-inject-version.log
   else
     echo "  ⚠ 未找到 README version badge——跳过本用例"
@@ -265,7 +329,7 @@ if [ "$MODE" = "inject" ]; then
     echo "  ❌ 自检失败——③ 的 || echo 0 扫描抓不住注入样本（exit=${_rc}，点名 ${_hit} 次）"
     INJECT_FAIL=$((INJECT_FAIL + 1))
   fi
-  git checkout -- tools/check/check-deps.sh
+  guards_restore tools/check/check-deps.sh
   rm -f /tmp/guards-self-test.log
 
   # 收尾：注入目标文件必须还原干净（文件级检查——只看注入触碰过的文件）
@@ -277,7 +341,7 @@ if [ "$MODE" = "inject" ]; then
     fi
   done
   if [ -n "$_after" ]; then
-    echo "❌ 注入后目标文件残留：${_after}——检查 git checkout 还原逻辑"
+    echo "❌ 注入后目标文件残留：${_after}——检查 guards_restore 还原逻辑"
     exit 1
   fi
   if [ "$INJECT_FAIL" -gt 0 ]; then

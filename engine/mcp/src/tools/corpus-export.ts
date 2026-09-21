@@ -1,5 +1,5 @@
 // ============================================================
-// corpus-export.ts · v1.4.4 第一章 · MCP tool: corpus_export
+// corpus-export.ts · v1.5.0 第一章 · MCP tool: corpus_export
 //
 // 训练语料导出三件套的 MCP 面（CLI 面 = sofagent-audit corpus export）。
 // 双入口同源：本 tool 延迟 import audit 包的导出实现 + core 包的
@@ -7,7 +7,6 @@
 //
 // 导出审计：每次导出记 corpus_export 事件（合规红线——导出行为受审计）。
 // ============================================================
-
 /** corpus_export tool 入参 */
 export interface CorpusExportArgs {
   /** 导出范围（rules 用，缺省 all = 27 编号位含跳号占位） */
@@ -20,36 +19,37 @@ export interface CorpusExportArgs {
   rulesOnly?: boolean;
 }
 
-/** corpus_export tool 结果 */
-export interface CorpusExportResult {
-  text: string;
-  data: {
-    ok: boolean;
-    isError?: boolean;
-    rules: {
-      files: string[];
-      hmac: string | null;
-      counts: { implemented: number; mergedPlaceholders: number; totalSlots: number };
+  /** corpus_export tool 结果 */
+  export interface CorpusExportResult {
+    text: string;
+    data: {
+      ok: boolean;
+      isError?: boolean;
+      rules: {
+        files: string[];
+        hmac: string | null;
+        counts: { implemented: number; mergedPlaceholders: number; totalSlots: number };
+      };
+      verifiers?: {
+        files: string[];
+        buckets: { machine: number; human: number; heuristic: number };
+      };
+      samples?: {
+        sourceCounts: Record<string, number>;
+        absentSources: string[];
+        total: number;
+        humanBaseline: number;
+        redactionClean: boolean;
+      };
+      methodology?: {
+        complete: boolean;
+        missing: string[];
+        sections: Array<{ key: string; length: number; tables: number }>;
+      };
+      /** 审计事件（缺包降级时为 null——占位数据不得长得像审计证据） */
+      auditEvent: { event: string; scope: string; ruleCount: number; signed: boolean; at: string } | null;
     };
-    verifiers?: {
-      files: string[];
-      buckets: { machine: number; human: number; heuristic: number };
-    };
-    samples?: {
-      sourceCounts: Record<string, number>;
-      absentSources: string[];
-      total: number;
-      humanBaseline: number;
-      redactionClean: boolean;
-    };
-    methodology?: {
-      complete: boolean;
-      missing: string[];
-      sections: Array<{ key: string; length: number; tables: number }>;
-    };
-    auditEvent: { event: string; scope: string; ruleCount: number; signed: boolean; at: string };
-  };
-}
+  }
 
 /**
  * 训练语料导出三件套（规则 + 方法论 + 样本）。
@@ -83,7 +83,8 @@ export async function corpusExport(args: CorpusExportArgs): Promise<CorpusExport
         ok: false,
         isError: true,
         rules: { files: [], hmac: null, counts: { implemented: 0, mergedPlaceholders: 0, totalSlots: 0 } },
-        auditEvent: { event: 'corpus_export', scope, ruleCount: 0, signed: false, at: new Date().toISOString() },
+        // 降级态无真实导出行为——auditEvent 置 null，不伪造审计记录形态
+        auditEvent: null,
       },
     };
   }

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// daemon CLI · v1.4.3
+// daemon CLI · v1.5.0
 const args = process.argv.slice(2);
 const subcommand = args[0];
-const VERSION = '1.4.3';
+const VERSION = '1.5.0';
 
 /**
  * v1.4.0 交付四②：进程自身硬化（process-hardening 启发 · Linux/macOS 先行）
@@ -42,7 +42,10 @@ async function main() {
     console.log('  snapshot list                列出所有快照');
     console.log('  snapshot restore <sha>       恢复到指定快照');
     console.log('  knowledge status             聚合知识库状态（Dream Cycle / 健康 / sensitivity）');
-    console.log('  scheduler <list|pause|resume|trigger|history|delete>  定时任务管理（v1.2.9）');
+    console.log('  worklog                      工作明细视图（v1.4.0 交付七）');
+    console.log('  decision-tree                对话分支回溯视图（v1.4.0 交付七）');
+    console.log('  billing                      账单周期聚合——agent × 自然月月结（v1.4.7 G8）');
+    console.log('  scheduler <create|list|pause|resume|trigger|history|delete>  定时任务管理（v1.2.9 · create v1.4.7）');
     console.log('  doctor                       检查 daemon 健康状态（v1.2.5 §8.4）');
     process.exit(0);
   }
@@ -50,15 +53,33 @@ async function main() {
   switch (subcommand) {
     case 'worklog': {
       // v1.4.0 交付七：TUI 工作明细视图（worklog.json ASCII 渲染）
+      // v1.4.8 F-19: 路径改走 core getDataDir SSOT——旧写法在显式设 SOFAGENT_HOME
+      // 时多拼一层 /.sofagent（双拼）静默读空目录（billing 分支先例照抄）
       const { renderWorklogView } = await import('./dashboard/worklog-view');
-      const dataDir = process.env.SOFAGENT_DATA || (process.env.SOFAGENT_HOME || require('os').homedir()) + '/.sofagent/data';
+      const { getDataDir } = await import('@sofagent/core');
+      const dataDir = getDataDir();
       console.log(renderWorklogView(dataDir + '/dashboard/worklog.json'));
+      break;
+    }
+    case 'billing': {
+      // v1.4.7 G8：账单周期聚合（worklog.json → agent × 自然月月结口径）
+      const { buildBillingReport, renderBilling } = await import('./billing');
+      const { getDataDir } = await import('@sofagent/core');
+      const dataDir = getDataDir();
+      const report = buildBillingReport(dataDir);
+      if (!report) {
+        console.log(`[sofagent] 未找到或无法解析 ${dataDir}/dashboard/worklog.json——先运行聚合落盘（WorklogAggregator.writeWorklogJson）`);
+        process.exit(1);
+      }
+      console.log(renderBilling(report));
       break;
     }
     case 'decision-tree': {
       // v1.4.0 交付七：对话分支回溯（decisions.jsonl 分支树）
+      // v1.4.8 F-19: 路径改走 core getDataDir SSOT（同 worklog 分支）
       const { renderDecisionTree } = await import('./dashboard/decision-tree');
-      const dataDir = process.env.SOFAGENT_DATA || (process.env.SOFAGENT_HOME || require('os').homedir()) + '/.sofagent/data';
+      const { getDataDir } = await import('@sofagent/core');
+      const dataDir = getDataDir();
       console.log(renderDecisionTree(dataDir + '/audit/decision-log.jsonl'));
       break;
     }
@@ -106,13 +127,47 @@ async function main() {
         break;
       }
 
-      const { startCron } = await import('./cron');
-      const { startWatching } = await import('./fs-watch');
+      const { ensureDefaultInspectorsConfig } = await import('./cron');
+      // v1.4.9 P1-12：formatFileWatchStartLine 是纯函数（fs-watch.ts 导出），
+      // 供下面的文件监听打印行按「实际 watcher 数」分流 ✅/⚠️。
+      const { startWatching, formatFileWatchStartLine } = await import('./fs-watch');
       const { runFilesystemAudit } = await import('./run-fs-audit');
 
       console.log(`sofagent-daemon v${VERSION} — 启动守护进程`);
       console.log(`  监控目录: ${projectDir}`);
       console.log('');
+
+      // v1.4.5 T1（P0）：首启缺省巡检配置注入——watch.yml 不存在时写入
+      // 含 inspectors: / dream-cycle: 缺省段的模板（已有配置不动）。
+      if (ensureDefaultInspectorsConfig(projectDir)) {
+        console.log('  ✅ 首启已生成 .sofagent/watch.yml 缺省配置（inspectors + dream-cycle）');
+      }
+
+      // v1.4.5 T3：注册内置 slash 命令到全局注册表（/compact /goal——
+      // core 包 registerBuiltinSlashCommands 此前零生产调用）。经 dist 产物
+      // 文件路径动态引入（core barrel 未导出该函数，包 exports 只开放 "."）。
+      try {
+        const { registerBuiltinSlashCommandsFromCore } = await import('./slash-commands-wiring');
+        const registered = await registerBuiltinSlashCommandsFromCore();
+        console.log(`  ✅ slash 命令已注册: ${registered.map((c: string) => `/${c}`).join(' ')}`);
+      } catch (err) {
+        console.warn(`  ⚠️ slash 命令注册失败（不影响 daemon 启动）: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // 章十四（静态加密全量接线）：首启数据加密引导——密钥就绪后审计历史
+      // 以 SOFAGENT-AGE-V1 密文落盘；无密钥非交互 WARN 不 FAIL（明文兼容）。
+      // initDataEncryption 幂等（已有密钥直接 ok），交互环境走指纹+备份确认引导。
+      try {
+        const { initDataEncryption } = await import('./crypto-init');
+        const { resolveHomeDir } = await import('@sofagent/core');
+        const cryptoResult = initDataEncryption(resolveHomeDir());
+        if (cryptoResult.status === 'ok') {
+          console.log(`  ✅ ${cryptoResult.message}`);
+        }
+        // warn 态已由 initDataEncryption 内部 console.warn（CI 不红）
+      } catch (err) {
+        console.warn(`  ⚠️ 数据加密引导失败（不影响 daemon 启动——明文兼容）: ${err instanceof Error ? err.message : String(err)}`);
+      }
 
       // v1.4.4 #32+47：启动即写健康文件（writeHealthFile 此前「诞生即死」——
       // 函数存在但 daemon 主路径零调用，exit 78 死亡无人记录）。心跳每 5min 更新。
@@ -123,6 +178,61 @@ async function main() {
       }, 5 * 60 * 1000);
       heartbeatTimer.unref?.(); // 计时器不阻止进程退出（退出钩子负责收尾落盘）
       console.log('  ✅ 健康自检已启动（心跳 5min，~/.sofagent/data/daemon-health.json）');
+
+      // ── v1.4.9 G9：设备注册面巡检接线 ──
+      // ① 设备离线告警（T1 验收 ③）：每 5min 扫描设备心跳超时 → webhook 推送
+      //    （复用既有 push 通道；离线判定 = isOnline 读侧实时计算）。
+      try {
+        const { scanOfflineDevices } = await import('./device-registry');
+        const { createWebhookPusher } = await import('./webhook/index');
+        const { getDataDir } = await import('@sofagent/core');
+        const pusher = createWebhookPusher();
+        const notifyOffline = async (deviceId: string, lastHeartbeatAt: string | null): Promise<void> => {
+          // 三平台择一推送（endpoint 已配置者；未配置 → push 降级本地日志，不阻断）
+          const result = await pusher.push(
+            'feishu',
+            'FAIL',
+            `[sofagent] 设备离线告警：${deviceId.slice(0, 8)}（最后心跳 ${lastHeartbeatAt ?? '从未心跳'}）`,
+          );
+          if (result.degraded) {
+            console.warn(`  ⚠️ 离线告警 webhook 降级（设备 ${deviceId.slice(0, 8)}）：${result.error ?? '未配置 endpoint'}`);
+          }
+        };
+        const scanOnce = (): void => {
+          const offline = scanOfflineDevices({
+            dataDir: getDataDir(),
+            onAlarm: (deviceId, lastHeartbeatAt) => {
+              void notifyOffline(deviceId, lastHeartbeatAt);
+            },
+          });
+          if (offline.length > 0) {
+            console.warn(`  ⚠️ G9 设备巡检：${offline.length} 台设备离线（已推送 webhook 告警）`);
+          }
+        };
+        scanOnce(); // 启动即扫一轮
+        const deviceScanTimer = setInterval(scanOnce, 5 * 60 * 1000);
+        deviceScanTimer.unref?.();
+      } catch (err) {
+        console.warn(`  ⚠️ G9 设备离线巡检启动失败（不影响 daemon 启动）: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // ② /health 三态端点（T1 验收 ⑥）：SOFAGENT_HEALTH_PORT 显式配置才启用
+      //    （默认关闭不占端口；启用时 loopback 绑定——外部不可达默认安全）。
+      if (process.env.SOFAGENT_HEALTH_PORT) {
+        try {
+          const { startHealthEndpoint } = await import('./health-endpoint');
+          const { getDataDir: getCoreDataDir } = await import('@sofagent/core');
+          const port = Number(process.env.SOFAGENT_HEALTH_PORT);
+          if (Number.isFinite(port) && port > 0) {
+            const ep = startHealthEndpoint({ port, dataDir: getCoreDataDir() });
+            console.log(`  ✅ /health 三态端点已启动（${ep.host}:${ep.port}，loopback 绑定）`);
+          } else {
+            console.warn(`  ⚠️ SOFAGENT_HEALTH_PORT 非法（${process.env.SOFAGENT_HEALTH_PORT}）——跳过 /health 启动`);
+          }
+        } catch (err) {
+          console.warn(`  ⚠️ /health 端点启动失败（不影响 daemon 启动）: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
 
       // v1.4.4 #32+47：退出收尾——任何退出路径都落盘退出码，doctor 才能感知守护死亡
       const exitWith = (code: number, reason: 'sigint' | 'sigterm' | 'uncaught-exception' | 'startup-failure' | 'unknown', detail?: string) => {
@@ -157,9 +267,19 @@ async function main() {
         console.warn(`  ⚠️ LOOP 续跑检查失败（不影响 daemon 启动）: ${err instanceof Error ? err.message : String(err)}`);
       }
 
-      // 启动 cron 定时任务
-      startCron(projectDir);
-      console.log('  ✅ cron 定时任务已启动');
+      // v1.4.5 T4：启动 cron 定时任务——返回实际调度数（0 = 无任何任务被调度，
+      // 不再无条件打 ✅ 假绿）。inspectors/dream-cycle 缺省启用故通常 ≥ 2。
+      const { startCron, loadInspectorsConfig, loadDreamCycleConfig, loadCronConfig } = await import('./cron');
+      const scheduledCount = startCron(projectDir);
+      if (scheduledCount > 0) {
+        console.log(`  ✅ cron 定时任务已启动（${scheduledCount} 项）`);
+      } else {
+        const insp = loadInspectorsConfig(projectDir);
+        const dream = loadDreamCycleConfig(projectDir);
+        const cronJobs = loadCronConfig(projectDir).length;
+        // 全部被显式禁用（inspectors.enabled=false + dream-cycle.enabled=false + cron 空）
+        console.log(`  ℹ️ cron 无任务可调度（inspectors=${insp.enabled ? 'on' : 'off'} · dream-cycle=${dream.enabled ? 'on' : 'off'} · cron 条目=${cronJobs}）`);
+      }
 
       // 启动文件监听（变更后触发审计）
       const watcher = startWatching(projectDir, (changedFiles) => {
@@ -174,7 +294,9 @@ async function main() {
           console.log('  ✅ 审计通过');
         }
       });
-      console.log('  ✅ 文件监听已启动');
+      // v1.4.9 P1-12：按实际建立的 watcher 数分流（照抄同文件 :216-224 的 cron 范式）——
+      // 此前无条件打 ✅「文件监听已启动」，watch.yml 无有效路径（0 目录）时也报已启动＝假绿。
+      console.log(formatFileWatchStartLine(watcher.watchedCount));
       console.log('');
       console.log('  守护进程运行中... (Ctrl+C 停止)');
 
@@ -288,6 +410,8 @@ async function main() {
     case 'doctor': {
       // v1.2.5 §8.4：健康自检——读 daemon-health.json 报告 daemon 状态
       // v1.4.4 #32+47：新增 dead 态（exit 78 守护死亡可感知）
+      // v1.4.5 T1：新增巡检调度状态（inspectors 三层 + lastSuccessAt）
+      // v1.4.5 T9：新增 webhook 告警通道健康 + daemon dist 版本戳校验
       const { checkDaemonHealth } = await import('./daemon-health');
       const result = checkDaemonHealth();
       if (result.healthy) {
@@ -320,6 +444,53 @@ async function main() {
         }
         process.exit(1);
       }
+
+      // ── v1.4.5 T1：巡检调度状态 ──
+      console.log('\n── 巡检调度状态 ──');
+      const { buildInspectorScheduleReport } = await import('./cron');
+      const scheduleReport = buildInspectorScheduleReport(process.cwd());
+      if (!scheduleReport.enabled) {
+        console.log('  ⏸️  分层巡检已禁用（watch.yml inspectors.enabled=false）');
+      } else {
+        for (const layer of scheduleReport.layers) {
+          const lastRun = layer.lastSuccessAt
+            ? new Date(layer.lastSuccessAt).toLocaleString('zh-CN')
+            : '从未执行';
+          const stale = layer.lastSuccessAt === null
+            || (Date.now() - new Date(layer.lastSuccessAt).getTime()) > 2 * 86400_000;
+          const icon = layer.lastSuccessAt === null ? '⚠️' : stale ? '⚠️' : '✅';
+          console.log(`  ${icon} ${layer.layer}: ${layer.schedule}（最后成功: ${lastRun}${layer.lastSuccessAt === null ? '——巡检从未被调度过' : ''}）`);
+        }
+      }
+
+      // ── v1.4.5 T9：webhook 告警通道健康 ──
+      console.log('\n── Webhook 告警通道健康 ──');
+      const { readWebhookChannelHealth } = await import('./webhook/index');
+      const webhookHealth = readWebhookChannelHealth();
+      if (!webhookHealth) {
+        console.log('  ⚠️ 无通道健康记录（daemon 启动后尚无推送，或 daemon 未运行）');
+      } else {
+        const lastOk = webhookHealth.lastSuccessAt
+          ? new Date(webhookHealth.lastSuccessAt).toLocaleString('zh-CN')
+          : '从未成功';
+        console.log(`  ${webhookHealth.lastError ? '⚠️' : '✅'} 最后成功推送: ${lastOk}`);
+        if (webhookHealth.lastError) {
+          console.log(`     最近失败: ${webhookHealth.lastError}`);
+          console.log('     （失败详情见 data/webhook-fallback.log）');
+        }
+      }
+
+      // ── v1.4.5 T9：daemon dist 版本戳校验 ──
+      console.log('\n── daemon 版本戳校验 ──');
+      const { resolveDaemonVersion } = await import('./daemon-health');
+      const runtimeVersion = resolveDaemonVersion();
+      if (runtimeVersion === 'unknown') {
+        console.log('  ⚠️ daemon dist 无法定位 package.json——版本未知（打包异常或文件被裁剪）');
+      } else if (runtimeVersion !== VERSION) {
+        console.log(`  ⚠️ 版本戳漂移：CLI 入口=${VERSION} / dist 运行时=${runtimeVersion}——dist 与入口不同版本，建议 rebuild（npm run build）`);
+      } else {
+        console.log(`  ✅ dist 版本戳一致（${runtimeVersion}）`);
+      }
       break;
     }
     case 'scheduler': {
@@ -330,6 +501,63 @@ async function main() {
       const sched = createScheduler();
 
       switch (action) {
+        case 'create': {
+          // v1.4.7 G8（第一层断点）：create 此前只在 scheduler.ts API 层存在，CLI
+          // 无入口（帮助文本六个子命令无 create）——用户经 CLI 创建不了任务。
+          // 参数形态：scheduler create --name <名> --schedule <cron|ISO> --prompt <任务>
+          // [--type cron|once（缺省按 schedule 形态推断：@宏/5 段=cron，ISO=once）]
+          // [--template daily-health|weekly-report（预置 prompt 便捷面）]
+          const flags: Record<string, string> = {};
+          for (let i = 2; i < args.length - 1; i += 2) {
+            const k = args[i];
+            if (k && k.startsWith('--')) flags[k.slice(2)] = args[i + 1] ?? '';
+          }
+          const name = flags['name'];
+          const schedule = flags['schedule'];
+          let prompt = flags['prompt'] ?? '';
+          const typeFlag = flags['type'];
+          const template = flags['template'];
+          if (!name || !schedule) {
+            console.error('❌ scheduler create 需要 --name 与 --schedule');
+            console.error('   用法: scheduler create --name <名> --schedule <@daily|cron|ISO> [--prompt <任务>] [--type cron|once] [--template daily-health|weekly-report]');
+            process.exit(1);
+          }
+          // 模板便捷面：预置 prompt（显式 --prompt 优先）——
+          // v1.4.7 G8：内联表抽为独立模块 engine/daemon/src/templates.ts（模板增多不撑爆入口）
+          if (!prompt && template) {
+            const { getTemplate, templateIds } = await import('./templates');
+            const tpl = getTemplate(template);
+            if (!tpl) {
+              console.error(`❌ 未知模板: ${template}（可用: ${templateIds()}）`);
+              process.exit(1);
+            }
+            prompt = tpl.prompt;
+          }
+          if (!prompt) {
+            console.error('❌ scheduler create 需要 --prompt 或 --template（任务执行内容不能为空）');
+            process.exit(1);
+          }
+          // type 推断：显式 > schedule 形态（@宏或 5 段表达式 → cron；ISO datetime → once）
+          const isCronForm = /^@|^[\d*,\-/]+\s+[\d*,\-/]+\s+[\d*,\-/]+\s+[\d*,\-/]+\s+[\d*,\-/]+$/.test(schedule);
+          const type = (typeFlag === 'cron' || typeFlag === 'once')
+            ? (typeFlag as 'cron' | 'once')
+            : (isCronForm ? 'cron' : 'once');
+          if (type === 'once' && isNaN(Date.parse(schedule))) {
+            console.error(`❌ once 类型 schedule 须为 ISO 8601 datetime，得到: ${schedule}`);
+            process.exit(1);
+          }
+          try {
+            const task = sched.create({ name, type, schedule, prompt });
+            console.log(`✅ 已创建: ${task.id}`);
+            console.log(`   ${task.name}  [${task.type}]  ${task.schedule}`);
+            console.log(`   next=${task.nextRun ? new Date(task.nextRun).toLocaleString('zh-CN') : '—'}`);
+            console.log('   （daemon start 后每 5 分钟轮询消费到期任务）');
+          } catch (err) {
+            console.error(`❌ 创建失败: ${(err as Error).message}`);
+            process.exit(1);
+          }
+          break;
+        }
         case 'list': {
           const tasks = sched.list();
           if (tasks.length === 0) {
@@ -360,8 +588,42 @@ async function main() {
         case 'trigger': {
           if (!taskId) { console.error('❌ scheduler trigger 需要 <task-id>'); process.exit(1); }
           try {
-            const run = sched.trigger(taskId, () => ({ exitCode: 0, output: '手动触发完成' }));
-            console.log(`✅ 已触发 (${run.exitCode === 0 ? '成功' : '失败'}): ${run.output}`);
+            // v1.4.5 T4：真实执行——此前硬编码 `() => ({exitCode:0, output:'手动触发完成'})`
+            // 假绿（任务从未运行却报成功）。改为把任务 prompt 经 orchestrator loop
+            // 真跑一次（spawnSync sub-process，与 cron.ts 既有范式一致），exitCode/
+            // output 取真实值。scheduler.trigger 的 runner 是同步签名——先 await
+            // 真实执行完成，再把结果作为同步快照传入（历史记录语义不变）。
+            const task = sched.get(taskId);
+            if (!task) throw new Error(`任务不存在: ${taskId}`);
+
+            console.log(`▶️  执行任务「${task.name}」...`);
+            const { execFileSync } = await import('child_process');
+            const { createRequire } = await import('module');
+            const { join, dirname } = await import('path');
+            const nodeRequire = createRequire(__filename);
+            let exitCode = 0;
+            let output = '';
+            try {
+              // orchestrator CLI 真身在 dist/cli.js（cron.ts 同款解析范式）
+              const orchCli = join(
+                dirname(nodeRequire.resolve('@sofagent/orchestrator/package.json')),
+                'dist', 'cli.js',
+              );
+              output = execFileSync(process.execPath, [
+                orchCli, 'loop', '--legacy', '--task', task.prompt,
+              ], {
+                encoding: 'utf-8',
+                cwd: process.cwd(),
+                timeout: 600000, // 10 分钟超时（手动触发允许长任务）
+              });
+            } catch (err) {
+              // execFileSync 非零退出时 err 含 stdout/stderr
+              const e = err as { status?: number; stdout?: string; stderr?: string; message: string };
+              exitCode = typeof e.status === 'number' ? e.status : 1;
+              output = `${e.stdout ?? ''}${e.stderr ?? e.message}`;
+            }
+            const run = sched.trigger(taskId, () => ({ exitCode, output: output.trim() || '（无输出）' }));
+            console.log(`✅ 已触发 (${run.exitCode === 0 ? '成功' : '失败 exit=' + run.exitCode}): ${run.output.slice(0, 120)}`);
           } catch (err) {
             console.error(`❌ ${(err as Error).message}`);
             process.exit(1);
@@ -390,7 +652,7 @@ async function main() {
         }
         default:
           console.error('❌ 未知 scheduler 子命令: ' + (action || ''));
-          console.error('   用法: sofagent-daemon scheduler <list|pause|resume|trigger|history|delete> [task-id]');
+          console.error('   用法: sofagent-daemon scheduler <create|list|pause|resume|trigger|history|delete> [task-id]');
           process.exit(1);
       }
       break;

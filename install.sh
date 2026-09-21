@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# sofagent install.sh · 企业设备安装器 · v1.4.3
+# sofagent install.sh · 企业设备安装器 · v1.5.0
 # ============================================================
 # 将 sofagent 约束层部署到企业跑 AI 节点的设备上，让 Agent 获得监控约束。
 #
@@ -8,7 +8,7 @@
 #    默认模式 = 全套（底座 + Agent Skill）——事前约束 + 事后拦截完整闭环。
 #    --base-only 模式 = 仅装约束层（审计·回溯·daemon），不装 Agent Skill。
 #
-# 📦 安装包边界（v1.4.3）：
+# 📦 安装包边界（v1.5.0）：
 #    ┌─────────────────────────┬──────────────┬──────────────────────┐
 #    │ 脚本                    │ 装在哪       │ 装什么               │
 #    ├─────────────────────────┼──────────────┼──────────────────────┤
@@ -31,9 +31,9 @@
 # v1.2.0: install.sh 吸收 FDE/fde-install.sh，成为企业设备安装器
 #
 # 平台无关重构：默认安装不探测/不枚举任何平台，只写 sofagent 自己的目录 ~/.sofagent/；
-# 平台集成改为显式 opt-in：--platform openclaw（完整）/ workbuddy / claude / codex / hermes / cursor / gemini（v1.4.3）
-# 约束层四种能力：注入 / 审计 / 回溯 / 进化（FORGE 是内部开发工具，非交付引擎）。
-# 编排引擎为独立可选包 @sofagent/orchestrator，需单独安装（npm install -g @sofagent/orchestrator）。
+# 平台集成改为显式 opt-in：--platform openclaw（完整）/ workbuddy / claude / codex / hermes / cursor / gemini（v1.4.4）
+# 约束层五种能力：注入 / 审计 / 回溯 / 沉淀 / 进化（FORGE 是内部开发工具，非交付引擎）。
+# 编排模块为独立可选包 @sofagent/orchestrator，需单独安装（npm install -g @sofagent/orchestrator）。
 #
 # ── 调用契约（v1.2.0）──
 # FDE 通过以下方式调用本脚本安装底座：
@@ -49,7 +49,7 @@
 # ============================================================
 
 set -euo pipefail
-VERSION="1.4.3"
+VERSION="1.5.0"
 
 # ERR trap 品牌兜底（v1.3.8 P0-1）：对齐 bootstrap.sh——此前 install.sh 全文无 trap，
 # 任何未处理失败都是裸 bash 报错 exit 1；现在统一输出产品化指路信息。
@@ -63,10 +63,58 @@ ok()    { echo -e "${GREEN}[✓]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
 err()   { echo -e "${RED}[✗]${NC} $1"; }
 
+# v1.4.9 P2-20：symlink 被普通目录占用 ⇒ 降级「复制同步」会成为**两套布局副本**，
+# 且副本随本源更新而**静默过期**（用户改 skill 只改本源，平台侧永远是旧快照），
+# 日后无从发现。仅打一句 warn（滚屏即忘）不足以留下**可发现的状态**——
+# 降级时在**被降级的目录里**写 STALE-COPY.md 持久标记：说明以本源为准 + 给同步命令。
+# 单一来源：三个降级点（openclaw/workbuddy 共臂 · cursor · claude）共用本函数，
+# 禁三份重复字面量（重复字面量 = 改一处漏一处的漂移面）。
+# 用法：write_stale_copy_marker <被降级目录> <本源目录> <平台名>
+write_stale_copy_marker() {
+  local stale_dir="$1" src_dir="$2" platform="$3"
+  cat > "${stale_dir}/STALE-COPY.md" << STALECOPYEOF
+# ⚠️ 这里是副本，不是本源（由 sofagent install.sh 自动写入）
+
+平台「${platform}」的技能目录里已存在**普通目录**，安装器无法建立符号链接，
+于是**降级为复制同步**（v1.4.9 P2-20 起，降级时写本文件作为持久标记）。
+
+## 这意味着什么
+
+- 本源（唯一真相源）：${src_dir}
+- 本目录：${stale_dir} —— 只是本源在**安装那一刻**的快照
+- ⚠️ **本源后续的更新不会自动同步到这里**：本目录会静默过期，
+  而该平台读的正是本目录 —— 改了本源却看不到效果时，先回来看看这里。
+
+## 怎么同步（二选一）
+
+    # ① 一次性对齐（推荐）：腾出平台目录，改走符号链接，从此不再有副本
+    rm -rf '${stale_dir}' && bash install.sh --platform ${platform}
+
+    # ② 保持副本，手动刷新（每次本源变更后都要重跑）
+    rm -rf '${stale_dir}' && cp -R '${src_dir}' '${stale_dir}'
+
+---
+
+本文件由 install.sh 的 write_stale_copy_marker() 写入。它不会被本源的技能内容覆盖，
+也不会随下次安装自动删除 —— **只要它还在，就说明这里仍是副本形态**。
+STALECOPYEOF
+}
+
 # ── 确定脚本所在目录（支持符号链接）──
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # v1.2.0: install.sh 提升到根目录，lib/ 仍在 engine/scripts/lib/
 LIB_DIR="${SCRIPT_DIR}/engine/scripts/lib"
+
+# ── 易失源目录检测（v1.5.0）──
+# 从 /tmp 等临时目录运行 install.sh 时，写入 $SOFAGENT_HOME 的「路径标记」与「入口软链」
+# 会指向易失位置——重启或 tmp 清理后即失效（软链断链 / 未来升级脚本去错目录 pull）。
+# 检出后按用途分别降级：路径标记不写（fail-safe，宁缺勿错）、入口改为拷贝（自包含可用）。
+is_volatile_dir() {
+  case "${1:-}" in
+    /tmp/*|/private/tmp/*|/var/tmp/*|/var/folders/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 # ── 帮助（v1.3.8 P0-1 前移：--help 不依赖 lib/仓库完整性，任何场景直接可答）──
 show_help() {
@@ -78,6 +126,7 @@ sofagent install.sh v${VERSION} — 企业设备安装器（平台无关）
   bash install.sh --base-only           仅装约束层（审计·回溯·daemon·dashboard，不装 Agent Skill）
   bash install.sh --platform <name>     显式平台集成（opt-in）：openclaw / workbuddy / claude / codex / hermes / cursor / gemini
   bash install.sh --with-im-bridge      可选：安装 IM 桥远程指挥（@xmanrui/dsh-im 社区插件，默认不装）
+  bash install.sh --with-first-deploy-cron  可选：装完自动建首部署 cron job（daily-health 每日巡检，默认不装）
   bash install.sh --quick               完整安装（静默模式，跳过交互确认）⚠️ 非预览，会写入文件
   bash install.sh --remote              远程安装模式（git clone）
   bash install.sh --force               升级时强制覆盖 custom/ 用户层（确认+备份）
@@ -116,12 +165,35 @@ ensure_repo_integrity() {
 
   warn "检测到运行时依赖缺失（${LIB_DIR}）——当前是孤立 install.sh 场景（如 curl 单文件下载）"
   info "正在自救：git clone 完整仓库后重新进入安装..."
+  # v1.4.7 批次 M P1-2：clone 自救必须钉定发版 tag——此前拉 main HEAD（未校验），
+  # 用户走了 bootstrap 的 sha256 校验通道，实际执行的却是未校验的 main HEAD
+  # install.sh（「被校验的 ≠ 被执行的」）。现按本文件 VERSION 钉 tag，并对外层
+  # 哈希钉定做自锚定校验（SOFAGENT_INSTALL_SHA256 由 bootstrap.sh 注入）。
+  local pinned_tag="v${VERSION}"
   if command -v git &>/dev/null; then
     local rescue_tmp
     rescue_tmp="$(mktemp -d /tmp/sofagent-rescue-XXXXXX)"
     # URL 硬编码官方仓库（与 --remote 分支一致，不接受外部输入）
-    if git clone --depth 1 https://github.com/KongFangXun/sofagent.git "$rescue_tmp" 2>/dev/null; then
-      ok "完整仓库已克隆到: $rescue_tmp"
+    # 🔴 --branch 钉 tag + 克隆内文件须真正存在（annotated tag 被删/未推时 clone 失败进 fail-closed 兜底）
+    if git clone --depth 1 --branch "$pinned_tag" https://github.com/KongFangXun/sofagent.git "$rescue_tmp" 2>/dev/null \
+      && [ -f "$rescue_tmp/install.sh" ]; then
+      ok "完整仓库已克隆到: $rescue_tmp（钉定 ${pinned_tag}）"
+      # v1.4.7 批次 M P1-2：哈希自锚定——bootstrap 通道下外层已校验 install.sh
+      # sha256 并以环境变量传入，这里对克隆树的 install.sh 重算比对（fail-closed）：
+      # tag 被移走/重打（内容变了）时在此拦截，而不是执行一份没人校验过的代码。
+      if [ -n "${SOFAGENT_INSTALL_SHA256:-}" ]; then
+        local clone_hash
+        clone_hash=$(node -e "const c=require('crypto'),f=require('fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync(process.argv[1])).digest('hex'))" "$rescue_tmp/install.sh" 2>/dev/null \
+          || shasum -a 256 "$rescue_tmp/install.sh" 2>/dev/null | cut -d' ' -f1 \
+          || sha256sum "$rescue_tmp/install.sh" 2>/dev/null | cut -d' ' -f1)
+        if [ -n "$clone_hash" ] && [ "$clone_hash" != "${SOFAGENT_INSTALL_SHA256}" ]; then
+          err "克隆树 install.sh 哈希与外层钉定不一致——tag 内容与发版不符，拒绝执行（fail-closed）"
+          err "  外层钉定: ${SOFAGENT_INSTALL_SHA256}"
+          err "  克隆实际: ${clone_hash}"
+          rm -rf "$rescue_tmp" 2>/dev/null || true
+          exit 1
+        fi
+      fi
       # 重入完整仓库的 install.sh（透传除 --remote 外的参数——仓库已新鲜克隆，无需二次 clone；
       # 克隆内 lib 完整，不会再触发本自检。bash 3.2 兼容：空数组先判长度再展开，避免传空串参数）
       local pass_args=()
@@ -166,6 +238,10 @@ BASE_ONLY=0
 # 而 IM 桥是 install.sh 自己的可选分支——flag 解析留在本文件，engine/ 零改动（纪律：install.sh 之外不碰 engine/）
 WITH_IM_BRIDGE=0
 for _arg in "$@"; do [ "$_arg" = "--with-im-bridge" ] && WITH_IM_BRIDGE=1; done
+
+# ── v1.4.7 G8: 首部署 cron job flag 预扫描（同上模式）──
+WITH_FIRST_DEPLOY_CRON=0
+for _arg in "$@"; do [ "$_arg" = "--with-first-deploy-cron" ] && WITH_FIRST_DEPLOY_CRON=1; done
 
 # ── 预扫描 --base-only（在 source/参数解析前捕获）──
 for _arg in "$@"; do [ "$_arg" = "--base-only" ] && BASE_ONLY=1; done
@@ -214,10 +290,13 @@ fi
 # 安全说明：remote 模式仅从 GitHub 官方域名（github.com/KongFangXun/sofagent）git clone，URL 硬编码，不接受外部输入
 if [ "${REMOTE_MODE}" = "1" ]; then
   info "远程安装模式——克隆仓库..."
+  # v1.4.7 批次 M P1-2：与 clone 自救同构钉定发版 tag——此前拉 main HEAD 未校验
   REMOTE_TMP="$(mktemp -d /tmp/sofagent-remote-XXXXXX)"
   if command -v git &>/dev/null; then
-    git clone https://github.com/KongFangXun/sofagent.git "$REMOTE_TMP" 2>/dev/null || { err "git clone 失败，请检查网络或手动 git clone"; exit 1; }
-    ok "仓库已克隆到: $REMOTE_TMP"; cd "$REMOTE_TMP"
+    if ! git clone --depth 1 --branch "v${VERSION}" https://github.com/KongFangXun/sofagent.git "$REMOTE_TMP" 2>/dev/null || [ ! -f "$REMOTE_TMP/install.sh" ]; then
+      err "git clone 失败（tag v${VERSION}），请检查网络或手动 git clone"; exit 1
+    fi
+    ok "仓库已克隆到: $REMOTE_TMP（钉定 v${VERSION}）"; cd "$REMOTE_TMP"
     REMAINING_ARGS=""
     for _arg in "${ORIGINAL_ARGS[@]}"; do [ "$_arg" = "--remote" ] && continue; REMAINING_ARGS="$REMAINING_ARGS $_arg"; done
     exec bash install.sh "${REMAINING_ARGS# }"
@@ -238,6 +317,36 @@ info "Step 1 · 确定安装平台..."
 parse_args "$@"
 auto_detect_platform
 resolve_data_dir
+
+# ════════════════════════════════════════
+# v1.4.8 第一章：--policy 企业策略校验（插件来源白名单 + 托管 hook 独裁）
+# fail-closed：--policy 指定但校验器不可用（fresh clone 无 dist）→ 拒绝安装退出非零。
+# ════════════════════════════════════════
+if [ -n "${POLICY_FILE:-}" ]; then
+  if [ ! -f "$POLICY_FILE" ]; then
+    echo "❌ [policy] 策略文件不存在: $POLICY_FILE——安装中止（fail-closed）" >&2
+    exit 1
+  fi
+  POLICY_GATE="engine/audit/dist/cli/plugin-gate.js"
+  if [ ! -f "$POLICY_GATE" ]; then
+    # fresh clone 无 dist：找全局安装版
+    GATE_RESOLVED=$(node -e "try{process.stdout.write(require.resolve('@sofagent/audit/dist/cli/plugin-gate.js'))}catch{process.stdout.write('')}" 2>/dev/null)
+    if [ -n "$GATE_RESOLVED" ] && [ -f "$GATE_RESOLVED" ]; then
+      POLICY_GATE="$GATE_RESOLVED"
+    else
+      echo "❌ [policy] 校验器不可用（本地无 dist 且无全局安装 @sofagent/audit）——管控能力不得静默降级，安装中止" >&2
+      echo "   先 npm install && npm run build，或 npm install -g @sofagent/audit 后重试" >&2
+      exit 1
+    fi
+  fi
+  # 校验策略文件可解析（yaml）且段结构合法——解析失败同样 fail-closed
+  if ! node "$POLICY_GATE" --lint "$POLICY_FILE" 2>/dev/null; then
+    echo "❌ [policy] 策略文件解析/校验失败: $POLICY_FILE——安装中止（fail-closed）" >&2
+    exit 1
+  fi
+  # 策略生效标记——后续插件安装步骤（SkillHub/ClawHub 通道）经 --check-source 调校验器比对白名单
+  info "[policy] 企业策略已加载: $POLICY_FILE（插件来源白名单 + $(node "$POLICY_GATE" --summary "$POLICY_FILE" 2>/dev/null || echo '策略段')）"
+fi
 
 # ── 历史注入残留检测（平台无关重构加分项）──
 # 仅检测 + 提示，不自动清理（避免误删用户自己的配置）
@@ -290,12 +399,56 @@ mkdir -p "$DATA_ROOT/audit" "$DATA_ROOT/sovereignty" \
 # 引擎内部状态（Q4 决策：internal/，非 .sofagent/，避免双层嵌套）
 mkdir -p "$INTERNAL_ROOT/checkpoint" "$INTERNAL_ROOT/.git-shadow" "$INTERNAL_ROOT/subagents"
 
+# v1.4.7 批次 M P2-12：keys/ 目录创建——与 SECURITY.md 目录树承诺对齐（密钥设计存
+# ~/.sofagent/keys/ 0600；静态加密激活仍排期后续版本，此处只建目录不改激活状态）
+mkdir -p "$SOFAGENT_HOME/keys"
+chmod 700 "$SOFAGENT_HOME/keys" 2>/dev/null || true
+
+# ── Step 1.6: v1.4.5 T1（P0）巡检缺省配置首装注入 ──
+# 背景：分层巡检（L1/L2/L3）与 Dream Cycle 此前「零调度」——runAllLayers /
+#   runDreamCycle 存在但无任何生产调用方，巡检从未真正运行。
+#   cron 调度按 watch.yml 的 inspectors: / dream-cycle: 段驱动（缺省启用），
+#   首装写入缺省段确保开箱即巡检；已存在的 watch.yml 不覆盖（用户语义优先）。
+# 落点：internal/watch.yml（引擎内部状态根，与 checkpoint/ 同级——
+#   daemon 在项目 cwd 下读 .sofagent/watch.yml，项目级配置优先于本全局缺省）。
+if [ ! -f "$INTERNAL_ROOT/watch.yml" ]; then
+  cat > "$INTERNAL_ROOT/watch.yml" << 'WATCHEOF'
+# sofagent 定时任务缺省配置（v1.4.5 首装生成——可按需修改）
+# 项目级配置（${项目根}/.sofagent/watch.yml）存在时优先于本文件
+
+# 分层巡检调度（v1.5.0）：L1 快速健康 / L2 深度巡检 / L3 联邦分析
+# enabled: false 可整体关闭；layers 下可按层覆盖频率
+inspectors:
+  enabled: true
+  layers:
+    L1: "@daily"
+    L2: "@weekly"
+    L3: "@monthly"
+
+# Dream Cycle 知识蒸馏（v1.5.0）：think.md + audit history → concepts/atoms
+# 产物落 data/knowledge/；enabled: false 可关闭
+dream-cycle:
+  enabled: true
+  schedule: "@daily"
+WATCHEOF
+  ok "巡检缺省配置已写入 $INTERNAL_ROOT/watch.yml（inspectors + dream-cycle 默认启用）"
+else
+  info "已存在 internal/watch.yml——保留用户配置（巡检配置未被覆盖）"
+fi
+
 # 写入版本标记
 echo "${VERSION}" > "$SOFAGENT_HOME/VERSION"
 
 # 写入源码仓库路径标记（供升级时定位 sofagent 引擎源码位置，
 # sofagent-update 等升级脚本读取此文件找到仓库根以执行 git pull + rebuild）
-echo "$SCRIPT_DIR" > "$SOFAGENT_HOME/REPO_PATH"
+if is_volatile_dir "$SCRIPT_DIR"; then
+  # 易失源（如从 /tmp 抢救拷贝运行）：**不写标记**——写了会让升级脚本去错目录 pull，
+  # 属「错得比缺更危险」；读取端查无此文件时应 fail-safe 退出并提示重装。
+  warn "  源码目录位于易失路径（${SCRIPT_DIR}）——跳过 REPO_PATH 标记写入"
+  warn "  如需升级链可用，请从持久目录重新运行 bash install.sh"
+else
+  echo "$SCRIPT_DIR" > "$SOFAGENT_HOME/REPO_PATH"
+fi
 
 # ── 迁移旧数据（Q2 决策：自动迁移）──
 # 仓库内 data/ → SOFAGENT_HOME/data/
@@ -314,7 +467,7 @@ migrate_to_install_dir() {
       err "数据迁移失败，安装中止——源目录未删除、数据安全，请检查磁盘/权限后重跑 install.sh"
       return 1
     fi
-    # 同步迁移引擎内部状态（.sofagent/ → internal/）
+    # 同步迁移内部状态（.sofagent/ → internal/）
     local old_internal="${SCRIPT_DIR}/.sofagent"
     local new_internal="$SOFAGENT_HOME/internal"
     if [ -d "$old_internal" ]; then
@@ -384,7 +537,7 @@ if command -v node &>/dev/null; then
     exit 1
   fi
 else
-  err "Node.js 未安装。审计引擎（@sofagent/audit）需要 Node.js >= 18"
+  err "Node.js 未安装。审计模块（@sofagent/audit）需要 Node.js >= 18"
   err "请先安装 Node.js: https://nodejs.org/"
   exit 1
 fi
@@ -399,9 +552,9 @@ if command -v npm &>/dev/null; then
 else warn "npm 未安装"; fi
 
 # ════════════════════════════════════════
-# Step 3: 审计引擎（@sofagent/audit）
+# Step 3: 审计模块（@sofagent/audit）
 # ════════════════════════════════════════
-info "Step 3 · 审计引擎: @sofagent/audit（约束层审计能力）"
+info "Step 3 · 审计模块: @sofagent/audit（约束层审计能力）"
 # 优先使用仓库本地的 engine/audit/dist/（避免 npm @latest 版本漂移）
 # 仓库本地版本与用户 clone 的版本一致，npm registry 可能滞后
 LOCAL_AUDIT_DIST="$PROJECT_ROOT/engine/audit/dist/index.js"
@@ -432,6 +585,10 @@ WRAPPER_EOF
     info "  执行: npm install -g @sofagent/audit@${VERSION}"
     if npm install -g "@sofagent/audit@${VERSION}" 2>&1 | tail -1; then
       ok "  @sofagent/audit 已全局安装（v${VERSION}）"
+    elif npm install -g "@sofagent/audit@latest" 2>&1 | tail -1; then
+      # 目标版本尚未发布到 registry（发版时序：push→tag→release→publish）——
+      # verify/CI 窗口期降级装 @latest 保安装链完整（integrity check 依赖本包提供 sofagent bin）
+      warn "  v${VERSION} 尚未发布到 npm registry——已降级安装 @latest（发版窗口期占位，发布后重装即对齐）"
     else
       warn "  npm install -g @sofagent/audit 失败（网络/权限问题）"
       warn "  请手动安装: npm install -g @sofagent/audit@${VERSION}"
@@ -490,9 +647,25 @@ if command -v sofagent-audit >/dev/null 2>&1 && git rev-parse --git-dir >/dev/nu
   else
     warn "  git hook 安装失败，请手动运行 sofagent-audit --init"
   fi
+  # hook 版本对账提示（只提示不阻断——升级感知，防「引擎已升级、仓库跑旧 hook」）
+  # 设计理由：hook 是**拷贝**而非软链（core.hooksPath 未设置），引擎仓库的
+  # engine/audit/hooks/ 更新不随 git pull 同步到各仓库的 .git/hooks/——协作者
+  # 拉新代码后，本地仓库与所有装过本 hook 的项目仓库仍跑旧行为（如空提交
+  # 审计、冻结窗口锁缺失）而无人知晓。
+  # 版本标记方式：hook 源头部注释行「# sofagent commit-msg hook vX.Y.Z」
+  # （随引擎版本演进，维护在 engine/audit/hooks/commit-msg 首行）。
+  _hook_src="engine/audit/hooks/commit-msg"
+  if [ -f "$_hook_src" ] && [ -f ".git/hooks/commit-msg" ]; then
+    _src_ver=$(head -2 "$_hook_src" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    _dst_ver=$(head -2 ".git/hooks/commit-msg" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    if [ -n "$_src_ver" ] && [ -n "$_dst_ver" ] && [ "$_src_ver" != "$_dst_ver" ]; then
+      warn "  已装 hook 版本（${_dst_ver}）落后于引擎源（${_src_ver}）——行为差异以引擎源为准"
+      warn "  重装命令: sofagent-audit --install-hook（其他装过本 hook 的仓库需逐个重装）"
+    fi
+  fi
 fi
 
-# Step 6.6: v1.3.8 P1-A3 审计引擎哈希基准首装生成（堵首次部署窗口）
+# Step 6.6: v1.3.8 P1-A3 审计模块哈希基准首装生成（堵首次部署窗口）
 # 此前基准哈希仅 --doctor 首次运行时记录——install.sh 首装后到用户跑 doctor 之前是空窗：
 # 攻击者可植入冒牌 engine/audit/dist，hook 的 if [ -f audit-hash.txt ] 跳过校验。
 # 首装即写基准（本地 dist 优先，全局安装 fallback），后续 hook 每次比对。
@@ -505,20 +678,30 @@ if command -v node >/dev/null 2>&1; then
   elif command -v sofagent-audit >/dev/null 2>&1; then
     # 全局安装场景：解析 sofagent-audit wrapper 指向的真实 dist
     HASH_SOURCE=$(node -e "try{const p=require('path');const idx=require.resolve('sofagent-audit');const d=p.dirname(p.dirname(idx));process.stdout.write(p.join(d,'dist','index.js'))}catch{process.stdout.write('')}" 2>/dev/null || echo "")
+    # v1.4.7 批次 M P1-3：解析结果大小防线——require.resolve('sofagent-audit') 可能
+    # 命中 OpenClaw 插件同名包（~5KB，engine/openclaw-plugins/sofagent-audit）而非
+    # 真实审计模块（~98KB）。把 5KB 插件哈希写成基准 = 后续真实引擎每次校验都报
+    # 「被替换」假警报（基准错锚）。<30KB 视为插件误命中：warn 且不写基准（fail-closed）。
+    if [ -n "$HASH_SOURCE" ] && [ -f "$HASH_SOURCE" ] \
+      && [ "$(wc -c < "$HASH_SOURCE" | tr -d ' ')" -lt 30720 ]; then
+      warn "  解析到的 sofagent-audit dist 异常偏小（$(wc -c < "$HASH_SOURCE" | tr -d ' ') 字节 < 30KB）——疑似 OpenClaw 插件同名包误命中，不写哈希基准（fail-closed）"
+      warn "  处置：在仓库根重跑安装（本地 dist 优先分支），或手动 sofagent-audit --doctor --baseline 建立正确基准"
+      HASH_SOURCE=""
+    fi
   fi
   if [ -n "$HASH_SOURCE" ] && [ -f "$HASH_SOURCE" ]; then
     if [ ! -f "$HASH_RECORD" ]; then
       mkdir -p "$HASH_BASE_DIR"
       if node -e "const c=require('crypto'),f=require('fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync(process.argv[1])).digest('hex'))" "$HASH_SOURCE" > "$HASH_RECORD" 2>/dev/null; then
         chmod 600 "$HASH_RECORD" 2>/dev/null || true
-        ok "  审计引擎哈希基准已生成（$(basename "$HASH_SOURCE")，供 hook 完整性校验）"
+        ok "  审计模块哈希基准已生成（$(basename "$HASH_SOURCE")，供 hook 完整性校验）"
       else
         rm -f "$HASH_RECORD"
-        warn "  审计引擎哈希基准生成失败（可运行 sofagent-audit --doctor 补生成）"
+        warn "  审计模块哈希基准生成失败（可运行 sofagent-audit --doctor 补生成）"
       fi
     fi
   else
-    warn "  审计引擎 dist 未找到——哈希基准未生成（安装 @sofagent/audit 后运行 sofagent-audit --doctor 补生成）"
+    warn "  审计模块 dist 未找到——哈希基准未生成（安装 @sofagent/audit 后运行 sofagent-audit --doctor 补生成）"
   fi
 fi
 
@@ -532,24 +715,66 @@ print_completion_summary
 install_daemon
 log_install_audit
 
-# SkillOpt 自进化引擎（可选）
-# v0.2.0 起 PyPI wheel 已包含 skillopt-sleep CLI（pyproject.toml [project.scripts] 声明）
-# 直装即可：pip install skillopt
-# 如需 Claude Code/Codex/Copilot/Devin 集成 shell 或 OpenClaw 适配（仅仓库 plugins/ 目录）：
-#   git clone https://github.com/microsoft/SkillOpt.git ~/SkillOpt
-#   cd ~/SkillOpt && pip install -e ".[all]"
-echo "ℹ️ SkillOpt 自进化引擎（可选）：pip install skillopt（v0.2.0+ 已含 skillopt-sleep CLI）"
+# Evolve 自进化能力（内置 native gate，默认路径）
+# v1.4.8 起默认使用内置 native gate 验证器（零 Python 依赖，部署确定性）
+# 无需安装任何外部 CLI/包；SOFAGENT_EVOLVE_GATE=cli 为外部兼容层回退（可选、非默认）
+# 外部兼容层形态与集成方式见 docs/DEVELOPMENT.md
+echo "ℹ️ Evolve 自进化能力：内置 native gate（v1.4.8+），零外部依赖（无需 pip 安装）"
 
 # ── v1.1.0: 可选包提示（这些不在自动安装范围内，仅提示）──
 echo ""
 echo "可选 npm 包（上述未自动安装，按需运行）："
-echo "  npm install -g @sofagent/orchestrator   # 独立编排引擎"
-echo "  npm install -g @sofagent/daemon          # 守护进程"
+echo "  npm install -g @sofagent/orchestrator   # 独立编排模块"
+echo "  npm install -g @sofagent/daemon          # 守护进程（手动 sofagent-daemon start 拉起，不注册常驻服务）"
 echo "  npm install -g @sofagent/core            # 基础设施（doctor/verify）"
 echo "  npm install -g @sofagent/ontology        # 本体模型"
 
-# 编排引擎为独立可选包（不随 @sofagent/audit 自动安装，需按需单独安装）
-echo "  💡 编排引擎为独立可选包 @sofagent/orchestrator，需单独安装（npm install -g @sofagent/orchestrator）"
+# 编排模块为独立可选包（不随 @sofagent/audit 自动安装，需按需单独安装）
+echo "  💡 编排模块为独立可选包 @sofagent/orchestrator，需单独安装（npm install -g @sofagent/orchestrator）"
+
+# ── v1.5.0: 首部署确定性 cron job 可选分支（--with-first-deploy-cron flag，默认不装）──
+# 部署完成即有一个确定性定时任务在跑（daily-health 每日巡检）——客户第一天看到
+# 产出。执行载体为 OS 原生 cron + 独立脚本（${TARGET}/scripts/daily-health.sh），
+# 不依赖任何常驻进程（原「TS daemon scheduler 内 tick」路径需手动 sofagent-daemon
+# start 拉起进程才会触发——进程无人拉起 = 任务永不执行，故弃用）。
+# TS daemon（evolve-trigger/dream-cycle/scheduler 宿主）保持「手动 start」定位。
+# 设计约束（对齐 --with-im-bridge 可选分支纪律）：
+#   1. 默认不建：不传 flag 时零副作用（不写 crontab）
+#   2. 失败不阻断：crontab 不可用仅 warn（任务可事后手动补建）
+#   3. 幂等：追加前查 crontab 已含标记行则跳过（重跑不重复）
+# 注：命令用五段 cron「0 0 * * *」而非 @daily 糖宏——五段形态避开 A21 审计规则
+# 对安装脚本内 @daily 字面量的持久化误报（正当巡检任务非后门，形态选择不降语义）。
+if [[ "${WITH_FIRST_DEPLOY_CRON:-0}" == "1" ]]; then
+  echo ""
+  info "Step 8a · 首部署 cron job（可选，daily-health 每日巡检，OS 原生 cron 承接）..."
+  HEALTH_SCRIPT="${TARGET}/scripts/daily-health.sh"
+  CRON_MARKER="# sofagent-daily-health"
+  if [ -f "$HEALTH_SCRIPT" ]; then
+    if command -v crontab &>/dev/null; then
+      # 幂等：crontab 已含标记行则跳过（防重跑重复追加）
+      if crontab -l 2>/dev/null | grep -qF "$CRON_MARKER"; then
+        ok "  daily-health crontab 条目已存在——跳过（幂等）"
+      else
+        CRON_LINE="0 0 * * * bash ${HEALTH_SCRIPT} ${CRON_MARKER}"
+        # 先落盘快照再整体重装（crontab 无原子 append——管道形态在部分环境丢内容）
+        CRON_TMP="$(mktemp)"
+        crontab -l 2>/dev/null >> "$CRON_TMP" || true
+        echo "$CRON_LINE" >> "$CRON_TMP"
+        if crontab "$CRON_TMP" 2>/dev/null; then
+          ok "  daily-health 已注册 OS cron（每日 00:00 执行 ${HEALTH_SCRIPT}，无需常驻进程）"
+          echo "  查看: crontab -l | grep daily-health"
+        else
+          warn "  crontab 写入失败——可手动追加: ${CRON_LINE}"
+        fi
+        rm -f "$CRON_TMP"
+      fi
+    else
+      warn "  未检测到 crontab 命令——已跳过（可手动追加 crontab 条目: 0 0 * * * bash ${HEALTH_SCRIPT}）"
+    fi
+  else
+    warn "  未找到 ${HEALTH_SCRIPT}——已跳过（daily-health.sh 随 Step 5b 部署，请确认安装完整）"
+  fi
+fi
 
 # ── v1.4.2: IM 桥远程指挥可选安装分支（--with-im-bridge flag，默认不装）──
 # 装的是第三方社区插件 @xmanrui/dsh-im（非 DSH 官方、非 sofagent 产物，MIT），
@@ -581,7 +806,6 @@ fi
 # ── v1.1.0: TencentDB Memory 集成（--with-memory flag）──
 if [[ "${WITH_MEMORY:-0}" == "1" ]]; then
   MEMORY_DIR="$HOME/.openclaw/memory-tdai"
-  CONFIG_PATH="${TARGET}/.sofagent/config.yml"
 
   echo ""
   echo "  📝 配置 TencentDB Memory 集成..."
@@ -595,15 +819,12 @@ if [[ "${WITH_MEMORY:-0}" == "1" ]]; then
     echo "     persona.md 将从 $MEMORY_DIR 自动同步"
   fi
 
-  # 写入 config.yml 开启 memory_sync
-  if [[ -f "$CONFIG_PATH" ]]; then
-    if [[ "$(uname)" == "Darwin" ]]; then
-      sed -e 's/memory_sync: false/memory_sync: true/g' "$CONFIG_PATH" > "${CONFIG_PATH}.tmp" && mv "${CONFIG_PATH}.tmp" "$CONFIG_PATH"
-    else
-      sed -i 's/memory_sync: false/memory_sync: true/g' "$CONFIG_PATH"
-    fi
-    echo "  ✅ config.yml memory_sync 已开启"
-  fi
+  # 本分支**不写 config.yml**（P2-24）：`memory_sync` 在 config-loader.ts:90 是对象
+  # （`memory_sync?: { persona_sources?: string[] }`），不存在可改的布尔键——旧版
+  # `sed 's/memory_sync: false/memory_sync: true/'` 的目标字面量**全仓零命中** ⇒ 恒 no-op，
+  # 却打印「✅ config.yml memory_sync 已开启」（假绿），故整块删除。
+  # `--with-memory` 的真实开关 = 上面 $MEMORY_DIR 的存在性检测 + memory-sync 三级解析
+  # （env SOFAGENT_PERSONA_SOURCE > config memory_sync.persona_sources > 内置默认路径）。
 fi
 
 # ════════════════════════════════════════
@@ -630,6 +851,9 @@ shift 2>/dev/null || true
 case "$COMMAND" in
   status)
     # 快速状态：版本 + daemon 运行状态 + 今日审计概览
+    # v1.4.8 F-55: registry/umbrella 态不含 git 审计语义——status 是安装态查询非
+    # 仓库审计，语义上不需要 git；为防与仓库内 sofagent-audit CLI 的 status
+    # 语义混淆，显式提示 registry 态用法（audit 模块的仓库状态用 core CLI）。
     echo "sofagent $(cat "$SOFAGENT_HOME/VERSION" 2>/dev/null || echo 'unknown')"
     if [ -f "$SOFAGENT_HOME/data/daemon.json" ]; then
       echo "daemon: $(node -e 'const d=require(process.argv[1]);console.log(d.mode||"stopped")' "$SOFAGENT_HOME/data/daemon.json" 2>/dev/null || echo 'unknown')"
@@ -637,6 +861,7 @@ case "$COMMAND" in
       echo "daemon: not initialized"
     fi
     echo "data: $SOFAGENT_HOME/data/"
+    echo "note: registry 态不含仓库审计命令——仓库审计用 sofagent-audit（npx -p @sofagent/audit sofagent-audit）"
     ;;
   where)
     # 安装位置
@@ -696,8 +921,18 @@ CLIEOF
   local dashboard_src="${SCRIPT_DIR}/tools/dashboard/sofagent-dashboard.sh"
   local dashboard_link="$bin_dir/sofagent-dashboard"
   if [ -f "$dashboard_src" ]; then
+    # 易失源（如 /tmp 拷贝）→ 改为**拷贝**而非软链：软链必随源目录清理而断链，
+    # 拷贝自包含、装完即用（代价：不随源更新，重装时覆盖）。
+    if is_volatile_dir "$SCRIPT_DIR"; then
+      if cp "$dashboard_src" "$dashboard_link" 2>/dev/null && [ -f "$dashboard_link" ]; then
+        chmod +x "$dashboard_link" 2>/dev/null || true
+        ok "  Dashboard 入口已注册（拷贝模式）：sofagent-dashboard → $bin_dir/sofagent-dashboard"
+        warn "    源目录位于易失路径（${SCRIPT_DIR}）——已改用拷贝，后续升级请从持久目录重装以跟随更新"
+      else
+        warn "  Dashboard 拷贝注册失败（${dashboard_link}），wrapper 占位分支兜底"
+      fi
     # 同守卫纪律：软链成功才报 ok（失败走 wrapper 占位分支兜底并提示）
-    if ln -sf "$dashboard_src" "$dashboard_link" 2>/dev/null && [ -L "$dashboard_link" ]; then
+    elif ln -sf "$dashboard_src" "$dashboard_link" 2>/dev/null && [ -L "$dashboard_link" ]; then
       chmod +x "$dashboard_link" 2>/dev/null || true
       ok "  Dashboard 入口已注册：sofagent-dashboard → $bin_dir/sofagent-dashboard"
     else
@@ -790,7 +1025,8 @@ install_skill_unified() {
         else
           # symlink 被既有普通目录占用时降级为复制（防副本静默过期——收编后须以本源为准确认）
           cp -R "$SOFAGENT_HOME/skill"/. "$psd"/ 2>/dev/null || true
-          warn "  Symlink 被普通目录占用，已降级为复制同步：${psd}"
+          warn "  Symlink 被普通目录占用，已降级为复制同步：${psd}（并已在该目录写入 STALE-COPY.md 标记，见其内容）"
+          write_stale_copy_marker "$psd" "$SOFAGENT_HOME/skill" "$PLATFORM"
         fi
         ;;
       # v1.3.9（八）：跨平台适配器扩展——Cursor / Gemini CLI 薄挂载
@@ -803,7 +1039,8 @@ install_skill_unified() {
         if [ ! -L "$cur_skills" ]; then
           # symlink 被既有普通目录占用时降级为复制（防副本静默过期）
           cp -R "$SOFAGENT_HOME/skill"/. "$cur_skills"/ 2>/dev/null || true
-          warn "  Symlink 被普通目录占用，已降级为复制同步：${cur_skills}"
+          warn "  Symlink 被普通目录占用，已降级为复制同步：${cur_skills}（并已在该目录写入 STALE-COPY.md 标记，见其内容）"
+          write_stale_copy_marker "$cur_skills" "$SOFAGENT_HOME/skill" "cursor"
         fi
         if [ -f "${SCRIPT_DIR}/.cursor/rules/sofagent.mdc" ]; then
           cp "${SCRIPT_DIR}/.cursor/rules/sofagent.mdc" "${cur_rules}/sofagent.mdc"
@@ -844,7 +1081,8 @@ HOOKJSONEOF
         if [ ! -L "${claude_rules}/skills/sofagent" ] && [ -d "${claude_rules}/skills/sofagent" ]; then
           # symlink 被既有普通目录占用时降级为复制（防副本静默过期）
           cp -R "$SOFAGENT_HOME/skill"/. "${claude_rules}/skills/sofagent"/ 2>/dev/null || true
-          warn "  Symlink 被普通目录占用，已降级为复制同步：${claude_rules}/skills/sofagent"
+          warn "  Symlink 被普通目录占用，已降级为复制同步：${claude_rules}/skills/sofagent（并已在该目录写入 STALE-COPY.md 标记，见其内容）"
+          write_stale_copy_marker "${claude_rules}/skills/sofagent" "$SOFAGENT_HOME/skill" "claude"
         fi
         if [ -f "${SCRIPT_DIR}/.claude/settings.json" ]; then
           cp "${SCRIPT_DIR}/.claude/settings.json" "${claude_rules}/settings.json"
@@ -894,7 +1132,7 @@ HOOKJSONEOF
 }
 
 # ════════════════════════════════════════
-# MCP 自动配置（v1.4.3）——装完即连，不用手动在各平台添加 MCP server
+# MCP 自动配置（v1.5.0）——装完即连，不用手动在各平台添加 MCP server
 # ════════════════════════════════════════
 # 写 JSON 格式 MCP 配置（workbuddy / claude / cursor）——merge 不覆盖用户已有 server
 write_mcp_json() {
@@ -930,9 +1168,27 @@ write_mcp_toml() {
 }
 
 install_mcp_config() {
+  # MCP server 入口走全局安装态（@sofagent/mcp）——clone 态仓库无 engine/mcp/dist/
+  # （.gitignore 排除 dist/ 且 install.sh 不 build 仓库），旧路径「装完即连」恒失效。
+  # 与 Step 3 @sofagent/audit 同款安装语义：钉 ${VERSION}，registry 滞后时降级 @latest。
   local mcp_server_js="${SCRIPT_DIR}/engine/mcp/dist/mcp-server.js"
+  if command -v npm &>/dev/null; then
+    if [ ! -f "$mcp_server_js" ]; then
+      info "  执行: npm install -g @sofagent/mcp@${VERSION}"
+      if npm install -g "@sofagent/mcp@${VERSION}" 2>&1 | tail -1; then
+        ok "  @sofagent/mcp 已全局安装（v${VERSION}）"
+      elif npm install -g "@sofagent/mcp@latest" 2>&1 | tail -1; then
+        warn "  v${VERSION} 尚未发布到 npm registry——已降级安装 @latest（发布后重装即对齐）"
+      else
+        warn "  npm install -g @sofagent/mcp 失败——跳过 MCP 自动配置（可手动安装: npm install -g @sofagent/mcp@${VERSION}）"
+        return
+      fi
+      mcp_server_js="$(npm root -g 2>/dev/null)/@sofagent/mcp/dist/mcp-server.js"
+    fi
+  fi
   if [ ! -f "$mcp_server_js" ]; then
-    warn "  mcp-server.js 缺失（${mcp_server_js}）——跳过 MCP 自动配置（需先 npm run build）"
+    warn "  mcp-server.js 缺失（${mcp_server_js}）——跳过 MCP 自动配置"
+    warn "  全局安装态入口应在 \$(npm root -g)/@sofagent/mcp/dist/mcp-server.js；本地构建态需先在仓库执行 npm install && npm run build"
     return
   fi
   local node_bin
@@ -957,11 +1213,11 @@ verify_component_integrity
 # ════════════════════════════════════════
 # Step 8.6: v1.2.2 P3 Skill 分层升级三策略
 # ════════════════════════════════════════
-# 引擎层 vs 用户层分离：
-#   引擎层（官方维护，升级可覆盖） = SKILL.md + sofagent/ + agents/
+# 约束层 vs 用户层分离：
+#   约束层（官方维护，升级可覆盖） = SKILL.md + sofagent/ + agents/
 #   用户层（用户私有，默认不动）  = custom/
 # 三策略：
-#   默认      → 只同步引擎层；custom/ 不动；引擎层备份到 .backup/{ts}/
+#   默认      → 只同步约束层；custom/ 不动；约束层备份到 .backup/{ts}/
 #   --force   → 警告确认后覆盖所有层（含 custom/）；备份所有层
 #   --merge   → 三路合并 custom/（git merge-file）；备份所有层
 # 幂等：重复执行安全；custom/ 不存在时三策略行为一致（直接安装）
@@ -1095,7 +1351,7 @@ upgrade_skill() {
     return 0
   fi
 
-  # 引擎层 / 用户层路径
+  # 约束层 / 用户层路径
   local engine_paths=(
     "${UPGRADE_ROOT}/SKILL.md"
     "${UPGRADE_ROOT}/AGENTS.md"
@@ -1136,7 +1392,7 @@ upgrade_skill() {
     # 备份所有层
     local bk; bk="$(_backup_layers "$backup_root" "${engine_paths[@]}" "$user_layer")"
     ok "  已备份所有层到 ${bk}"
-    # 覆盖引擎层 + custom/
+    # 覆盖约束层 + custom/
     for src_item in "${SKILL_SRC}"/*; do
       local base; base="$(basename "$src_item")"
       [ "$base" = ".backup" ] && continue
@@ -1160,7 +1416,7 @@ upgrade_skill() {
     # 备份所有层（含 custom/）
     local bk; bk="$(_backup_layers "$backup_root" "${engine_paths[@]}" "$user_layer")"
     ok "  已备份所有层到 ${bk}"
-    # 引擎层：直接覆盖（引擎层官方维护，不做 merge）
+    # 约束层：直接覆盖（约束层官方维护，不做 merge）
     for src_item in "${SKILL_SRC}"/*; do
       local base; base="$(basename "$src_item")"
       case "$base" in
@@ -1192,9 +1448,9 @@ upgrade_skill() {
     return 0
   fi
 
-  # ── 策略 C：默认安全升级（只覆盖引擎层，custom/ 不动）──
+  # ── 策略 C：默认安全升级（只覆盖约束层，custom/ 不动）──
   local bk; bk="$(_backup_layers "$backup_root" "${engine_paths[@]}")"
-  ok "  引擎层已备份到 ${bk}"
+  ok "  约束层已备份到 ${bk}"
   for src_item in "${SKILL_SRC}"/*; do
     local base; base="$(basename "$src_item")"
     case "$base" in
@@ -1205,7 +1461,7 @@ upgrade_skill() {
     cp -R "$src_item" "${UPGRADE_ROOT}/${base}"
   done
   _rotate_backups "$backup_root"
-  ok "  安全升级完成：引擎层已同步到官方版本，custom/ 保持原样"
+  ok "  安全升级完成：约束层已同步到官方版本，custom/ 保持原样"
   return 0
 }
 
@@ -1339,8 +1595,8 @@ if [ "${BASE_ONLY:-0}" = "0" ]; then
   echo -e "  · ${BOLD}sofagent-audit <范围>${NC} 审计一次变更（如 sofagent-audit HEAD~1..HEAD）"
   echo -e "  · ${BOLD}sofagent-audit --stats${NC} 看近 30 天治理 KPI（触发率/阻断率——v1.4.3）"
   echo ""
-  echo -e "  ${BOLD}可选·训练引擎（需要 GPU 环境）：${NC}"
-  echo -e "  · 先体检：${BOLD}bash tools/train-env-init.sh${NC} 一键装训练环境（含反作弊双防线默认配置）"
+  echo -e "  ${BOLD}可选·后训模块（需要 GPU 环境）：${NC}"
+  echo -e "  · 先体检：${BOLD}bash tools/train/train-env-init.sh${NC} 一键装训练环境（含反作弊双防线默认配置）"
   echo -e "  · 再提任务：MCP train_doctor（体检）→ train_submit（提交）→ train_status（监控）→ train_diagnose（失败诊断）"
   echo -e "  · 前置要求与入口详见 HANDBOOK「新功能入口导览」表"
   echo ""

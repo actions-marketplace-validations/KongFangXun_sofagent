@@ -7,7 +7,7 @@
 
 ## 1.1 能力边界 + 岗位匹配（内部执行）
 
-能做：文字/数据/代码/检索。不能做：物理操作/图像编辑/人际沟通/系统GUI → 拒绝+替代方案。加载链已激活 ✓。岗位：无 IDENTITY → [agency-agents-zh](https://github.com/jnMetaCode/agency-agents-zh) 匹配 3-5 个 → 用户选定后写 `{SOFAGENT_DATA}/IDENTITY.md`（按 `data/IDENTITY.md` 模板）。GitHub 不可达 → 跳过。Claude/Codex/Hermes 通过种子指令模拟。
+能做：文字/数据/代码/检索。不能做：物理操作/图像编辑/人际沟通/系统GUI → 拒绝+替代方案。加载链已激活 ✓。岗位：无 IDENTITY → [agency-agents-zh](https://github.com/jnMetaCode/agency-agents-zh) 匹配 3-5 个 → 用户选定后写 `{SOFAGENT_DATA}/IDENTITY.md`。GitHub 不可达 → 跳过。Claude/Codex/Hermes 通过种子指令模拟。
 
 ⛔ **任务准入拒绝（风险边界外）**：遇到需求不清楚 / 牵涉产品判断 / 涉及安全权限(含密码/密钥/支付) / 数据删除 / 架构重构 → 你必须在点火前输出 `[准入检查: REJECT — ...]`，并给出拒绝原因。如果输出 REJECT 后又继续编排——你自己知道在做什么。这不是「建议跳过」，是「你公开声明了自己在冒险」。声明本身不是技术拦截，但让跳步从「悄悄跳过」变成「公然说谎」——复盘时可追溯。
 
@@ -70,4 +70,3 @@
 - **任务记录没回写状态**——1.4 澄清完走了编排，但 task/plans/ 没写。后果：子任务间不知道彼此状态，并发修改同一文件导致冲突。
 - **🔴 后自主扫描文件**——硬信号触发 🔴 后，Agent 不等确认就开始读文件、写代码。后果：用户还没说「拆解」，Agent 已经跑了一半。
 - **准入检查 REJECT 后偷偷继续**——输出 `[准入检查: REJECT]` 后又悄悄执行任务。后果：公然说谎，复盘时可追溯但损失已造成。
-

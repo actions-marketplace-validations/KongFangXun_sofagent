@@ -1,4 +1,4 @@
-// ── API 分级契约（v1.4.3 四）────────────────────────────
+// ── API 分级契约（v1.5.0 四）────────────────────────────
 // `/* @public */`：公开 API——semver 锁定，变更必须 bump 版本 + CHANGELOG 记录
 //                 （外部依赖方与跨平台适配器只许 import 这一层）
 // `/* @internal */`：内部 API——不承诺稳定性，破坏性变更无需 bump
@@ -63,8 +63,48 @@
   readLlmCallTrace,
   verifyLlmCallChain,
   getLlmCallTracePath,
+  getLegacyLlmCallTracePath,
+  listLlmCallTraceFiles,
 } from './llm-call-trace';
 /* @public */ export type { LlmCallTraceInput, LlmCallRecord, LlmCallTraceFilter } from './llm-call-trace';
+
+// ── v1.5.0 章八：跨层证据对账（trace reconcile）──
+/* @public */ export {
+  TRACE_MODEL_SCHEMA_VERSION,
+  extractFilePathFromArgs,
+  classifyFileOp,
+  dshSessionsRoot,
+  parseDshSession,
+  loadDshSessions,
+  TRACE_CACHE_SCHEMA_VERSION,
+  traceCachePath,
+  loadDshSessionsCached,
+  collectTraceWriteSet,
+  collectTraceReadSet,
+  reconcileTraces,
+  buildModelLayerTrace,
+} from './trace-reconcile';
+/* @public */ export type {
+  TraceEventType,
+  FileOpKind,
+  TraceEvent,
+  TraceModelExport,
+  DshRawEvent,
+  DecompressFn,
+  ReconcileVerdict,
+  ReconcileDiscrepancy,
+  ReconcileReport,
+  ReconcileInput,
+  ModelLayerTraceLink,
+} from './trace-reconcile';
+
+// ── 仓库标识 hash（运行时审计 repo-hash 隔离）──
+/* @public */ export {
+  computeRepoHash,
+  clearRepoHashCache,
+  REPO_HASH_PATTERN,
+} from './repo-hash';
+/* @public */ export type { RepoHashExecFn } from './repo-hash';
 
 // ── 环境变量统一读取（SOFAGENT_* 主名 + 旧名别名兜底）──
 /* @public */ export { resolveEnvVar, resolveEnvBool, resolveEnvNumber } from './shared/env';
@@ -152,10 +192,15 @@
   resolveDaemonJson,
   getConfigFile,
   getDataDir,
+  // G7 多租户 v0：路径命名空间 + 租户校验（fail-loud）
+  validateTenantId,
+  resolveTenantDataDir,
+  TENANT_PATTERN,
+  DEFAULT_TENANT,
 } from './data-paths';
 
 // ── 配置模板 ──
-/* @public */ export { CONFIG_TEMPLATE, HOOK_TEMPLATE } from './config-template';
+/* @public */ export { CONFIG_TEMPLATE } from './config-template';
 
 // ── 监控配置 ──
 /* @public */ export {
@@ -207,6 +252,14 @@
   isColdStart,
 } from './cost-baseline';
 /* @public */ export type { Baseline, TaskLogEntry } from './cost-baseline';
+/* @public */ export { checkQuota, shouldRecordSpend } from './cost/quota-gate';
+/* @public */ export type { QuotaConfig, QuotaPeriod, QuotaUsage, QuotaVerdict } from './cost/quota-gate';
+/* @public */ export { classifyCommand } from './escalation/classifier';
+/* @public */ export type { ClassifiedCommand, ClassifierOverrides, EscalationLevel } from './escalation/classifier';
+/* @public */ export { routeEscalation } from './escalation/policy';
+/* @public */ export type { EscalationDecision, EscalationPolicyOptions, EscalationScenarioPolicy, EscalationVerdict } from './escalation/policy';
+/* @public */ export { validateScopedName, assertScopedName } from './scope-names';
+/* @public */ export type { ScopeKind, ScopedName, ScopeVerdict } from './scope-names';
 
 // ── 内存压缩 ──
 /* @public */ export {
@@ -286,7 +339,7 @@
   pairByToken,
   computeTokenTag,
   pairByFederationFile,
-  FEDERATION_TOKEN_PATH,
+  getFederationTokenPath,
   PAIRING_CODE_LENGTH,
   MIN_TOKEN_LENGTH,
 } from './crypto/pairing';
@@ -323,7 +376,7 @@
 /* @public */ export type { DoctorReport } from './doctor';
 
 // ── 审计历史链校验（v1.2.0 从 @sofagent/audit 下沉，消除 core 反向依赖） ──
-/* @public */ export { getHistoryFilePath, getDecisionLogPath, getEnvFingerprint, getHmacKey, checkHistoryChainIntegrity, checkHistoryChainDetailed, stableStringify, validateHmacKey } from './audit-history';
+/* @public */ export { getHistoryFilePath, getHistoryAnchorFilePath, getDecisionLogPath, getEnvFingerprint, getHmacKey, checkHistoryChainDetailed, stableStringify, validateHmacKey } from './audit-history';
 
 // ── 装后验证 ──
 /* @public */ export { verifyEvidence } from './verify-evidence';
@@ -357,6 +410,7 @@
   commitSnapshot,
   revertToSnapshot,
   listSnapshots,
+  findSnapshotByLabel,
   hasShadowRepo,
 } from './filesystem/isomorphic-git';
 /* @public */ export type { SnapshotEntry, IsoDiff } from './filesystem/isomorphic-git';
@@ -394,9 +448,81 @@
 } from './export/methodology';
 /* @public */ export { redact, verifyNoLeak, loadRedactRules } from './export/redactor';
 /* @public */ export type { RedactRulesConfig, RedactResult } from './export/redactor';
+// T8 敏感识别三层插槽（v1.4.9 第八章——检测器注册表/三层检测器/Presidio schema/敏感度分类器）
+/* @public */ export {
+  DetectorRegistry,
+  DEFAULT_CONFIDENCE_THRESHOLDS,
+  tierOf,
+  aggregateSpans,
+  toPresidioResults,
+  applySpans,
+  toPresidioType,
+} from './export/detector-registry';
+/* @public */ export type {
+  DetectorLayer,
+  SensitiveSpan,
+  Detector,
+  ConfidenceThresholds,
+  ConfidenceTier,
+  PipelineResult,
+  AggregatedSpan,
+} from './export/detector-registry';
+/* @public */ export {
+  L0_REGEX_DETECTOR_NAME,
+  createL0RegexDetector,
+  createL0SensitiveDetector,
+  L0_SENSITIVE_PATTERN_SPECS,
+} from './export/detector-regex';
+/* @public */ export {
+  L1_GLOSSARY_DETECTOR_NAME,
+  buildGlossaryFromRecords,
+  buildGlossaryFromEntityNames,
+  createGlossaryDetector,
+  placeholderOf,
+} from './export/detector-glossary';
+/* @public */ export type { GlossaryEntry, GlossaryLoadResult } from './export/detector-glossary';
+/* @public */ export {
+  L2_REMOTE_DETECTOR_DEFAULT_NAME,
+  createRemoteDetector,
+  prefetchRemoteSpans,
+  createPrefetchedRemoteDetector,
+  validateRemoteSpans,
+} from './export/detector-remote';
+/* @public */ export type { RemoteDetectorConfig, RemoteSpanResponse, FetchLike } from './export/detector-remote';
+/* @public */ export type { PresidioEntityType, PresidioAnalysisResult, PresidioOperator } from './export/detector-presidio-schema';
+/* @public */ export { recommendedOperator } from './export/detector-presidio-schema';
+/* @public */ export { classifySensitivity } from './export/sensitivity-classifier';
+/* @public */ export type { SensitivityLevel, SensitivityDecision } from './export/sensitivity-classifier';
+// G10/G11 设备数据面策略（v1.4.9 T2/T3）
+/* @public */ export {
+  DEVICE_DATA_POLICY_FILE,
+  normalizeDirPath,
+  isPathAllowed,
+  deviceDataPolicyPath,
+  loadDeviceDataPolicy,
+  saveDeviceDataPolicy,
+  authorizeDeviceRead,
+} from './device-data-policy';
+/* @public */ export type {
+  DeviceDataPolicyConfig,
+  DeviceReadAuthResult,
+} from './device-data-policy';
+/* @public */ export {
+  DEVICE_UPLOAD_POLICY_FILE,
+  deviceUploadPolicyPath,
+  loadDeviceUploadPolicy,
+  saveDeviceUploadPolicy,
+  authorizeDeviceUpload,
+} from './device-upload-policy';
+/* @public */ export type {
+  UploadDeclaration,
+  DeviceUploadPolicyConfig,
+  DeviceUploadAuthResult,
+} from './device-upload-policy';
 /* @public */ export { aggregateSamples } from './export/sample-aggregator';
 /* @public */ export type {
   SampleSource,
   AggregatedSample,
   AggregationResult,
+  ArtifactGateFn,
 } from './export/sample-aggregator';

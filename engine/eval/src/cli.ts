@@ -4,7 +4,7 @@
 // v1.3.7 新增
 //
 // 组装 audit runner 适配器 → runEval → 持久化 → 报告
-// CLI 层耦合 @sofagent/audit，eval 核心模块保持引擎中立
+// CLI 层耦合 @sofagent/audit，eval 核心模块保持中立
 // ============================================================
 
 import { existsSync, mkdirSync } from 'fs';
@@ -123,7 +123,7 @@ export function createAuditRunner(): (input: Record<string, unknown>) => Promise
     const task = input['task'] as string | undefined;
     const commitMsg = input['commitMsg'] as string | undefined;
 
-    // 2. 调用真实审计引擎（extendedRulesEnabled = true 以覆盖全部 24 条规则）
+    // 2. 调用真实审计模块（extendedRulesEnabled = true 以覆盖全部 24 条规则）
     const auditConfig: AuditConfig = { ...DEFAULT_CONFIG, extendedRulesEnabled: true };
     const auditResult = runRules(diffFiles, logEntries, task, false, true, commitMsg, auditConfig);
 
@@ -150,13 +150,23 @@ interface FailedCase {
  * 持久化 eval 结果
  * - latest.json：覆盖写（含 timestamp / 汇总 / failures 数组）
  * - history.jsonl：追加写（仅汇总指标）
+ *
+ * @param overrideDataDir 数据目录覆盖（沙箱实跑/测试隔离用）——不传时走
+ *   EVAL_DIR/EVAL_HISTORY/EVAL_LATEST 常量（模块加载期基于 SOFAGENT_HOME
+ *   解析的生产路径）。quickstart 类「文档实跑验证」必须传临时目录或
+ *   预置 SOFAGENT_HOME，否则示例数据会污染真实 eval 历史（曾两轮复发：
+ *   实跑走生产路径写入 mock 形态假数据，清理后下次实跑又写入）。
  */
-export function persistResult(result: EvalResult): void {
+export function persistResult(result: EvalResult, overrideDataDir?: string): void {
   const timestamp = new Date().toISOString();
 
-  // 确保 EVAL_DIR 存在
-  if (!existsSync(EVAL_DIR)) {
-    mkdirSync(EVAL_DIR, { recursive: true });
+  const evalDir = overrideDataDir ? join(overrideDataDir, 'eval') : EVAL_DIR;
+  const evalHistory = overrideDataDir ? join(evalDir, 'history.jsonl') : EVAL_HISTORY;
+  const evalLatest = overrideDataDir ? join(evalDir, 'latest.json') : EVAL_LATEST;
+
+  // 确保 evalDir 存在
+  if (!existsSync(evalDir)) {
+    mkdirSync(evalDir, { recursive: true });
   }
 
   // 提取失败用例
@@ -182,10 +192,10 @@ export function persistResult(result: EvalResult): void {
     failures,
   };
   // latest.json（原子覆盖写——temp+rename，并发读不脏读半截 JSON）
-  atomicWriteSync(EVAL_LATEST, JSON.stringify(latest, null, 2));
+  atomicWriteSync(evalLatest, JSON.stringify(latest, null, 2));
 
   // history.jsonl（原子追加写——锁内读改写，多进程并发不丢行；原语自动补换行）
-  atomicAppendSync(EVAL_HISTORY, JSON.stringify({
+  atomicAppendSync(evalHistory, JSON.stringify({
     timestamp,
     total: result.total,
     passed: result.passed,
@@ -240,7 +250,7 @@ export async function main(cliArgs?: string[]): Promise<void> {
   const subcommand = args[0];
 
   if (!subcommand || subcommand === '--help' || subcommand === '-h') {
-    console.log('sofagent-eval — 质量评估引擎');
+    console.log('sofagent-eval — 质量评估模块');
     console.log('');
     console.log('Usage: sofagent-eval run [options]');
     console.log('');

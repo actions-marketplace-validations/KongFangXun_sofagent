@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // ============================================================
 // cli-quick.ts · npx sofagent-audit 零配置 CLI 入口
-// v1.4.3 (⑧-1)：30 秒 aha moment——任何 git repo 都能跑
+// v1.5.0 (⑧-1)：30 秒 aha moment——任何 git repo 都能跑
 //
-// 依赖说明（v1.4.3 P0-R13）：
+// 依赖说明（v1.5.0 P0-R13）：
 //   本文件 import @sofagent/core（见 package.json dependencies）。
 //   git clone 后直接跑 dist/cli-quick.js 会报 MODULE_NOT_FOUND——
 //   需先 `npm install`（根目录安装会 link workspace 依赖）或
@@ -20,14 +20,54 @@
 //   - 零 token——纯本地规则扫描，不调 LLM
 //   - 3 秒内输出——规则扫描本身是毫秒级
 //
-// 退出码：
+// 退出码（v1.4.9 P1-15 补全口径——原「四态」表述漏记用法错误态，且崩溃态与
+// 「非 git 仓库」**撞码 3**，实测两义并存）：
 //   0 = 全通过
 //   1 = 有警告
 //   2 = 有违规
-//   3 = 非 git 仓库
+//       另一来源：承载安全语义的参数拼错（--ruleset* / --config / --task / --include
+//       等，见下方 SEMANTIC_FLAG_PREFIXES 分支）＝ **用法错误**，与审计发现共用 2——
+//       两者都属「必须中断」，故不分码（v1.4.6 finding-12 起）。
+//   3 = 非 git 仓库（runCliQuick 的 `return 3`，见 `if (!isGitRepo)` 分支）
+//   4 = 引擎崩溃（uncaughtException / unhandledRejection 兜底，见下方两处 process.exit）
 // ============================================================
 
+// v1.4.8 阶段七：与 index.ts 同源的崩溃兜底——引擎异常用专属退出码 4
+// （区别 0=全绿/1=警告/2=违规/3=非 git 仓库），使 hook 的「非 0/1/2 ⇒ fail-loud 阻断」
+// 分支能识别崩溃，避免 fail-open 静默放行。
+// v1.4.9 P1-15：**3 → 4**。原用 3 与 cli-quick 自己的「非 git 仓库 ⇒ return 3」撞码
+// （实测两义并存：非 git 目录跑出 3，SOFAGENT_HOME 越界崩溃也跑出 3），撞码使问题定位
+// 需要靠 stderr 猜。独立为 4 后「崩溃」与「用错目录」可由退出码单义区分。
+// ⚠️ 与 index.ts 顶部同名常量/处理块**手同步**（两文件本就各自独立注册）
+// ——漂移由 `src/__tests__/cli-crash-exit-code.test.ts` 双侧行为锁兜住，不靠注释自律。
+const EXIT_ENGINE_CRASH = 4;
+
+// v1.4.9 P2-13：quick 模式「跳过」的解释串——**单一常量，两个输出分支共用**。
+// 缺陷（两层）：
+//   ① 定性缺失——原串只说「跳过的是什么（归因类规则缺席）」，未答「为什么可接受」。
+//      企业 IT 视角下「N 条跳过」读起来像「N 条没查」，缺一句「硬证据类已全量跑」的
+//      定性，用户无法据此判断这次审计是否够用。
+//   ② 漂移面 ×2——该串在 PASS 分支与非 PASS 分支**各写一份字面量**（改前 :224 / :242），
+//      措辞改动必须两处同改，漏一处即形成「同一 CLI 两种解释」。
+// 修法：提取为本常量（漂移面归零）+ 补「git diff 硬证据类规则已全量执行，跳过项非漏检」。
+// 保留 v1.4.3 F-08 的归因口径如实化与两条升级路径（--task / --init），本条不得覆盖它。
+// ⚠️ 漂移由 `src/__tests__/cli-quick-skip-hint.test.ts` 的**双分支行为锁**兜住。
+export const QUICK_SKIP_HINT =
+  'ⓘ 跳过 = quick 模式不含归因分析（需任务描述/Agent 日志输入的规则）'
+  + '；git diff 硬证据类规则已全量执行，跳过项非漏检'
+  + '——用 --task 走完整引擎，或安装后运行 sofagent-audit；`--init` 装 hook 走完整引擎';
+
+process.on('uncaughtException', (err) => {
+  console.error(`\u274c sofagent-audit(quick) 引擎异常退出: ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(EXIT_ENGINE_CRASH);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error(`\u274c sofagent-audit(quick) 未处理的 Promise 拒绝: ${reason instanceof Error ? reason.message : String(reason)}`);
+  process.exit(EXIT_ENGINE_CRASH);
+});
+
 import { execFileSync, spawnSync } from 'child_process';
+import { FULL_ONLY_FLAGS as FULL_ONLY_FLAGS_SRC, AUDIT_SUBCOMMANDS as AUDIT_SUBCOMMANDS_SRC } from './cli/flag-table';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { parseDiff, isInGitRepo, type DiffFile } from '@sofagent/core';
@@ -86,7 +126,7 @@ function hasParentCommit(): boolean {
  * range 的终点（`git log -1 <ref>`），而非字面 HEAD。此前 `git log -1`
  * 写死 HEAD，range 审计 HEAD~3..HEAD 时 A9 被字面 HEAD 的 commitMsg
  * 污染（误报面），且被审计历史 commit 自带的注入 payload 完全漏检（漏报面）。
- * 复用 full 引擎现成件 resolveDiffEndpoint()（diff-ref.ts），与 full 引擎
+ * 复用 full 模式现成件 resolveDiffEndpoint()（diff-ref.ts），与 full 模式
  * commitMsg 语义对齐：含 `..` 取终点、普通 ref 原样、空回退 HEAD。
  *
  * @param ref 读取 commit message 的 git ref（默认 'HEAD'，语义与旧行为等价）
@@ -196,7 +236,7 @@ export function generateQuickOutput(
     // 引擎需任务描述/Agent 日志输入），原措辞「需任务描述输入的规则」未点破归因
     // 缺席，用户误以为 quick 也做归因。指向两条升级路径：--task 走完整引擎 / 全局安装。
     if (skipCount > 0) {
-      parts.push(`ⓘ 跳过 = quick 模式不含归因分析（需任务描述/Agent 日志输入的规则）——用 --task 走完整引擎，或安装后运行 sofagent-audit；\`--init\` 装 hook 走完整引擎`);
+      parts.push(QUICK_SKIP_HINT);
     }
     // v1.3.4 P1-8: 显著回声行——用户用了三周可能不知道 sofagent 在工作，此行解决可感知性
     if (commitSha && !isRangeMode) {
@@ -214,7 +254,7 @@ export function generateQuickOutput(
     // v1.3.5 #7: 跳过计数解释（同上，非 PASS 分支也需要）
     // v1.4.3 F-08: 同 PASS 分支——归因口径如实化
     if (skipCount > 0) {
-      parts.push(`ⓘ 跳过 = quick 模式不含归因分析（需任务描述/Agent 日志输入的规则）——用 --task 走完整引擎，或安装后运行 sofagent-audit；\`--init\` 装 hook 走完整引擎`);
+      parts.push(QUICK_SKIP_HINT);
     }
   }
 
@@ -242,20 +282,19 @@ export function runCliQuick(argv: string[]): number {
   //    - 删除 '--repair'（完整版不存在该 flag）
   //    - 删除 '--verify'（不是 flag；verify 子命令是弃用 shim，走子命令路径即可）
   //    - 新增 '--verify-commit'（v1.2.9 新增 flag，需要完整引擎，否则会被 quick 吞掉）
-  const FULL_ONLY_FLAGS = ['--init', '--doctor', '--install-hook',
-    '--list-rulesets', '--ruleset', '--ruleset-path',
-    '--support-bundle', '--sign-config', '--verify-chain', '--verify-commit',
-    // v1.3.1 #1: 以下参数需要完整引擎——quick 模式不审计暂存区/commit-msg，
-    // 会静默吞掉这些参数导致 hook 审计滞后。
-    '--diff', '--cached', '--silent', '--ci', '--task', '--commit-msg',
-    // v1.4.3 F-12 (bugfix 批): --strict 需要完整引擎（WARN 升级为 FAIL 的判定在
-    // 完整引擎 runner 内）——此前不在清单，quick 态传 --strict 得「⚠️ 未知参数」
-    // 后被静默忽略继续跑（EXIT=0），用户以为严格模式生效实际没有。加入清单后
-    // 遇之自动路由完整引擎（本仓内）或提示转完整安装（npx 态）。
-    '--strict'];
+  // v1.4.8 深模块条目 8：flag/子命令单源——从 cli/flag-table.ts 派生
+  // （历史 F-12/F-13 两次漂移均因两处手工同步；各成员的收录理由注释见 flag-table）
+  const FULL_ONLY_FLAGS = [...FULL_ONLY_FLAGS_SRC];
+  // v1.4.6 finding-12: 子命令同样需要完整引擎——此前只拦 flag 不拦子命令，
+  // npx 主入口敲 `sofagent-audit agent-shield`（或 ontology/conflict-check/
+  // federation-distill/corpus）时子命令落进下方位置参数 diffRange 分支，
+  // parseDiff('agent-shield') 抛「diff 解析失败」→ 引擎崩溃 ⇒ 退出码 4
+  // （v1.4.9 P1-15：此处原先写 exit 3，与上面「非 git 仓库 ⇒ 3」撞码，已改 4）。
+  // 清单与 index.ts SUBCOMMANDS 保持对齐。
+  const FULL_ONLY_SUBCOMMANDS = [...AUDIT_SUBCOMMANDS_SRC];
 
   for (const arg of argv.slice(2)) {
-    if (FULL_ONLY_FLAGS.includes(arg)) {
+    if (FULL_ONLY_FLAGS.includes(arg) || FULL_ONLY_SUBCOMMANDS.includes(arg)) {
       // 路由到完整引擎（dist/index.js）
       const indexPath = join(__dirname, 'index.js');
       try {
@@ -279,8 +318,8 @@ export function runCliQuick(argv: string[]): number {
   if (argv.includes('--help') || argv.includes('-h')) {
     console.log('sofagent-audit — AI Agent 行为审计\n');
     console.log('用法（quick 只读审计，零安装）：');
-    console.log('  npx -y -p @sofagent/audit sofagent-audit              审计最近一次 commit（官方入口，始终最新）');
-    console.log('  npx -y -p @sofagent/audit sofagent-audit HEAD~3..HEAD   审计指定范围（quick 引擎直接跑，规则覆盖面同 quick）');
+    console.log('  npx -y -p @sofagent/audit sofagent-audit              审计最近一次 commit（官方入口，始终最新；不写 history.jsonl 无留痕，适合临时检查）');
+    console.log('  npx -y -p @sofagent/audit sofagent-audit HEAD~3..HEAD   审计指定范围（quick 模式直接跑，规则覆盖面同 quick；不写 history.jsonl）');
     console.log('  npx -y -p @sofagent/audit sofagent-audit -v, --version 显示版本号');
     console.log('  npx -y -p @sofagent/audit sofagent-audit -h, --help    显示此帮助\n');
     console.log('  npx -y -p @sofagent/audit sofagent-audit --stats          审计聚合报告（近 30 天治理 KPI——v1.4.3）');
@@ -290,6 +329,7 @@ export function runCliQuick(argv: string[]): number {
     // 却无处查边界，这里显式并列 quick flag 集 vs 完整引擎 flag 集 + 升级命令。
     console.log('双模式边界：');
     console.log('  quick 模式（本入口，零安装只读审计）仅支持：[diff 范围参数] + -h/--help + -v/--version + --stats/--days/--json；');
+    console.log('  （--ruleset 等完整引擎 flag 传入时 quick 会自动路由完整引擎不报错——见下方 flag 清单）');
     console.log('  完整引擎（--init/--doctor/--diff/--cached/--ruleset/--task/--commit-msg 等）需 --init 装 hook 或全局安装；');
     console.log('  从 quick 升级到完整：npm install -g @sofagent/audit（或 npx -y -p @sofagent/audit sofagent-audit-full）\n');
     console.log('以下 flag 需完整引擎（sofagent-audit-full 或全局安装），quick 模式会自动路由或提示安装：');
@@ -301,7 +341,7 @@ export function runCliQuick(argv: string[]): number {
     console.log('  --ruleset <name>    加载规则集（sofagent / security / 社区包）');
     console.log('  --ruleset-path <p>  加载自定义 JSON 规则路径');
     console.log('  --list-rulesets     列出可用规则集');
-    console.log('  --silent            静默模式');
+    console.log('  --silent            跳过依赖 Agent 日志的规则（A3/A7/A8/A14 等）');
     console.log('  --ci                CI 模式（输出适合 CI 解析）');
     console.log('  --strict            严格模式（无日志时 WARN 升级为 FAIL）');
     console.log('  --task <subject>    传入任务标题（A3 越界检查用）');
@@ -310,6 +350,15 @@ export function runCliQuick(argv: string[]): number {
     console.log('  --verify-chain      校验审计历史 HMAC 链完整性');
     console.log('  --verify-commit     校验单个 commit 完整性（v1.2.9+）');
     console.log('  --support-bundle    打包诊断信息\n');
+    // v1.4.9 P2-8：退出码此前只写在源码头注释里，`--help` 面零披露——
+    // 用户（尤其 CI 里）拿到 3 无从查证。此处补全，与头注释同口径
+    // （3 = 非 git 仓库为**本入口专属**；完整引擎把非 git 仓库记为 2）。
+    console.log('退出码（quick 模式口径）：');
+    console.log('  0 = 全通过');
+    console.log('  1 = 有警告');
+    console.log('  2 = 有违规（另一来源：承载安全语义的参数拼错 = 用法错误，与审计发现共用 2）');
+    console.log('  3 = 非 git 仓库（跑错目录——与「引擎崩溃」单义区分）');
+    console.log('  4 = 引擎崩溃（uncaughtException / unhandledRejection 兜底）\n');
     console.log('完整安装：npm install -g @sofagent/audit');
     return 0;
   }
@@ -362,14 +411,26 @@ export function runCliQuick(argv: string[]): number {
 
   // v1.3.1 #12: 未知 flag 检测——quick 模式支持的参数有限，
   // 不在此列表中的 `-` 开头参数会被静默忽略，用户误以为审计已覆盖。
+  // v1.4.7 批次 M：fail-loud 分级——可能承载安全语义的拼错形态（--ruleset* / --config*
+  // / --task* 等）升级 exit 2（对齐 S359 三态退出码：exit 2 = 用法错误，非审计发现）：
+  // 用户想加载规则集却敲错拼写（--rulesets 复数 / --ruleset=security 等号），拿到绿灯
+  // 且无中断 = CI 假绿直通车。纯未知 flag 保留 warn（未来兼容噪声）。
   const QUICK_KNOWN_FLAGS = new Set([
     '--help', '-h', '--version', '-v',
     // v1.4.3 第七章：聚合指标参数组（--stats 主入口 + --days/--json 修饰）
     '--stats', '--days', '--json',
   ]);
+  // 承载安全语义的参数前缀——拼错即用法错误（exit 2），不静默放行
+  const SEMANTIC_FLAG_PREFIXES = ['--ruleset', '--config', '--task', '--au', '--exclud', '--includ'];
   const warnedFlags = new Set<string>();
   for (const arg of argv.slice(2)) {
     if (arg.startsWith('-') && !FULL_ONLY_FLAGS.includes(arg) && !QUICK_KNOWN_FLAGS.has(arg)) {
+      // 语义前缀命中（含等号/复数拼错形态）：exit 2 fail-loud
+      const base = arg.split('=')[0] ?? arg;
+      if (SEMANTIC_FLAG_PREFIXES.some((p) => base.startsWith(p))) {
+        console.error(`❌ 未知参数: ${arg}——该形态可能承载安全语义（规则集/配置/任务范围），拼错即用法错误；请核对 --help 合法参数表`);
+        process.exit(2);
+      }
       if (!warnedFlags.has(arg)) {
         console.warn(`⚠️  未知参数: ${arg}，请检查 --help`);
         warnedFlags.add(arg);
@@ -398,6 +459,8 @@ export function runCliQuick(argv: string[]): number {
 
   // v1.3.4 P2-15: SHA 为 null 时输出显著警告（而非静默用 'unknown' 填充）
   // v1.3.8 P1-B5: 提示语产品化——不透传 git 原始报错（fatal: Needed a single revision）
+  // 现行行为（v1.4.5 起根 commit 补审）：有 SHA 无父提交 → 对比空树 SHA 补审全部新增内容
+  // （见下方 diffFiles.length === 0 分支）；无 SHA 时提示不审计，不静默填充。
   if (commitSha === null) {
     console.log('⚠️ [sofagent] 无法获取 commit SHA（仓库可能尚无提交记录），审计记录将不含 commit 关联。');
   }
@@ -415,28 +478,50 @@ export function runCliQuick(argv: string[]): number {
     // v1.3.8 P1-B1：首次 commit 输出矛盾修复——此前三行并存：
     //   ①「首次提交，无需审计」（parseDiff 内打印）②「审计最近一次 commit（SHA）」
     //   ③「无文件变更」——「无需审计」与「正在审计」互相打架。
-    // 规则：无 SHA 或无父提交（= 无 diff 基线）时明说「首个 commit 无基线不审计」；
-    //   有基线但 diff 为空才称「无文件变更」。
+    // 规则：有基线但 diff 为空称「无文件变更」；根 commit 补审见下方 hasBaseline 分支。
     const hasBaseline = commitSha !== null && hasParentCommit();
     if (diffRange !== 'HEAD~1..HEAD') {
       console.log(`🔍 审计指定范围（${diffRange}）`);
       console.log('');
       console.log('✅ 无文件变更——没有需要审计的内容。');
-    } else if (!hasBaseline) {
-      console.log('ℹ️ [sofagent] 首个 commit 无基线不审计——没有前一个版本可对比，下次提交起自动生效。');
+      return 0;
+    }
+    if (!hasBaseline) {
+      // v1.4.5 审查 P1 修复：根 commit 补审——此前「首个 commit 无基线不审计」直接 exit 0，
+      // 是假绿：首次提交（HEAD 存在但无父提交）含密钥/越界内容也放行。现用 git 空树 SHA 作
+      // diff 基准，审计第一个 commit 的全部新增内容，与完整引擎（index.ts）的空树补审对齐。
+      if (commitSha !== null) {
+        const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+        try {
+          diffFiles = parseDiff(`${EMPTY_TREE_SHA}..HEAD`);
+        } catch {
+          diffFiles = [];
+        }
+        if (diffFiles.length > 0) {
+          console.log(`🔍 审计首个 commit（${commitSha}）——首次提交无父基线，对比空树审计全部新增内容。`);
+          console.log('');
+          // 已有内容，继续下方规则运行（不 return）
+        } else {
+          console.log('✅ 无文件变更——没有需要审计的内容。');
+          return 0;
+        }
+      } else {
+        console.log('ℹ️ [sofagent] 首个 commit 无基线不审计——没有前一个版本可对比，下次提交起自动生效。');
+        return 0;
+      }
     } else {
       console.log(`🔍 审计最近一次 commit（${commitSha}）`);
       console.log('');
       console.log('✅ 无文件变更——没有需要审计的内容。');
+      return 0;
     }
-    return 0;
   }
 
   // 6. 运行审计规则（quick 模式：silent=true，零日志依赖）
   // v1.3.3 #8: quickMode=true 标记——A3（不改越界）见到跳过：quick 模式无真实任务描述，
   // task='quick-audit' 与任何文件都不匹配，必然 100% 误报越界 WARN。
   // v1.3.8 P1-B2: 传入真实 commitMsg（git log -1 取）——此前第 6 参恒 undefined，
-  // A9（prompt 注入检测）在 quick 模式无输入假绿；commitMsg 取不到时 A9 由引擎按
+  // A9（prompt 注入检测）在 quick 模式无输入假绿；commitMsg 取不到时 A9 按
   // 无输入处理（输出标「跳过」），不再假绿。
   // v1.3.8 P1-B4: 改用对象参数签名（十位置参数四布尔陷阱重构）。
   // v1.4.4 D-1: commitMsg 取被审计 range 终点（resolveDiffEndpoint）——

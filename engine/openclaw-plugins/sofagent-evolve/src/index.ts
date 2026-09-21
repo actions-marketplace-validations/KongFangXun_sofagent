@@ -1,8 +1,10 @@
 // sofagent-evolve · OpenClaw 原生插件（code-plugin）
 // 经验沉淀：sofagent_evolve 工具生成 think.md 反思条目（复用 @sofagent/think 的 generateThinkEntry，
-// 平台无关零重写）+ before_prompt_build 注入 think.md 反思区（进化闭环的 OpenClaw 形态）。
+// 平台无关零重写）+ before_prompt_build 注入一行收尾提示（提醒模型任务收尾时调 sofagent_evolve）。
+// ⚠️ 注入的是**提示语**不是条目正文：think.md 内容由 inject 插件的 L2 层加载链注入，本插件不重复注入。
 // 对应 DSH 插件 cordis-plugin-sofagent-evolve 的 OpenClaw 形态。
-// 品牌色 #16B8F3。API 分级：/* @public */ 导出对 OpenClaw 运行时契约锁定。
+// API 分级：/* @public */ 导出对 OpenClaw 运行时契约锁定。
+
 
 /* @public */ export interface EvolvePluginMeta {
   id: string;
@@ -12,11 +14,18 @@
   brandColor: string;
 }
 
+// v1.4.5 (T7/R4): 版本运行时读取 package.json——此前硬编码 '1.4.0'，发版 bump 后
+// pluginMeta.version 落后 4 个版本（package.json 1.4.4）。tsconfig 无 resolveJsonModule
+// （import json 编译不过），包输出为 CJS（无 type:module）→ 直接用 require 同步读。
+// 路径相对本文件编译产物 dist/index.js → 上溯一级即 package.json。
+// 读不到（打包剥离等）兜底 '0.0.0-unknown'——缺版本比错版本诚实。
+const _pkg: { version?: string } = require('../package.json');
+
 /* @public */ export const pluginMeta: EvolvePluginMeta = {
   id: 'sofagent-evolve',
   name: 'sofagent 进化',
-  version: '1.4.0',
-  description: '经验沉淀——think.md 反思条目生成 + 反思区注入（Dream Cycle + skillopt 数据源）',
+  version: _pkg.version ?? '0.0.0-unknown',
+  description: '给 OpenClaw 加上经验沉淀——sofagent_evolve 工具把踩坑写成 think.md 反思条目（可选每轮提醒，默认关）',
   brandColor: '#16B8F3',
 };
 
@@ -26,9 +35,14 @@ type OpenClawApi = any;
 /* @public */ export function register(api: OpenClawApi): void {
   const logger = api?.logger ?? console;
 
-  // 1) before_prompt_build：注入 think.md 反思区（进化闭环上下文）
+  // 1) before_prompt_build：注入收尾提示（**默认关闭**）
+  //    🔴 为什么默认关：inject 插件的 L2 层已经把 think.md 注入 prompt，本插件若每轮再
+  //    无条件 prepend 同一句样板，就是纯上下文噪声（同一件事两处注入）。需要「每轮提醒」
+  //    的部署可在 openclaw.json 里显式打开 reflectHint。
   try {
     api.on?.('before_prompt_build', (_event: unknown, ctx: any) => {
+      const cfg = ctx?.config?.plugins?.entries?.['sofagent-evolve']?.config;
+      if (cfg?.reflectHint !== true) return undefined;
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const m = require('@sofagent/think');

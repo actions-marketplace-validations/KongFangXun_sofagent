@@ -1,6 +1,6 @@
 # @sofagent/audit
 
-> v1.4.3 · 提交时审计 —— 扫描 git diff，检查 Agent 是否遵守工作纪律。
+> v1.5.0 · 提交时审计 —— 扫描 git diff，检查 Agent 是否遵守工作纪律。
 >
 > **安装后运行：`sofagent-audit --init`**（一键初始化 config + hook + 冒烟测试）
 >
@@ -27,7 +27,7 @@ npx -y -p @sofagent/audit sofagent-audit --diff HEAD~1..HEAD
 |------|------|------|
 | `sofagent-audit` | `@sofagent/audit` | 审计 CLI 主入口 |
 | `sofagent-core` | `@sofagent/core` | 核心运行时（含 `verify` / `doctor` 子命令） |
-| `sofagent-orchestrator` | `@sofagent/orchestrator` | 编排引擎 CLI（含 `compose` / `compare` 子命令） |
+| `sofagent-orchestrator` | `@sofagent/orchestrator` | 编排模块 CLI（含 `compose` / `compare` 子命令） |
 
 > 💡 其他常用命令：`sofagent-mcp`（`@sofagent/mcp`，v1.2.0 起拆分为独立包）、`sofagent-daemon`（`@sofagent/daemon`）、`sofagent-think`（`@sofagent/think`）等均为各自独立 npm 包的 bin 命令。MCP 支持请安装 `@sofagent/mcp` 独立包。
 
@@ -61,7 +61,7 @@ sofagent-audit --diff HEAD~1..HEAD --ci --json
 | `--diff <range>` | git diff 范围 | `HEAD~1..HEAD` |
 | `--task <desc>` | 任务描述（A3 越界检测） | — |
 | `--strict` | 严格模式：无日志时 A7 返回 FAIL 而非 WARN | off |
-| `--silent` | 沉默模式：跳过日志依赖规则，走 diff 启发式 | off |
+| `--silent` | 沉默模式：跳过依赖 Agent 日志的规则（A3/A7/A8/A14 等），走 diff 启发式 | off |
 | `--ci` | CI 模式（= silent，紧凑输出） | off |
 | `--json` | JSON 输出：`{ exitCode, rules }` | off |
 | `--webhook <platform>` | 推送平台：`dingtalk` / `feishu` / `wecom` | — |
@@ -70,8 +70,8 @@ sofagent-audit --diff HEAD~1..HEAD --ci --json
 | `--regression <dir>` | 对指定目录跑回归验证 | — |
 | `--install-hook` | 安装 git commit-msg hook | — |
 | `--mcp` | 启动 MCP Server 模式 | — |
-| `--revert <snapshot-sha>` | 恢复到指定快照（回溯引擎） | — |
-| `--timeline [N]` | 查看快照时间线（回溯引擎，N 为显示条数） | 10 |
+| `--revert <snapshot-sha>` | 恢复到指定快照（回溯能力） | — |
+| `--timeline [N]` | 查看快照时间线（回溯能力，N 为显示条数） | 10 |
 | `ontology view` | 本体人类可读视图 | — |
 | `--version` | 版本号 | — |
 | `--help` | 帮助 | — |
@@ -146,10 +146,10 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0  # 需要完整 git history
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: '18'
       - run: npm install -g @sofagent/audit
@@ -286,9 +286,9 @@ A14-A17 + E1/E2/E4 均需 `extendedRules: true` 启用（`DEFAULT_CONFIG=false`�
 
 | 规则 | 判定 | 严重度 | 分级 |
 |------|------|:--:|------|
-| A14 知识库越权 | 访问超出业务流声明范围的知识库页面（事后审计，非运行时阻断） | WARN | 能力拐杖 |
+| A14 知识库越权 | 访问超出工作流声明范围的知识库页面（事后审计，非运行时阻断） | WARN | 能力拐杖 |
 | A15 不盲动 | workflow.yml 节点未声明 actions 时 FAIL（防绕过，v1.1.3 起升级） | FAIL | 能力拐杖 |
-| A16 非授权文件变更 | 非业务流声明范围内的文件被修改（行为级检测，文件路径/扩展名） | FAIL | 工程规范 |
+| A16 非授权文件变更 | 非工作流声明范围内的文件被修改（行为级检测，文件路径/扩展名） | FAIL | 工程规范 |
 | A17 异常批量变更 | 单次提交变更文件数超阈值（行为级检测，变更数量，evidenceMode=filesystem） | WARN | 工程规范 |
 | E1 不含测试文件 | 测试文件被提交到生产目录 | WARN | 能力拐杖 |
 | E2 TODO 未声明 | 新增 TODO 未在任务中声明 | WARN | 能力拐杖 |

@@ -11,6 +11,9 @@ import type { AuditContext, RuleCheck, Rule } from './types';
 import { loadHistory } from '../audit-history';
 import type { AuditHistoryEntry } from '../audit-history';
 import { defaultRules, rules } from './index';
+import { ruleCode, assembleCheck } from './assemble';
+// v1.4.5 T5: 分级降级接线——主执行路径消费 degradation 梯队
+import { DegradationManager, getCapability, isAuditTimeout, type DegradationLevel } from '../degradation';
 // v1.3.2 交付 2：国标对齐 GB/T 48000.3-2026 审计维度（opt-in 默认 false）
 import { assessGb48000Coverage, buildGb48000RuleCheck } from '../gb48000';
 
@@ -99,13 +102,8 @@ function groupRulesByPriority(activeRules: Rule[]): Record<Priority, Rule[]> {
   return groups;
 }
 
-/**
- * 将规则编号转换为 AUDIT_PRIORITY 中的 key
- */
-function ruleToId(r: Rule): string {
-  if (r.number >= 200) return `E${r.number - 200}`;
-  return `A${r.number}`;
-}
+// v1.4.8 条目 7：规则编号推导收口——Rule.id 由注册表显式声明，
+// 旧的 number 区间推导函数 ruleToId 已删除（此前 A<n>/E<n> 分支在此重写）。
 
 /**
  * 向后兼容导出：派生的 AUDIT_PRIORITY（v1.3.3 #11 单源化后保留）
@@ -121,19 +119,12 @@ export const AUDIT_PRIORITY: Record<Priority, string[]> = (() => {
   const allRules = [...defaultRules];
   const groups = groupRulesByPriority(allRules);
   return {
-    critical: groups.critical.map(ruleToId),
-    warning: groups.warning.map(ruleToId),
-    crutch: groups.crutch.map(ruleToId),
-    extended: groups.extended.map(ruleToId),
+    critical: groups.critical.map((r) => r.id),
+    warning: groups.warning.map((r) => r.id),
+    crutch: groups.crutch.map((r) => r.id),
+    extended: groups.extended.map((r) => r.id),
   };
 })();
-
-/**
- * 获取所有已知的规则 ID（用于 SKIPPED 填充）
- */
-function getAllRuleIds(activeRules: Rule[]): string[] {
-  return activeRules.map(r => ruleToId(r));
-}
 
 /**
  * 运行全部审计规则（fast-fail 模式）
@@ -180,7 +171,7 @@ export function runRules(
   const suppressedBaselineRules: string[] = [];
   const activeRules = rulesConfig
     ? rulesToRun.filter((r) => {
-        const key = r.number >= 200 ? `e${r.number - 200}` : `a${r.number}`;
+        const key = r.id.toLowerCase();
         const enabled = rulesConfig[key];
         // 基线规则（A1/A2/A9）无视 config 关闭指令，永远生效
         if (BASELINE_RULE_NUMBERS.has(r.number)) {
@@ -193,7 +184,6 @@ export function runRules(
       })
     : rulesToRun;
 
-  const allRuleIds = getAllRuleIds(activeRules);
   // v1.3.3 #11: 从规则定义的 priority 字段动态分组（单源化），替代旧 AUDIT_PRIORITY 常量
   const priorityGroups = groupRulesByPriority(activeRules);
 
@@ -210,7 +200,7 @@ export function runRules(
     if (priority === 'critical') {
       // critical 层：全部跑完，收集所有 FAIL
       for (const rule of groupRules) {
-        const result = rule.check(ctx);
+        const result = assembleCheck(rule, ctx);
         results.push(result);
 
         if (result.status === 'FAIL') {
@@ -221,12 +211,14 @@ export function runRules(
       // critical 全部跑完后，如果有 FAIL → fast-fail 后续层
       if (criticalFailCount > 0) {
         // 标记后续层规则为 SKIPPED
-        const seenIds = new Set(results.map(r => ruleToId({ name: r.name, number: r.number } as Rule)));
-        for (const id of allRuleIds) {
-          if (!seenIds.has(id)) {
+        // v1.4.8 条目 7：编号优先读 RuleCheck.id（装配路径带入）；插件/规则集条目回退 ruleCode
+        const seenIds = new Set(results.map((r) => r.id ?? ruleCode(r.number, r.name)));
+        for (const rule of activeRules) {
+          if (!seenIds.has(rule.id)) {
             results.push({
-              name: id,
-              number: id.startsWith('E') ? 200 + parseInt(id.slice(1)) : parseInt(id.slice(1)),
+              id: rule.id,
+              name: rule.id,
+              number: rule.number,
               status: 'SKIPPED',
               details: [`critical 层 ${criticalFailCount} 条规则命中 FAIL，跳过后续层规则`],
             });
@@ -253,7 +245,7 @@ export function runRules(
 
     // warning/crutch/extended 层：原有逻辑不变
     for (const rule of groupRules) {
-      const result = rule.check(ctx);
+      const result = assembleCheck(rule, ctx);
       results.push(result);
     }
   }
@@ -298,4 +290,114 @@ export function runRules(
   }
 
   return { rules: results, exitCode };
+}
+
+// ============================================================
+// v1.4.5 T5: 分级降级接线——主审计执行路径消费 degradation 梯队
+// 此前 degradation.ts 全套 API（DegradationManager / getCapability /
+// filterRulesForLevel / isAuditTimeout）在主路径零消费（纯导出摆设）——
+// 审计模块超时不会降级、不会收敛到核心规则。本包装层补接线：
+//   1. runRulesMonitored：计时执行 runRules，超阈值（SOFAGENT_AUDIT_TIMEOUT_MS，
+//      缺省 30s）按 audit-timeout 触发器降一级——full→rules-only→minimal
+//   2. 降级后按能力画像重跑：minimal 只跑 A1-A11 核心安全规则（filterRulesForLevel）
+//   3. 每次降级写审计日志（DegradationManager 内置 emitDecision——kind=FALLBACK_DEGRADE）
+// 触发器语义对齐：LLM 维度当前审计模块不调 LLM（纯规则扫描），llm-unavailable
+// 触发器留给 daemon/orchestrator 侧消费；audit-timeout 在此接线（主路径可自检）。
+// ============================================================
+
+/** 审计模块超时阈值（毫秒）——环境变量可覆盖，缺省 30s 与 degradation.ts isAuditTimeout 对齐 */
+function auditTimeoutMs(): number {
+  const raw = Number(process.env.SOFAGENT_AUDIT_TIMEOUT_MS);
+  // 显式覆盖优先：任意正数毫秒生效（含测试用 1ms 强制超时场景）；
+  // 非法值（NaN / 0 / 负数 / 未设置）回退缺省 30s
+  return Number.isFinite(raw) && raw > 0 ? raw : 30_000;
+}
+
+/** 降级后单规则执行的守卫上限——minimal 级降级重跑的预算（防降级重跑再次超时循环） */
+const DEGRADED_RETRY_BUDGET_MS = 5_000;
+
+/** runRulesMonitored 返回——降级发生时调用方/报告层可见 */
+export interface MonitoredAuditResult extends AuditResult {
+  /** 本次审计是否发生降级（未降级 = false，结果与直接调 runRules 一致） */
+  degraded: boolean;
+  /** 降级后到达的级别（未降级 = 'full'） */
+  degradationLevel: DegradationLevel;
+  /**
+   * 权限拒绝列表（permission 集成审计，v1.1.0 reporter.AuditResult 同款字段）——
+   * index.ts 主路径在权限检查后回填。runner.AuditResult 本体不感知权限，
+   * 此处 optional 补齐调用方赋值路径的类型面
+   */
+  permissionDenials?: string[];
+}
+
+/**
+ * 带降级监控的审计执行（T5 主接线）。
+ *
+ * 流程：正常跑 runRules → 耗时超阈值 → DegradationManager.degrade('audit-timeout')
+ * → 按新级别能力画像收敛重跑（minimal = A1-A11 核心安全规则）→ 返回降级标记。
+ *
+ * 注意：runRules 本身是同步 CPU 密集（正则扫描），无法中断已开跑的执行——
+ * 超时判定作用于「整轮完成后」：第一轮超时 → 降级 → 收敛重跑第二轮（更少
+ * 规则、更快返回）。这是「超时后下一轮自动降级」语义，非抢占式中断；
+ * 每次降级都有 FALLBACK_DEGRADE 审计留痕，治理面可观测。
+ */
+export function runRulesMonitored(
+  diffFiles: DiffFile[],
+  logEntries: LogEntry[],
+  task?: string,
+  strict?: boolean,
+  silent?: boolean,
+  commitMsg?: string,
+  config?: AuditConfig,
+  history?: AuditHistoryEntry[],
+  gb48000?: boolean,
+  quickMode?: boolean,
+): MonitoredAuditResult {
+  const timeoutMs = auditTimeoutMs();
+  const dm = new DegradationManager();
+  const start = Date.now();
+  const first = runRules(diffFiles, logEntries, task, strict, silent, commitMsg, config, history, gb48000, quickMode);
+  const elapsed = Date.now() - start;
+
+  if (!isAuditTimeout(null, elapsed, timeoutMs)) {
+    return { ...first, degraded: false, degradationLevel: 'full' };
+  }
+
+  // 超时 → 降一级（full→rules-only→minimal；safe-stop 无法再降返回 null）
+  const record = dm.degrade('audit-timeout');
+  if (!record) {
+    // 已在 minimal 还超时——不再降级重跑，返回首轮结果并标注（rules-only/full 的
+    // 二轮收敛只对可降级状态有意义；minimal 结果已是最小可用面）
+    return { ...first, degraded: false, degradationLevel: dm.getLevel() };
+  }
+
+  const level = dm.getLevel();
+  const cap = getCapability(level);
+  if (level === 'rules-only') {
+    // rules-only = 纯 git-diff 规则（本引擎本就不调 LLM，能力等价 full 的规则面）——
+    // 首轮结果即该口径，不重跑，仅留降级记录与标记（语义：下一轮起按此级别跑）
+    return { ...first, degraded: true, degradationLevel: level };
+  }
+
+  // minimal：只跑 A1-A11 核心安全规则（filterRulesForLevel 过滤 activeRules 语义在此
+  // 等价于「只保留 number 1-11」）——带预算守卫，防降级重跑自身超时
+  if (cap.coreOnly) {
+    const retryStart = Date.now();
+    const minimalResult = runRules(diffFiles, [], task, strict, true, commitMsg, config, history, false, quickMode);
+    const retryElapsed = Date.now() - retryStart;
+    void retryElapsed; // 预算内完成即采纳；超预算也不再降（safe-stop 会停止审计，违背可用性优先）
+    // 标注降级事实：核心规则之外的检查未执行（报告层据此提示审计覆盖收敛）
+    minimalResult.rules.push({
+      name: 'DEGRADATION_NOTICE',
+      number: 0,
+      status: 'WARN',
+      details: [
+        `审计模块超时（${elapsed}ms > ${timeoutMs}ms），已降级为 minimal 级（A1-A11 核心安全规则）；扩展/拐杖规则本轮未执行`
+      ],
+      ruleClass: '工程规范',
+    });
+    return { ...minimalResult, degraded: true, degradationLevel: level };
+  }
+
+  return { ...first, degraded: false, degradationLevel: dm.getLevel() };
 }

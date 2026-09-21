@@ -1,9 +1,26 @@
 # 贡献指南
 
+<p align="center"><img src="docs/assets/sofagent.png" alt="sofagent" width="96" /></p>
+
 > 📖 新贡献者？先看 [COMMUNITY.md](./docs/COMMUNITY.md) 了解社区现状和贡献路径。
-> 📌 基于版本 v1.4.1（2026-08-27）修订，目录结构以当前 main 分支为准。
+> 📌 基于当前 main 分支结构修订，目录与文件以你面前的仓库为准。
+> v1.5.0 · 2026-09-19（UTC）· ✅ 已发版 · 孔放勋
 
 欢迎参与 sofagent！这个项目的代码由 AI 模型辅助生成（详见[致谢](./docs/THANKS.md#生成伙伴)），作者做产品决策和终审。你看到的任何技术问题，请直接指出来，不必客气。
+
+---
+
+## 目录
+
+- [新人 30 秒快速开始](#新人-30-秒快速开始)
+- [怎么参与](#怎么参与)
+- [项目维护模型](#项目维护模型)
+- [开发环境 + 发版](#开发环境--发版)
+- [目前最需要的帮助](#目前最需要的帮助)
+- [Seeking Co-maintainers](#seeking-co-maintainers)
+- [行为准则](#行为准则)
+- [License](#license)
+- [成为维护者](#成为维护者)
 
 ---
 
@@ -13,10 +30,10 @@
 |------|------|
 | 报 Bug / 提想法 | → [开 Issue](https://github.com/KongFangXun/sofagent/issues/new/choose) |
 | 不知道怎么用 | → [Discussions 去问](https://github.com/KongFangXun/sofagent/discussions) |
-| 不知道怎么测 | → 看 [testing.md](./docs/guides/testing.md) 的 5 个标准化用例 |
+| 不知道怎么测 | → 看 [testing.md](./docs/guides/testing.md) 的 9 个标准化用例 |
 | 想直接改代码 | → 看下面「贡献者 10 分钟速览」 |
 | 想理解概念 | → 看 [ARCHITECTURE.md](./docs/ARCHITECTURE.md) |
-| 想跑实验 | → 看 docs/evidence/benchmark/ 的实验记录模板 |
+| 想跑实验 | → 看 [benchmark 复现指南](./docs/evidence/benchmark/reproduction-guide.md) 与 [案例模板](./docs/evidence/case-study-template.md) |
 
 ### 贡献者 10 分钟速览
 
@@ -24,17 +41,17 @@
 
 | 顺序 | 文件 | 看什么 | 约几分钟 |
 |:--:|------|------|:--:|
-| 1 | [SKILL.md](./SKILL/SKILL.md) | 4 底线 + 7 则铁律 | 3 min |
+| 1 | [SKILL.md](./SKILL/SKILL.md) | 4 底线 + 9 则铁律 | 3 min |
 | 2 | [CHANGELOG.md](./CHANGELOG.md) | 最新版本的变更 | 5 min |
 | 3 | [LIMITATIONS.md](./docs/LIMITATIONS.md) | 已知局限 | 2 min |
 
-**先改 2 个脚本（最低门槛）**：
+**先改 3 个文件（最低门槛）**：
 
 | 脚本 | 改什么 | 难度 |
 |------|------|:--:|
 | `install.sh` | BSD/macOS 兼容性修复 | ⭐⭐ |
 | `engine/scripts/verify.sh` | 新增检查项（bash 版，安装流程内调用） | ⭐ |
-| `engine/audit/src/verify.ts` | TS 版验证（npm bin `sofagent-verify`） | ⭐ |
+| `engine/audit/src/verify.ts` | TS 版验证（命令为 `sofagent-core verify`；无 `sofagent-verify` 这个 bin） | ⭐ |
 
 **跑 1 条命令验证**：
 
@@ -51,14 +68,14 @@ bash install.sh && bash engine/scripts/verify.sh
 
 | 目录 | 内容 |
 |------|------|
-| `engine/` | 13 个 @sofagent/* npm 发布包（`audit` 审计引擎 / `core` 底座 / `daemon` 守护 / `orchestrator` 编排 / `mcp` / `rules` / `eval` / `think` / `skillopt` / `ontology` / `harness` / `ab-test` / `hooks/sofagent-load-chain` 加载链 Hook）——全部发布到 npm，12 个含 test script；另有 2 个插件族：`dsh-plugins/`（cordis-plugin-sofagent-* 9 款 DSH 插件）+ `openclaw-plugins/`（OpenClaw code-plugin 4 款） |
+| `engine/` | 13 个 @sofagent/* 模块包（`audit` 审计模块 / `core` 底座 / `daemon` 守护 / `orchestrator` 编排 / `train` 后训 / `mcp` / `rules` / `eval` / `think` / `evolve` / `ontology` / `inject`（v1.5.0 前名 harness）/ `ab-test`，13 个均含 test script）+ `hooks/sofagent-load-chain`（加载链 Hook，工具包非模块包）+ `umbrella/`（npm 裸名总包 `sofagent`）——模块包全部发布到 npm；另有 2 个插件族：`engine/dsh-plugins/`（cordis-plugin-sofagent* 7 款 DSH 插件：6 款原子 + 1 款聚合整装）+ `engine/openclaw-plugins/`（OpenClaw code-plugin 4 款） |
 | `engine/audit/src/rules/` | 审计规则实现（`rule-a*.ts` A1-A23 + `skill-safety-engine.ts`）；A20 网络外传 / A21 持久化后门 / A22 权限提升 / A23 路径穿越 |
 | `engine/audit/src/` | 审计核心：`audit-trail.ts` 审计轨迹聚合 + `protocol-neutrality.ts` 协议中立声明 |
 | `engine/audit/src/permission/` | 权限配置加载与检查 |
 | `engine/core/src/` | 底座：配置加载 / 原子写入 / 审计历史哈希链 / 联邦合并 / 安全脱敏；`agent-identity.ts` Agent 身份码 |
 | `engine/daemon/src/` | 守护进程：cron / fs 监听 / 联邦查询 / Dream Cycle / 巡检器；`with-retry.ts` 推送重试 + `daemon-health.ts` 健康自检 |
-| `engine/orchestrator/src/` | 编排引擎：`activate.ts` 激活链 Phase 1（读 FDE 交付物 → 注册企业 SubAgent） |
-| `tools/` | 门禁脚本（`check-docs.sh` / `check-test-count.sh` / `pre-push-check.sh` / `sofagent-dashboard.sh`） |
+| `engine/orchestrator/src/` | 编排模块：`activate.ts` 激活链 Phase 1（读 FDE 交付物 → 注册企业 SubAgent） |
+| `tools/` | 维护者工具脚本（门禁在 `tools/check/`：`check-docs.sh` / `check-test-count.sh`；发布链在 `tools/release/`：`pre-push-check.sh`；仪表盘在 `tools/dashboard/`：`sofagent-dashboard.sh`；完整清单见 `tools/README.md`） |
 | `FORGE/` | 项目自迭代工具链（LOOP 流水线 / playbook / fresh-eyes 审查体系） |
 | `FDE/` | 前线部署方法论（GUIDE + templates） |
 | `SKILL/` | 技能文件（SKILL.md 宪法 + harness 模板 + 子 Skill） |
@@ -72,7 +89,7 @@ bash install.sh && bash engine/scripts/verify.sh
 | 2 | 给 install.sh lib 模块加参数校验 | `engine/scripts/lib/*.sh` | ⭐ | 10 min |
 | 3 | 修复一个 ShellCheck 警告 | 见 ShellCheck Action 报告 | ⭐⭐ | 10 min |
 | 4 | 补一条审计规则 + 测试 | `engine/audit/src/rules/rule-a*.ts` + `.test.ts` | ⭐ | 15 min |
-| 5 | 翻译一段 README 到英文 | `README.en.md` | ⭐⭐ | 15 min |
+| 5 | 翻译一段 HANDBOOK 到英文 | `docs/HANDBOOK.md` → 英文版 | ⭐⭐ | 15 min |
 
 ---
 
@@ -104,14 +121,14 @@ bash install.sh && bash engine/scripts/verify.sh
 
 **改 Skill 文件**：先改 `SKILL/harness/`（唯一权威），再 `bash install.sh` 同步。
 
-**文档修改**：改 HANDBOOK 必须同步更新 `SKILL/harness/` 下模板。详见 [DEVELOPER §七](./docs/DEVELOPMENT.md#七数据文件架构)。
+**文档修改**：改 HANDBOOK 必须同步更新 `SKILL/harness/` 下模板。详见 [DEVELOPMENT §七](./docs/DEVELOPMENT.md#七数据文件架构)。
 
 > 📋 **文档措辞规范（v1.3.4 起）**：sofagent 对「对外文档」和「内部文档」的措辞要求不同，避免审查者反复误报：
 >
 > | 文档类型 | 代表文件 | 「开发中 / WIP / draft」类措辞 | 说明 |
 > |---------|---------|------|------|
 > | **对外文档** | `README.md`、badge、`README.en.md` | ❌ **禁止** | 面向陌生读者和潜在用户，「开发中/WIP/draft」降低可信度。只允许发布版本号或「规划中」（指向明确路线） |
-> | **内部文档** | `docs/ROADMAP.md`、`docs/CHANGELOG.md`、`docs/changelog/` | ✅ **允许** | 面向贡献者，标注「开发中/已排期/尚未实现」是正常的项目状态披露，不违反铁律 |
+> | **内部文档** | `docs/ROADMAP.md`、`CHANGELOG.md`、`docs/changelog/` | ✅ **允许** | 面向贡献者，标注「开发中/已排期/尚未实现」是正常的项目状态披露，不违反铁律 |
 >
 > **规则**：看到 README/badge 出现「开发中/WIP/draft」→ 要改（对外文档必须显得已完成或有明确规划）；看到 ROADMAP/CHANGELOG 出现「开发中/已排期」→ 不用改（内部文档正常披露）。
 
@@ -132,7 +149,7 @@ git clone https://github.com/KongFangXun/sofagent.git
 cd sofagent && bash install.sh && bash engine/scripts/verify.sh
 ```
 
-发版：按 [docs/changelog/releasing.md](./docs/changelog/releasing.md) 十一阶段 SOP 执行——阶段一~四（审查/开发/质量循环/审查体系）→ 阶段五~七（发版闸门/文档收尾/工具健康）→ 阶段八（确认关口）→ 阶段九~十（发布：npm 13 包 + ClawHub/SkillHub 双分发 + tag + Release）→ 阶段十一（发布后收尾）。简版：`docs/changelog/vX.Y/vX.Y.Z.md` 写日志 → `CHANGELOG.md` 加索引 → `tools/release/bump-version.sh` 升级版本号 → `./tools/pre-push-check.sh` 全绿 → `git tag vX.Y && git push` → `gh release create vX.Y`。
+发版：按 [docs/changelog/releasing.md](./docs/changelog/releasing.md) 十一阶段 SOP 执行——阶段一~四（审查/开发/质量循环/审查体系）→ 阶段五~七（发版闸门/文档收尾/工具健康）→ 阶段八（确认关口）→ 阶段九~十（发布：npm 13 包 + ClawHub/SkillHub 双分发 + tag + Release）→ 阶段十一（发布后收尾）。简版：`docs/changelog/vX.Y/vX.Y.Z.md` 写日志 → `CHANGELOG.md` 加索引 → `tools/release/bump-version.sh` 升级版本号 → `tools/release/pre-push-check.sh` 全绿 → `git tag vX.Y && git push` → `gh release create vX.Y`。
 
 > 📋 **changelog 写作规范**：changelog 是对外公开文档，**不写人名、内部私有路径、内部工单/审查代号**。
 > - ❌ 不写开发成员名字或角色代号（如"某某拍板""供某某实现"）
@@ -175,7 +192,7 @@ sofagent 当前维护者为孔放勋一人。不设申请制——贡献自然�
 | **OpenClaw hook (TS)** | handler.ts 回归测试 + 升级适配 | 2-3 小时 |
 | **英文文档** | HANDBOOK + README 英文翻译 | 不限 |
 
-> 🔴 如果你是 bash 方向开发者，直接开 Issue 说「我想做 Co-maintainer」——不用走正常流程。
+> 🔴 如果你是 bash 方向开发者，先开 Discussion 与维护者聊聊方向（早期接触不算正式申请，正式标准见下方「Seeking Co-maintainers」）。
 
 ---
 
@@ -195,7 +212,7 @@ sofagent 当前维护者为孔放勋一人。不设申请制——贡献自然�
 
 ## 成为维护者
 
-sofagent 当前 bus factor = 1（唯一维护者）。如果你以下条件满足至少 2 条，欢迎联系维护者讨论成为 co-maintainer：
+sofagent 当前 bus factor = 1（唯一维护者）。上面的「Seeking Co-maintainers」表是正式标准（合并 PR ≥5 + 持续 ≥2 月 + 作者邀请）；如果你已满足以下早期信号中的至少 2 条，可以先开 Discussion 与维护者聊聊方向——早期接触不算正式申请：
 
 - 提交过 3+ 个被合并的 PR
 - 熟悉 bash 兼容性 / OpenClaw hook / 安全审计 / 英文文档 中至少一个领域

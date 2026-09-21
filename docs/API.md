@@ -1,0 +1,216 @@
+# 接口总览 · API
+
+<p align="center"><img src="assets/sofagent.png" alt="sofagent" width="96" /></p>
+
+> sofagent 对外全部能力面的一站式清单——七大接口面 + MCP 105 tools 按域分组（第七面「标准数据推送接口」入口已接线：MCP tool `data_push` 双闸入库；v1.4.9 G9 新增 device_register/device_list 设备注册面，G10/G11 新增 device_data_query/device_data_push 设备数据面，G5b/G1 新增 connector_register/connector_list 连接器面与 workflow_export/workflow_import 模板面，批 5 新增 router_session_push 过站 session 承接面）。工具清单由 `engine/mcp/src/tool-registry.ts` 生成（scripts/check 门禁对账，文档与代码永不漂移）。
+>
+> 版本：v1.5.0（✅ 已发版）· 105 tools / 7 面（**105 = v1.4.9 的 104 + v1.5.0 新增 `trace_reconcile`**，状态见 [ROADMAP](./ROADMAP.md)；第 7 面 v1.4.6 交付；v1.4.7 新增 11 tool 归入既有面；v1.4.9 G9 新增 device_register/device_list，G10/G11 新增 device_data_query/device_data_push，G5b/G1 新增连接器与模板 4 tool，批 5 新增 router_session_push）
+
+---
+
+## 目录
+
+- [一、七大接口面](#一七大接口面)
+- [二、MCP 工具清单（105 · 按产品能力域分组）](#二mcp-工具清单105--按产品能力域分组)
+- [三、防漂移机制](#三防漂移机制)
+- [四、变更日志](#四变更日志)
+
+---
+
+## 一、七大接口面
+
+| # | 接口面 | 入口 | 认证 | 典型用途 |
+|---|--------|------|------|---------|
+| 1 | **MCP tools** | stdio MCP server（install.sh 自动配置） | 本地进程（无需凭证） | Agent 调用审计/编排/训练/治理全部能力 |
+| 2 | **npm CLI** | `sofagent-audit` 等二进制 | 本地 | git hook / CI / 人工调用审计 |
+| 3 | **git hook** | `sofagent-audit --install-hook` | git 本地 | 提交前自动审计（24 条规则 + HMAC 链） |
+| 4 | **平台挂载** | GEMINI.md / .cursor/rules/sofagent.mdc / AGENTS.md | 平台加载链 | 平台 AI 助手直接引用约束 |
+| 5 | **Skill 分发** | ClawHub（`clawhub skill publish`）/ SkillHub | 平台账号 | SKILL/ 目录规则资产发布更新 |
+| 6 | **Webhook 推送** | 飞书/钉钉/企微 webhook URL | 签名 | 审计结果 PASS/WARN/FAIL 三态推送 |
+| 7 | **标准数据推送接口** | 数据推送 API（约定 schema · schema 校验 + 敏感分拣双闸，企业合规拦截策略预留扩展）——MCP tool `data_push` 入口已接线（v1.4.8） | 企业凭证 | 企业存储/业务系统推送训练语料与知识数据 |
+
+各面详细配置见对应文档：MCP 见 [engine/mcp/README.md](../engine/mcp/README.md) · CLI/hook 见 [SECURITY.md](../SECURITY.md) · 平台挂载见 [AGENTS.md](../AGENTS.md) · Skill 分发见 [SKILL/SKILL.md](../SKILL/SKILL.md) · Webhook 见 [SECURITY.md §审计结果推送](../SECURITY.md)。标准数据推送接口（第七面）`data_push` 入口已接线（v1.4.8），详见 [v1.4.8 开发日志](./changelog/v1.4/v1.4.8.md)。
+
+---
+
+## 二、MCP 工具清单（105 · 按产品能力域分组）
+
+> 十个能力域按「一个组 = 一个可独立讲述的产品能力」划分，与五能力叙事的对应：本节工具承载其中的**审计**（审计与合规）、**回溯**（快照与回溯）、**沉淀**（知识资产与能力市场）、**进化**（后训练流水线与 FDE 沉淀）能力面；**注入**能力走加载链文件（SKILL.md/fde.md/think.md/knowledge/），不经 MCP 暴露。**roles 列保留运行时真值**——`SOFAGENT_MCP_ROLES=audit,ops` 收窄面以 roles 为准（v1.4.0 工具角色分层），分组是文档编制判断。浏览器四件套（playwright_*）归审计域——主叙事是 UI 层审计取证（v1.5.2 UI 审计的执行底座）。**与 ARCHITECTURE 的「MCP 工具五域一环」组织法（业务职能分桶）互为正交的另一套分桶**：两套分组用途不同、条目数不等属预期；工具总数的唯一权威源是 `engine/mcp/src/tool-registry.ts` 的 `TOOLS` 数组（见 [ARCHITECTURE · 能力与状态总览](./ARCHITECTURE.md)）。
+
+### FDE 进场 · 六引擎（访谈 → 分类 → 量化 → 推导 → 沉淀 → 部署）（7）
+
+| tool | roles | 说明 |
+|---|---|---|
+| `onboard_prompt` | agent | 上岗 prompt 生成器——岗位描述 → 三段结构（职责/边界/工具面），产物经 workflow_node_add 落进节点配置（与 workflow CRUD 闭环）。 |
+| `fde_interview` | fde | FDE 访谈结构化落盘（引擎一）——五要素逐节点收集，多轮追加按 nodeId 幂等合并，自动重算企业画像（节点数/岗位分布/高频痛点）；prompts_only=true 返回六条追问话术（五要素 + 实际流程）。 |
+| `fde_classify` | fde | FDE 三问判定 → 节点方案（引擎二）——classifyAutomation SSOT 判定（🔄自动/⚡强化/👤暂不动）+ 六步分解最小工作单元（GUIDE §3.2）+ executor 映射，落 nodes.json。 |
+| `fde_quantify` | fde | FDE 量化四字段 + ROI 排序（引擎三）——年节省=岗位年薪×AI接管工时占比（GUIDE §4.3，与 train_report 同公式同源）；ROI=年节省÷(投入+1) 降序，落 quantification.json（若引擎二已跑自动关联判定标签）。 |
+| `fde_derive` | fde | FDE 本体推导（引擎四）——五要素+访谈 → 实体/概念/关系 YAML 草稿；机器初稿人工确认后经 ontology_import 导入；超 10 实体或 5 节点提示 needsFullOntology。 |
+| `fde_distill` | fde | FDE 三层交付物生成（引擎五）——跑通过程沉淀：文档层手册（人读：现状/六步/验收/回滚）+ Skill 层模板（Agent 可执行）+ 运行层 yaml 片段（引擎六组装用），归档 deliverables/ 带 README 索引。 |
+| `fde_deploy` | fde | FDE workflow 组装部署（引擎六）——三层交付物 → deployments/<name>.yml（与 fde_compose 同格式）；只产出工件不代激活——激活走 workflow_submit + activate_workflow（人审闸门保留）。 |
+
+### 审计与合规（代码 / 轨迹 / 数据审计 · 浏览器取证 · 语料导出）（12）
+
+| tool | roles | 说明 |
+|---|---|---|
+| `playwright_navigate` | browser | 浏览器导航——打开 URL 并返回页面标题/状态码。Playwright 不可用时降级。 |
+| `playwright_click` | browser | 浏览器点击——按 CSS 选择器点击元素。Playwright 不可用时降级。 |
+| `playwright_screenshot` | browser | 浏览器截图——截取当前页面，返回图片路径与字节数。 |
+| `playwright_assert` | browser | 浏览器断言——对页面执行断言（文本/元素存在性），返回 passed 与详情。 |
+| `run_audit` | audit | 对 git diff 运行全量审计（24 条规则），返回结构化审计报告。 |
+| `audit_file` | audit | 单文件变更即时审计——Agent 编辑文件时调用，跑单文件适用规则，返回结构化结果（不阻断）。 |
+| `audit_data_change` | audit | 对知识库结构化数据变更跑数据审计（D1-D5）。 |
+| `audit_trail` | audit | 跨设备审计轨迹查询——按 agent_id 查完整轨迹（HMAC 验签）。 |
+| `data_push` | ops | 标准数据推送入口——企业存储按约定 schema 推送训练语料/知识数据，经分拣闸（敏感档标记）+ 合规闸（拦截违规）双闸入库，拒绝留痕进审计链。 |
+| `corpus_export` | ops | 训练语料导出三件套——规则（27 编号位含跳号占位 + reward_hint 骨架 + verifiers 三桶清单）+ FDE 方法论（锚点解析）+ 带标签审计样本（六源聚合 + 脱敏）。导出带版本号 + HMAC 签名，导出行为记 corpus_export 审计事件。 |
+| `device_data_push` | ops | 数据上行通道（G11）：设备门禁 → 采集声明校验（默认空=不上行，opt-in）→ 脱敏 → AES-256-GCM 加密入队（WAL 暂存断网不丢，游标续传不重传已 ack 段）→ 审计留痕 + 计量进 worklog。原始数据不出设备。 |
+| `trace_reconcile` | ops, fde | 跨层证据对账（trace reconcile）：DSH session trace（Agent 自述）vs git diff（独立事实）vs logs 声明集三源比对——产出差异清单（漏报/幻觉动作/瞒报四态）+ 一致率；可选模型层回溯链（推理 → 模型版本 → train_job → datasetHash）。对账结果入 decision-log（kind=COVERAGE）。 |
+
+### 工作流编排（workflow DAG · 循环执行与优化）（18）
+
+| tool | roles | 说明 |
+|---|---|---|
+| `sofagent_compose` | fde | 编排模块——传入任务描述，返回 Sub Agent 编排方案（YAML）。 |
+| `optimize_skill` | eval | 优化指定 Skill 文件，生成优化建议。 |
+| `activate_workflow` | agent, fde | 读取 FDE 交付物，注册企业 SubAgent。 |
+| `loop_debug` | eval | Onboard Agent 调试循环——传 task 触发 activate→run→judge→fix 循环；不传查记录。 |
+| `fde_compose` | fde | FDE 梳理辅助——五要素生成 workflow.yml 草稿（workflow-only；ontology 推导走 fde_derive 六引擎主入口）。 |
+| `route_workflow` | agent | 入口路由——传 task + workflow 返回命中节点或 fallback。 |
+| `refine` | eval | Refine 质量优化循环——针对 Agent 产出做质量优化。 |
+| `workflow_submit` | agent | Workflow 提交——schema 校验 + 解析（validate/run）。 |
+| `workflow_create` | agent | 新建 workflow 对象——schema-gate 校验（结构 + cron 语法）后落库 version=1，owner 持有 trunk 直改权；每次落库挂 decision-log 审计。 |
+| `workflow_update` | agent | 全量替换 workflow 文档——owner 直改 trunk（version+1）；非 owner 写 branch-{actor}（trunk 不动，等审阅合并）。 |
+| `workflow_node_add` | agent | 向既有 workflow 追加单节点（增量改）——节点 id 重复/depends_on 悬空/cron 非法拒绝；owner 直改 trunk，非 owner 写 branch。 |
+| `workflow_diff_preview` | agent | 对比传入文档与 trunk 当前的行级差异（unified 风格 + 增删行数）——只读零副作用，落库前先预览。 |
+| `workflow_gaps` | ops | workflow 能力缺口分析——扫描 workflow-store 声明节点 vs worklog 实际执行，产出三类缺口清单（缺人/缺能力/待升级），可被商业平台消费转悬赏。纯读零写入。 |
+| `pr_submit` | agent | 提交 workflow 变更提案（PR）——open 态入库 + 贡献者登记（人/数字员工同标准权重，weight 须 0-1 数值、声明 ≤10 条）+ 可选 triggerBinding（启发式=suggested / 显式=confirmed，显式不被启发式覆盖）。 |
+| `pr_review` | agent | 审阅 PR——approve 进 reviewed（可合并）；reject 终态 rejected（拒因进 decision-log 负样本训练信号）。提交者不可自审（利益冲突拒绝）；verdict 精确匹配 approve/reject（大小写敏感）。 |
+| `pr_merge` | agent | 合并 PR——merge_criteria 真判定（approver-review：reviewer 非 submitter；confidence-min：confirmed=1.0/suggested=0.5/无=0 ≥ detail 阈值；未知 kind 或 detail 畸形判不过）fail-closed，未过挂起 HITL（human_confirmed=true 强制合并）。PR 的 workflow 存在 branch-{submitter} 时联动写回 trunk（version+1+删 branch，mergedVersion 回填；写回失败 PR 回退 open）。 |
+| `workflow_export` | agent | workflow 模板导出（G1 五件套）：workflow.yml + 本体数据 + MD 家族 + manifest（sha256 完整性）+ 血缘元数据（源企业/源版本/fork 层级/祖先链）。跨租户缺省剥离 private / result-only 节点（G6 联动，剥离计数入 manifest）。export 事件入血缘谱系 + 审计挂链。 |
+| `workflow_import` | agent | workflow 模板导入（G1 三闸 fail-closed）：结构闸（manifest + 必要件 + sha256 完整性核对）→ schema 校验门（zod 结构 + 可见性枚举 + cron 语法，与 CRUD 同门）→ 落地闸（冲突拒绝）。跨企业包检出 private/result-only 节点整包拒绝（G6 加固）。血缘回流（import 事件 + 祖先链接入）+ 本体合并（本地优先）。 |
+
+### Agent 组织与协作（数字员工 · 团队阵型 · HITL 人工介入）（7）
+
+| tool | roles | 说明 |
+|---|---|---|
+| `notify_session` | audit | 向当前 session 推送审计结果摘要（确保结果可见）。 |
+| `list_agents` | fde, agent | 列出已注册的 Agent（内置 + 企业 SubAgent）。 |
+| `hitl_resolve` | agent | 对挂起等人工确认的 checkpoint 提交决策（approve/reject/aborted）。 |
+| `agent_identity` | agent, fde | 查询 Agent 身份码（查自己或他人，不含私钥）。 |
+| `create_agent` | fde | 一句话需求自动推导 Agent 配置（角色+域规则+think+knowledge）。 |
+| `team_create` | agent | 创建团队——传 team.yml 文本，解析写入。 |
+| `team_broadcast` | agent | 意图广播——Agent 广播「我要做什么」到团队意图总线。 |
+
+### 快照与回溯（状态留档 · 回滚恢复）（2）
+
+| tool | roles | 说明 |
+|---|---|---|
+| `snapshot_list` | ops | 列出审计快照时间线。只读。 |
+| `snapshot_restore` | ops | 恢复工作区到指定快照。🔴 破坏性，必须 human_confirmed:true。 |
+
+### 后训流水线（数据回流 → 训练 → 模型注册晋升）（16）
+
+> 📌 **能力边界**：本仓负责后训流水线的**编排与治理**（任务提交 / 预算门禁 / 环境体检 / 提交前预检 / 失败诊断 / 语料导出 / 合规闸门 / 交付包 / 模型注册与灰度 / 推理服务）；**训练本身在外部执行环境进行，本仓不实现训练器**（`train_submit` 是把任务提交出去并跟踪，不是自己训）。
+
+| tool | roles | 说明 |
+|---|---|---|
+| `model_register` | ops | 模型注册——注册训练后模型 endpoint（name+endpoint+model）。 |
+| `model_switch` | ops | 模型灰度切换——按档位切换活动模型（percent<100 灰度，100 强制人审）。 |
+| `model_unregister` | ops | 模型退役——标记退役（可恢复），强制人审。 |
+| `train_budget` | eval, ops | 训练预算控制——查预算状态 / 超预算人审续跑或终止。 |
+| `train_submit` | eval, ops | 训练任务提交——数据+基座+算法(sft/dpo/grpo)+超参+预算 → 生成 trainJobId（同 id 重复提交幂等）。 |
+| `train_doctor` | eval, ops | 训练环境体检——CUDA/显存/框架版本/基座模型缓存四项 + 反作弊基线三项（git 禁用/.git 可见性/网络白名单）结构化报告（只查不装；装环境走 bash tools/train/train-env-init.sh，基座模型手动放置或推理服务拉取）。 |
+| `train_dryrun` | eval, ops | 训练 dry-run——提交前预检：极小样本管线连通 + 数据质量抽样 + 显存估算（超限提前告警）+ 算力外推（sigmoid 缩放律外推成本，超预算提交前告警）。 |
+| `train_report` | eval, ops | 训练报告生成——数据概况+配置+eval对比+产物清单+量化四字段（GUIDE §4.3：年节省=岗位年薪×AI接管工时占比），markdown+JSON 归档 data/dashboard/train-reports/。 |
+| `train_status` | eval, ops | 训练进度查询——status/step/loss/reward 曲线/断点/用量快照（长任务轮询入口）。 |
+| `train_list` | eval, ops | 训练任务列表——按时间/状态/模型过滤（历史复盘与多任务管理；只列本企业分区任务）。 |
+| `train_diagnose` | eval, ops | 训练失败诊断——七类分类（OOM/数据格式/超参发散/框架/环境/重复坍塌/精度异常）+ 上下文四源（日志尾部+环境清单+checkpoint+超参）+ 修复处方，报告落盘 diagnose.json。 |
+| `train_deliverable` | eval, ops | FDE 训练交付包——generate 聚合五件（训练配置模板+数据管道配置+eval基线冻结+运维手册+权重清单含回滚点）打 zip + manifest + HMAC 签名；verify 逐项核对完整性 + 环境兼容性（企业收包侧体检）。 |
+| `train_serve` | eval, ops | 推理服务生命周期——从权重目录拉起 vLLM/Ollama/OpenAI 兼容端点（/health 就绪探测 + 指数退避重试）+ 启停重启状态四操作；每次启停记 train_serve 审计事件（谁启的/哪个模型/哪个节点）。 |
+| `train_cloud` | eval, ops | 云 VM 执行面——注册云 VM（endpoint + 凭据引用走虚拟 key 边界，真实凭据不落明文）/ 列出 / 查状态 / 注销；远程 spawn 训练走 ssh 通道（stdout JSON 回流）+ 分拣闸（敏感档拦上云，依据入审计链）+ 失联止损 + 成本入预算。 |
+| `train_compliance` | eval, ops | 训练数据合规扫描——PII（姓名/手机号/身份证）+ 敏感字段（健康/财务）+ 企业专有名词三类风险项（复用 v1.4.4 redactor 红名单检测）；报告（发现项+严重度+处置建议）写训练集版本；严重级发现阻断训练提交；数据来源标记（企业提供/合成/公开语料）。 |
+| `router_session_push` | ops | router 过站 session 承接（T7 第七章）：exporter 标准 schema 校验（fail-closed 拒绝坏格式）→ 多轮展开（切窗/角色映射）→ 脱敏本地落盘（数据主权铁律——记录不出企业边界，幂等：同 sessionId 重复推送拒绝）→ usage 入 cost 台账（按模型/时段聚合）→ key 维度过站行为 HMAC 挂链（审计）。会话续接五元组（执行器+员工身份+模型+工作目录+运行时）透传判定。 |
+
+### 评估与验收（基准评测 · 验收标准 · A/B 对比）（7）
+
+| tool | roles | 说明 |
+|---|---|---|
+| `evaluate_output` | eval | 用 golden set 评估 Agent 产出质量，返回评分 + 失败用例。 |
+| `evaluate` | eval | Benchmark 评测——传 benchmark_id 触发隔离评测（评分 0..100）；query 查日志。 |
+| `eval_suite` | eval | 企业专属 eval 套件（模板加载/基线冻结/运行/查日志）。 |
+| `run_ab_test` | eval | 发起 A/B 对比实验——current vs candidate 在 golden-set 上评测，返回胜出方。 |
+| `promote_ab` | eval | 晋升 candidate 为 current。🔴 破坏性，必须 human_confirmed:true。 |
+| `define_acceptance` | eval | 验收条件定义——任务附机器可判定验收条件（test/build/grep-absent/schema）。 |
+| `check_acceptance` | eval | 验收执行——跑 define_acceptance 登记的条件，返回结构化结果。 |
+
+### 本体数据与知识资产（ontology · 实体概念 · 知识库 · 反思）（16）
+
+| tool | roles | 说明 |
+|---|---|---|
+| `get_think` | fde, eval | 读取 think.md 的最新反思条目。 |
+| `write_think` | fde, eval | 向 think.md 追加一条手动反思记录。 |
+| `search_knowledge` | fde, audit, eval | 跨 entities/concepts 模糊搜索知识库。 |
+| `read_entity` | fde | 读取单个 entity 页。 |
+| `read_concept` | fde | 读取单个 concept 页。 |
+| `list_entities` | fde | 列出所有 entity（可选按 domain 过滤）。 |
+| `read_lessons` | fde, eval, audit | 读取踩坑记录（lessons-missteps.md）。 |
+| `read_think_md` | fde, eval | 读取 think.md 完整内容。 |
+| `create_entity` | fde | 创建/更新 entity 页。写入前跑数据审计，FAIL 拒绝写入。 |
+| `create_concept` | fde | 创建/更新 concept 页。 |
+| `update_entity` | fde | 字段级更新 entity 页（只改传入字段，保留其余）。写入前跑数据审计。 |
+| `delete_entity` | fde | 删除 entity 页。🔴 破坏性操作，必须 confirmed:true 才执行。 |
+| `delete_concept` | fde | 删除 concept 页。🔴 破坏性操作，必须 confirmed:true 才执行。 |
+| `validate_ontology` | fde | 检查本体数据完整性——实体数/关联断裂/孤儿实体/死链。 |
+| `list_concepts` | fde | 列出所有 concept。 |
+| `ontology_import` | fde | Ontology 注入——提交 entity/concept/relations（JSON），校验+审计后注册。 |
+
+### 组织能力市场（发布 · 检索 · 调用 · 评分 · 退役）（6）
+
+| tool | roles | 说明 |
+|---|---|---|
+| `commons_publish` | commons | 能力发布——将 Skill/Agent/流程发布到企业能力公地（SkillScan 安全门）。 |
+| `commons_search` | commons | 能力检索——按标签/关键词/类型检索能力公地。 |
+| `commons_invoke` | commons | 能力调用——发现能力后挂载调用（SkillScan 拦截 + HITL 确认）。 |
+| `commons_rate` | commons | 能力评价——调用后累积评分（0.0~1.0），防刷。 |
+| `commons_retire` | commons | 能力退役/恢复——标记退役（不删除，可恢复），强制 owner 确认。 |
+| `commons_harvest_rule` | commons | 从公地调用日志 + Refine 循环提炼质量规则候选。 |
+
+### 运维与可见性（成本 · 工作明细 · 健康 · 规则 · 能力发现）（14）
+
+| tool | roles | 说明 |
+|---|---|---|
+| `worklog_query` | ops | 按 Agent / Workflow / 周趋势查询 AI 工作明细（任务/token/耗时/成本/人工介入），可附带进化四维趋势。 |
+| `cost_query` | ops | 查询成本审计——预算配置 / 各 Agent 实际消耗（token/成本）/ 超限记录（WARN 级）。 |
+| `stats` | ops | 知识库统计（entities/concepts 数 + 最后更新时间）。 |
+| `list_capabilities` | — | 返回完整能力清单（tools + resources）——Agent 首次连上时获取能力地图。 |
+| `data_sovereignty_report` | audit | 查询数据主权审计报告摘要（云端调用/本地执行/数据流出/敏感本地处理率）。 |
+| `health_check` | ops | 运行环境健康检查（环境/配置/数据目录/Hook/依赖）。 |
+| `daemon_status` | ops | 查询 daemon 运行状态（PID/启动时间/心跳）。只读。 |
+| `list_rules` | audit | 列出所有审计规则清单（只读，不暴露实现）。 |
+| `contribution_query` | ops | 贡献度报表——人/数字员工同标准聚合（PR 权重分 + 决策留痕 + 审计变更规模 → 综合贡献分），按人/按 workflow 两维度输出，org_id 跨租户过滤（G7 联动）。纯读零写入。 |
+| `device_register` | ops | 设备上线注册（G9）：Ed25519 身份码验签 fail-closed（伪造签名拒绝且留审计）+ 设备类型（pc/node/appliance）+ 能力声明（派单方按能力匹配设备）。 |
+| `device_list` | ops | 设备清单查询（G9 发现面）：按租户/类型/能力过滤，含最后心跳时间与在线状态；清单只含已验签设备（被拒/吊销设备不出现）。只读。 |
+| `device_data_query` | ops | 设备侧数据面授权读取（G10）：设备门禁 → 目录白名单校验（默认空=全拒，opt-in）→ 读取 → 脱敏管线（敏感字段不出设备）→ 审计留痕 + 计量进 worklog。返回结构化内容（不落原始路径）。 |
+| `connector_register` | ops | 注册第三方连接器（G5b 准入面）：来源过 plugin-gate 白名单校验（Git URL / 主机 / 本地路径，白名单外拒绝）→ 注册表落库（config/connectors.json，租户隔离 + 同租户重名拒绝）→ 审计留痕。与工具注册分列——连接器清单见 connector_list。 |
+| `connector_list` | ops | 连接器发现（G5b 目录面）：按类型（db/rest/saas）/ 主机 / 能力标签过滤，租户隔离（只返回请求租户条目）。清单只含连接器——与 MCP 工具清单（TOOLS）分列，绝不混列。只读。 |
+
+---
+
+## 三、防漂移机制
+
+- 本清单由 `engine/mcp/src/tool-registry.ts` 的 `name:` + `description:` 字段生成，配 `tools/check/check-docs.sh` 门禁断言：**文档 tool 数 == registry 实数**，对不上即 CI 红。
+- 新增/修改工具：先改 tool-registry.ts（含描述），再跑 `node tools/gen/gen-api-tools.mjs`（生成器，随本文件一并交付）重生成第二节，门禁自动对账。
+
+---
+
+## 四、变更日志
+
+| 日期 | 变更 |
+|------|------|
+| 2026-09-03 | 建档——80 tools 首次成清单，六大接口面总表 |
+| 2026-09-05 | v1.4.5 三件收编（train_serve/train_compliance/train_deliverable）80→83 |
+| 2026-09-07 | 接口面六→七：新增「标准数据推送接口」第七面（v1.4.6 交付，验收标准转勾） |
+| 2026-09-11 | v1.4.7 新增 11 tool（workflow CRUD / PR 生命周期 / 绩效 / 缺口 / data_push 等）84→95 |
+| 2026-09-13 | v1.4.8 tools 面零新增，仍为 95 |
+| 2026-09-17 | v1.4.9 新增 9 tool（device_register / device_list · device_data_query / device_data_push · connector_register / connector_list · workflow_export / workflow_import · router_session_push）95→104 |
+| 2026-09-19 | v1.5.0 新增 trace_reconcile 104→105 |

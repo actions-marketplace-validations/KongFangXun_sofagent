@@ -1,10 +1,10 @@
 // ============================================================
 // reporter.ts · 审计结果聚合与输出
 // v0.93 重构：改用注册表模式——从 rules/index.ts 导入规则数组，
-// 循环调用 rule.check(ctx)，不再硬编码 import 4 条规则
+// 循环装配执行（v1.4.8 条目 7：scan + assembleCheck），不再硬编码 import 4 条规则
 // v0.94：runRules 签名扩展，支持 silent/commitMsg 参数
 // v0.95：支持 config 注入 AuditContext + extendedRules 开关
-// v1.4.3：fast-fail 优化——委托到 rules/runner.ts
+// v1.5.0：fast-fail 优化——委托到 rules/runner.ts
 //
 // 本文件专用于 @sofagent/audit，包含 runRules 运行时实现（依赖 rules/runner）。
 // 与 core/src/reporter.ts 的关系：
@@ -20,6 +20,7 @@ import type { AuditContext, RuleCheck } from './rules/types';
 import { defaultRules, extendedRules } from './rules';
 import type { AuditHistoryEntry } from './audit-history';
 import { runRules as runRulesWithFastFail } from './rules/runner';
+import { ruleCode } from './rules/assemble';
 
 // 向后兼容：re-export RuleCheck（index.ts 等模块通过 reporter 导入此类型）
 export type { RuleCheck } from './rules/types';
@@ -149,12 +150,12 @@ export function formatRuleDetails(results: AuditResult): string[] {
 
   for (const rule of problems) {
     const icon = rule.status === 'FAIL' ? '❌' : '⚠️';
-    const ruleId = rule.number >= 200 ? `E${rule.number - 200}` : `A${rule.number}`;
+    const ruleId = rule.id ?? ruleCode(rule.number, rule.name);
     const classTag = rule.ruleClass === '业务底线' ? '[底线]'
       : rule.ruleClass === '能力拐杖' ? '[拐杖]'
       : rule.ruleClass === '工程规范' ? '[规范]'
       : '';
-    const justification = allRules.find((r) => r.number === rule.number)?.justification;
+    const justification = allRules.find((r) => r.id === rule.id)?.justification;
 
     if (rule.details.length === 0) {
       // 无详情时仍输出规则名（让用户知道是哪条规则拦的）

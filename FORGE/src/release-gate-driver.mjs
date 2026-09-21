@@ -31,7 +31,6 @@ import { createRequire } from 'module';
 import {
   readFileSync, writeFileSync, mkdirSync, existsSync, statSync,
   appendFileSync, readdirSync, copyFileSync, createWriteStream,
-  openSync, closeSync, unlinkSync,
 } from 'fs';
 import { join, resolve, dirname, basename } from 'path';
 import { fileURLToPath } from 'url';
@@ -51,7 +50,7 @@ try {
 } catch { /* undici 不可用（理论不发生——Node 18+ 内置））：维持默认，风险回到修复前 */ }
 
 // v1.2.7 功能⑤：继承 driver-base 公共编排层
-import { createForgeDriverBase, runPreflight, formatPreflightReport, resolveMaxConcurrency, checkDriverLiveness } from './driver-base.mjs';
+import { createForgeDriverBase, runPreflight, formatPreflightReport, resolveMaxConcurrency, checkDriverLiveness, spawnDetachedDriverGeneric, runWatcherShared } from './driver-base.mjs';
 import { createGateTools } from './gate-tools.mjs';
 
 // 可见性：核心层 + 适配器（agent 无关 + 渐进适配）
@@ -146,7 +145,7 @@ function safeTeardownWorktree() {
 // v1.3.0 修复：场景数硬编码 148 → 动态从 acceptance-test.sh 提取（与 check-test-count.sh 同口径），
 // 防场景数增长后（S149+）超出分片范围导致新场景零分析。
 const ACCEPTANCE_TOTAL_SCENARIOS = (() => {
-  const scriptPath = join(__dirname, '../../FORGE/playbook/acceptance-test.sh');
+  const scriptPath = join(__dirname, '../../playbook/acceptance-test.sh');
   try {
     const s = readFileSync(scriptPath, 'utf8');
     const m = s.match(/^scenario (\d+)[a-z]? "/gm);
@@ -209,7 +208,7 @@ const STEPS = {
   'regression':  { role: 'V', prompt: 'regression.md',  outputs: ['regression.md'],  inputs: ['regression-precheck.json'], precheck: true },
   'coverage':    { role: 'V', prompt: 'coverage.md',    outputs: ['coverage.md'],    inputs: ['acceptance.md', 'coverage-precheck.json'], precheck: true },
   'consolidate': { role: 'V', prompt: 'consolidate.md', outputs: ['stage6-report.md'], inputs: ['acceptance.md', 'regression.md', 'coverage.md'], maxTokens: 32000 },
-  'verdict':     { role: 'V', prompt: 'verdict.md',     outputs: ['verdict.md'],     inputs: ['stage6-report.md'] },
+  'verdict':     { role: 'V', prompt: 'verdict.md',     outputs: ['verdict.md'],     inputs: ['stage6-report.md'], maxTokens: 32000 },
   // v1.2.8 新增 F 步骤（LLM 步骤——verdict FAIL 后触发）
   'f-diagnose':  { role: 'F', prompt: 'f-diagnose.md',  outputs: ['fix-plan.md'],     inputs: ['verdict.md'] },
   'f-fix':       { role: 'F', prompt: 'f-fix.md',       outputs: ['fix-summary.md'],  inputs: ['fix-plan.md', 'verdict.md'] },
@@ -236,6 +235,11 @@ const STEP_RECURSION_LIMITS = {
   'coverage':    40,
   'consolidate': 80,
   'verdict':     50,
+  // v1.4.8（run-09 实证）：F 步骤原先落默认 50 步（≈25 次工具），而 f-fix 实测需读 fix-plan
+  // + 逐文件读改（92 次工具调用仍在「读」阶段就被熔断）→ 从未走到「修改+提交」。
+  // F 步骤是**写操作密集**任务，给足预算：f-diagnose 80 / f-fix 200。
+  'f-diagnose': 80,
+  'f-fix':      200,
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -275,15 +279,28 @@ const DIM_TIMEOUT_OVERRIDE = {
   // v1.3.6（run-08/09）：106 含全量 check-test-count（12 包测试实跑 ~55-95s），
   // 60s 上限必超时误报 ERR——放宽到 150s。根因是维度脚本跑全量测试太重，
   // v1.3.7 可改为只跑 --quiet 快速路径（SSOT 校验 <1s），届时回收此 override。
-  106: 150_000,
+  106: 300_000,
+  // v1.4.8（run-01 实测）：106/110 含全量 check-test-count（跑 test-count.sh → 全仓 12 包
+  // npm test），随仓库规模增长 150s 已不足——本机 `time` 实测 real 124.4s，叠加波动与
+  // 110 的 check-version（~60-90s）后 150s 必超时。上调至 300s（约 2.4× 余量）。
+  // 🔴 长期正解（v1.3.7 已记）：维度脚本改走只读 SSOT 快速路径，不在闸门里跑全量测试；
+  // 届时回收本 override。
   // v1.3.6（2026-08-18/run-01）：110 含全量 check-version.sh（70 项跨包扫描
   // ~60-90s）+ check-test-count，60s 必超时误报 ERR——放宽到 150s（与 106 同类）。
-  110: 150_000,
+  110: 300_000,   // 同 106：含全量 check-test-count（实测 124s）+ check-version，上调至 300s
   // v1.4.3（run-01 复验）：111⑤ 含全量 test-count.sh（12 包测试实跑 >60s），
   // 60s 上限必超时误报 ERR——放宽到 150s（与 106/110 同类：维度脚本跑全量测试）。
   // run-05 实证 150s 仍不够（8GB 机器全量实跑波动 >150s）——放宽到 240s；
   // 配合 buildPrecheckEvidence fail-closed 口径（超时=失败），超时不再被静默放过。
-  111: 240_000,
+  // 20260918 run-02 实测：本机 test-count.sh 单项实跑 288s（4:48），240s 必超时——
+  // 上调至 600s（与 106/110/56 同档，约 2× 实测余量）。
+  111: 600_000,
+  // release-gate 20260918 run-02 实测：56 跑真实 eval CLI 端到端（42 用例全量
+  // 真实规则逐条判，实测 434-441s——A7/A8/A14/A15 用例含 DSH 往返，单用例最长
+  // 113s）。60s 默认预算必超时误报 ERR（run-01/run-02 连续两轮同因）。
+  // 上调至 600s（实测 441s × 1.36 余量）；F1 golden 修复后此维度是明确 PASS 的
+  // 关键证据源，预算必须覆盖端到端实跑。
+  56: 600_000,
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -294,7 +311,7 @@ function parseArgs(argv) {
                  worker: false, step: null, runDir: null,
                  skipAcceptance: false, help: false,
                  resume: false, checkAlive: null,
-                 judgmentOnly: false, acceptanceRange: null, autoFix: false,
+                 judgmentOnly: false, acceptanceRange: null, autoFix: true,   // F 链默认启用（loop 自主收敛）；--no-auto-fix 关闭
                  daemon: false, watch: null, watchInterval: 30, watchThreshold: 90 };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -312,8 +329,11 @@ function parseArgs(argv) {
     // v1.3.8 交付七：判断层瘦身——一次启动直达四步，跳过 acceptance 分片
     else if (a === '--judgment-only')    args.judgmentOnly    = true;
     else if (a === '--acceptance-range') args.acceptanceRange = argv[++i];
-    // v1.3.8 交付七：F 修复链默认关闭，显式开关才进
+    // F 修复链**默认启用**（loop 自主收敛：verdict FAIL → f-diagnose → f-fix → f-audit → 下一轮 V，
+    // 最多 MAX_FIX_ROUNDS 轮）。原 v1.3.8 的「默认关闭、修复责任交回主 session」设计使每轮 FAIL 都要
+    // 人工介入修复再复跑，loop 无法一次跑到底——现改为默认开，保留 --auto-fix（幂等）与 --no-auto-fix。
     else if (a === '--auto-fix')    args.autoFix        = true;
+    else if (a === '--no-auto-fix') args.autoFix        = false;
     // v1.3.9 进程守护：--daemon 自脱离进程树；--watch 主管模式（心跳监控+死因审计+自动 resume）
     else if (a === '--daemon')      args.daemon    = true;
     else if (a === '--watch')       args.watch     = argv[++i];
@@ -718,7 +738,7 @@ function resolveChangelogPath(target) {
  * @param {{inputs?: string[], precheck?: boolean}} stepDef 步骤定义
  * @returns {string} 注入文本（非 precheck 步骤返回空串）
  */
-function buildPrecheckEvidence(runDir, stepDef) {
+function buildPrecheckEvidence(runDir, stepDef, target = '') {
   if (!stepDef?.precheck || !Array.isArray(stepDef.inputs)) return '';
 
   const blocks = [];
@@ -738,6 +758,14 @@ function buildPrecheckEvidence(runDir, stepDef) {
       if (data.dims && (data.meta?.dims || typeof data.dims === 'object')) {
         const dims = typeof data.dims === 'object' ? Object.values(data.dims) : data.dims;
         const lines = [`[driver 注入] ${f} 内容（${dims.length} 维度，逐维度判定依据）：`];
+        // run-01/02 连续 P0 误判根因（版本口径）：维度输出里的 npm/tag/ssot/包
+        // 版本号是仓库 SSOT 实测值（上一版），worker 曾以「多维度佐证」压过
+        // userMessage 的口径声明、自称目标=上一版 → consolidate 判「版本错配」
+        // P0。口径警示必须放在证据块头部——worker 读证据第一眼即见，权重
+        // 对等才压得住实证倾向。
+        if (target) {
+          lines.push(`  ⚠️ 版本口径（先读此行再判定）：下列维度输出中的 npm/tag/ssot/包版本号（如上一版号）是仓库 SSOT 实测值，属发版时序正常态（SSOT bump 在 SOP 阶段六，闸门跑在阶段五）；审查对象与报告版本锚点一律 = ${target}。禁止把 SSOT 实测值当作目标版本的「佐证」——引用它们填写目标版本即违反口径。`);
+        }
         let failCount = 0;
         for (const d of dims) {
           // run-05 实证 fail-closed：exitCode=null（超时/异常）也计入失败——
@@ -770,7 +798,7 @@ function buildPrecheckEvidence(runDir, stepDef) {
         if (Array.isArray(data.scenarios)) {
           lines.push(`  - 场景索引（${data.scenarios.length}，全量）:`);
           for (const s of data.scenarios) {
-            lines.push(`    * S${s.num} ${s.title ?? ''}`);
+            lines.push(`    * S${s.label ?? s.num} ${s.title ?? ''}`);
           }
         }
         blocks.push(lines.join('\n'));
@@ -819,7 +847,11 @@ function buildPrecheckEvidence(runDir, stepDef) {
 function buildInputsEvidence(runDir, stepDef) {
   if (stepDef?.precheck || !Array.isArray(stepDef?.inputs)) return '';
   const blocks = [];
-  const totalBudget = Math.min(150_000, Math.max(20_000, stepDef.inputs.length * 12_000));
+  // v1.4.8 run-02（verdict P0-2「证据链截断」）：原总预算 150K + 单文件 12K 上限，使
+  // acceptance.md（77K）/ regression.md 等报告被腰斩，V 按 fail-closed 判「证据缺失 = 未验证」。
+  // 上调总预算与单文件上限，并把截断策略由「只留头部」改为「保头尾」（尾部含裁决与统计行，
+  // 恰恰是 V 最需要的部分）。
+  const totalBudget = Math.min(400_000, Math.max(40_000, stepDef.inputs.length * 30_000));
   let total = 0;
   for (const f of stepDef.inputs) {
     const p = join(runDir, f);
@@ -830,8 +862,11 @@ function buildInputsEvidence(runDir, stepDef) {
     try {
       const raw = readFileSync(p, 'utf-8');
       const budget = Math.max(0, totalBudget - total);
-      const clipped = raw.length > Math.min(12_000, budget)
-        ? raw.slice(0, Math.min(12_000, budget)) + `\n…（截断，全文 ${raw.length} 字符（字符数非字节数），见 ${p}）`
+      const perFile = Math.min(40_000, budget);
+      const clipped = raw.length > perFile
+        ? (perFile >= 2_000
+            ? raw.slice(0, Math.floor(perFile / 2)) + `\n\n…（中段省略 ${raw.length - perFile} 字符；全文 ${raw.length} 字符，见 ${p}）…\n\n` + raw.slice(-Math.floor(perFile / 2))
+            : raw.slice(0, Math.max(0, perFile)) + `\n…（截断，全文 ${raw.length} 字符，见 ${p}）`)
         : raw;
       total += clipped.length;
       blocks.push(`[driver 注入] ${f} 内容（上一步产物，判定依据）：\n${clipped}`);
@@ -986,7 +1021,7 @@ async function runWorker(step, runDir, target) {
   // 「工具调用结果摘要 0 条」→ 报告永远「证据不足」判 FAIL。
   // 正解：precheck.json 本来就是 driver 预执行生成的证据（方案 A 语义）——**证据内容
   // 由 driver 直接注入 userMessage**，worker 无需任何工具即可判定（DSH/LangGraph 双后端兼容）。
-  const precheckEvidence = buildPrecheckEvidence(runDir, stepDef);
+  const precheckEvidence = buildPrecheckEvidence(runDir, stepDef, target);
   // v1.4.3（run-19 根因）：非 precheck 步骤的上一步产物内容注入——直连模式
   // （无工具）下 verdict/consolidate 的唯一证据面，缺失即「零证据」ERROR。
   const inputsEvidence = buildInputsEvidence(runDir, stepDef);
@@ -1150,6 +1185,15 @@ async function runWorker(step, runDir, target) {
 
   // v1.3.4 增量：stateModifier 构造为闭包——传给 langgraph-backend 作为 stateModifierFactory 回调。
   // 逻辑零改动（保留所有 run-XX 教训沉淀）：工具预算软熔断 + 上下文裁剪 + tool_calls 配对清洗。
+  // 🔴 v1.4.8（run-14 实证）：**工具预算按角色区分**——全局 TOOL_SOFT/HARD=35/45 的设计前提
+  // 是「release-gate 任务简单（读预执行结果 + 分析文档）」，这对 V 步骤成立；但 F 步骤是
+  // **写操作密集**任务（读 fix-plan → 逐文件读改 → 提交），45 次工具远远不够：
+  // run-14 的 f-diagnose 名义 recursion 80，却在第 48 次工具调用撞硬上限熔断（grace 窗口 0 步），
+  // 降级为无工具裸 LLM 报告 → 零 commit。F 步骤改用高预算 + 给足写报告窗口。
+  const isFRole = stepDef.role === 'F';
+  const softLimit = isFRole ? 150 : TOOL_SOFT_LIMIT;
+  const hardLimit = isFRole ? 200 : TOOL_HARD_LIMIT;
+
   const buildStateModifier = ({ systemPrompt: _sp, toolBudget: _tb }) => {
     return (state) => {
       const messages = state.messages ?? [];
@@ -1174,7 +1218,7 @@ async function runWorker(step, runDir, target) {
       };
 
       // L2 硬熔断：更强制的"最终警告"
-      if (toolCallCount >= TOOL_HARD_LIMIT) {
+      if (toolCallCount >= hardLimit) {
         const forceReport = new HumanMessage({
           content: '【🔴 系统最终警告 🔴】你已调用 ' + toolCallCount + ' 次工具，远超预算。' +
             '现在必须立即输出完整的分析报告文本。禁止再调用任何工具。' +
@@ -1184,12 +1228,12 @@ async function runWorker(step, runDir, target) {
       }
 
       // L1 软熔断：强制收尾指令
-      if (toolCallCount >= TOOL_SOFT_LIMIT) {
+      if (toolCallCount >= softLimit) {
         const forceReport = new HumanMessage({
           content: '【系统强制指令】你已经调用了 ' + toolCallCount + ' 次工具，超过软上限。' +
             '立即停止所有探索，用已掌握的信息写报告并写入产物文件。不要再调任何工具。'
         });
-        console.warn(`  ⚡ [${step}#V] 工具调用 ${toolCallCount} 次超软上限，注入强制收尾指令`);
+        console.warn(`  ⚡ [${step}#${stepDef.role ?? 'V'}] 工具调用 ${toolCallCount} 次超软上限，注入强制收尾指令`);
         return trimmed(forceReport);
       }
 
@@ -1220,7 +1264,7 @@ async function runWorker(step, runDir, target) {
   //    stream 循环逻辑（toolCallCount / hardBreak / gotReport / graceWindow）作为
   //    streamHandler 回调传入——backend 在每个 chunk 调 streamHandler，返回
   //    { hardBreak: true } 时中断 stream 并返回已累积的消息。
-  console.log(`[worker:${step}] 开始执行（role=V, model=${cfg.model}）`);
+  console.log(`[worker:${step}] 开始执行（role=${stepDef.role ?? 'V'}, model=${cfg.model}）`);
   const t0 = Date.now();
 
   const recursionLimit = STEP_RECURSION_LIMITS[step] ?? stepDef.recursionLimit ?? 50;
@@ -1232,8 +1276,9 @@ async function runWorker(step, runDir, target) {
   let graceStepCount = 0;
   let hardBreak = false;
   let gotReport = false;
-  const graceSteps = (step === 'coverage' || step === 'consolidate')
-    ? GRACE_STEPS_ANALYSIS : GRACE_STEPS_DEFAULT;
+  const graceSteps = isFRole
+    ? 20   // F 步骤：给足写报告窗口（零窗口会让 LLM 无机会落产物）
+    : ((step === 'coverage' || step === 'consolidate') ? GRACE_STEPS_ANALYSIS : GRACE_STEPS_DEFAULT);
 
   const streamHandler = (chunk) => {
     for (const [, delta] of Object.entries(chunk)) {
@@ -1249,7 +1294,7 @@ async function runWorker(step, runDir, target) {
           // 窗口期内检测报告质量
           if (inGraceWindow && isReportText(textContent)) {
             gotReport = true;
-            console.log(`  ✅ [${step}#V] 写报告窗口内捕获到报告文本（${textContent.length} 字符）`);
+            console.log(`  ✅ [${step}#${stepDef.role ?? 'V'}] 写报告窗口内捕获到报告文本（${textContent.length} 字符）`);
           }
         }
 
@@ -1257,16 +1302,16 @@ async function runWorker(step, runDir, target) {
         if (msg?._getType?.() === 'ai' && msg.tool_calls?.length > 0) {
           for (const tc of msg.tool_calls) {
             streamToolCallCount++;
-            console.log(`  → [${step}#V] tool #${streamToolCallCount}: ${tc.name}`);
+            console.log(`  → [${step}#${stepDef.role ?? 'V'}] tool #${streamToolCallCount}: ${tc.name}`);
           }
         }
       }
     }
 
     // L2：撞硬上限 → 进入 grace window
-    if (streamToolCallCount >= TOOL_HARD_LIMIT && !inGraceWindow && !hardBreak) {
+    if (streamToolCallCount >= hardLimit && !inGraceWindow && !hardBreak) {
       inGraceWindow = true;
-      console.warn(`  ⏳ [${step}#V] 工具调用 ${streamToolCallCount} 次撞硬上限，进入 ${graceSteps} 步写报告窗口`);
+      console.warn(`  ⏳ [${step}#${stepDef.role ?? 'V'}] 工具调用 ${streamToolCallCount} 次撞硬上限，进入 ${graceSteps} 步写报告窗口`);
     }
 
     // Grace window 倒计时
@@ -1274,14 +1319,14 @@ async function runWorker(step, runDir, target) {
       graceStepCount++;
       if (graceStepCount >= graceSteps) {
         hardBreak = true;
-        console.warn(`  🛑 [${step}#V] 写报告窗口耗尽（${graceSteps} 步），模型仍未输出文本，强制中断`);
+        console.warn(`  🛑 [${step}#${stepDef.role ?? 'V'}] 写报告窗口耗尽（${graceSteps} 步），模型仍未输出文本，强制中断`);
         return { hardBreak: true };
       }
     }
 
     // 窗口期内拿到报告 → 正常结束
     if (gotReport) {
-      console.log(`  📝 [${step}#V] 报告已捕获，正常结束`);
+      console.log(`  📝 [${step}#${stepDef.role ?? 'V'}] 报告已捕获，正常结束`);
       return { hardBreak: true };
     }
 
@@ -1298,13 +1343,24 @@ async function runWorker(step, runDir, target) {
     //   ③ 裸 LLM 流式路径（run-16 修复②）已产出高质量判定书（regression
     //      4310 字符，P0/P1 结构完整，还能反向抓门禁假绿）。
     // 逃生舱：FORGE_WORKER=dsh 显式要求时仍走完整 worker（DSH 链路诊断用）。
-    if (process.env.FORGE_WORKER !== 'dsh') {
+    // 🔴 v1.4.8（run-06/07 双轮实证）：**F 步骤必须走完整 worker**——直连模式是
+    // `generateReportWithoutTools`（messages: []，零工具，且 role 参数硬编码 'V'），
+    // f-diagnose / f-fix 在直连下**物理上无法改代码**：5+2 轮全部产出「审查报告」、
+    // F 分支零 commit → 被 driver 零 commit 校验逐轮拦截 → 轮次耗尽（闸门白跑）。
+    // 判据：role === 'F' 的步骤（需 bash/fs 工具改代码 + engineer 角色提示）不得走直连；
+    // V 步骤（读证据写判定，工具零增益）继续走直连以省 token/时间。
+    const needsTools = stepDef.role === 'F';
+    if (process.env.FORGE_WORKER !== 'dsh' && !needsTools) {
       console.log('[worker] 判断层直连模式（裸 LLM 流式，跳过 DSH 桥接空转）——FORGE_WORKER=dsh 可启用完整 worker');
       // v1.4.3（run-19 根因）：直连模式下证据面 = precheck 证据 + 上一步产物
       // （verdict/consolidate 无 precheck，inputs 产物是其唯一判定依据）
       // + run-07 P0-V1：acceptance 分片的日志分段证据
-      const bare = await generateReportWithoutTools(model, [], step, 'V', stepDef, [precheckEvidence, inputsEvidence, shardEvidence].filter(Boolean).join('\n\n'));
+      const bare = await generateReportWithoutTools(model, [], step, stepDef.role ?? 'V', stepDef, [precheckEvidence, inputsEvidence, shardEvidence].filter(Boolean).join('\n\n'));
       return { messages: [], content: bare ?? '', hardBreak: false, usage: undefined };
+    }
+
+    if (needsTools) {
+      console.log(`[worker] F 步骤（${step}）强制完整 worker（带工具链）——直连模式无工具，改不了代码`);
     }
 
     // v1.3.4 增量：通过 ExecutionBackend 调用 agent
@@ -1316,7 +1372,14 @@ async function runWorker(step, runDir, target) {
     //   之前的「worker 强制 LangGraph」方向错误已回滚——DSH 工具面覆盖 worker 需求。
     // FORGE_BACKEND 可显式覆盖（逃生舱：FORGE_BACKEND=langgraph 走 LangGraph）。
     const { createExecutionBackend } = await import('../../engine/orchestrator/dist/execution-backend.js');
-    const backendPref = process.env.FORGE_BACKEND === 'langgraph' ? 'langgraph' : 'dsh';
+    // 🔴 v1.4.8（run-08 实证）：F 步骤默认走 **langgraph**——DSH 桥接在 headless 子进程内
+    // 实测「工具注入成功（6/6）后空转无产出」：run-08 的 f-diagnose 注入工具后 12 分钟
+    // 未生成 fix-plan.md（与驱动注释记载的 run-16「DSH 四步空转 175-359s 吐空 stdout」同源）。
+    // V 步骤走直连（不经 backend），故此处偏好实际只作用于 F。
+    // 逃生舱：FORGE_BACKEND 可显式覆盖（dsh / langgraph）。
+    const backendPref = process.env.FORGE_BACKEND
+      ? process.env.FORGE_BACKEND
+      : (stepDef.role === 'F' ? 'langgraph' : 'dsh');
     const backend = await createExecutionBackend({ preferred: backendPref });
     console.log(`[worker] 执行后端：preferred=${backendPref} → actual=${backend.name}`);
     const execResult = await backend.execute({
@@ -1324,7 +1387,7 @@ async function runWorker(step, runDir, target) {
       task: userMessage,
       tools,
       modelConfig: { model, preModelHook },
-      toolBudget: { softLimit: TOOL_SOFT_LIMIT, hardLimit: TOOL_HARD_LIMIT },
+      toolBudget: { softLimit, hardLimit },
       recursionLimit,
       stateModifierFactory: buildStateModifier,
       streamHandler,
@@ -1878,7 +1941,7 @@ function runCommand(command, cwd, timeoutMs) {
  */
 async function runAcceptanceTestDirectly(runDir) {
   const logPath = join(runDir, 'acceptance-raw.log');
-  const scriptPath = join(REPO_ROOT, 'FORGE/playbook/acceptance-test.sh');
+  const scriptPath = join(REPO_ROOT, 'playbook/acceptance-test.sh');
 
   // 第 1 步：构建审计包（acceptance-test.sh 依赖 dist 产物）
   // 优化：dist/index.js 已存在时跳过 build，减少 driver 被 sandbox kill 的窗口
@@ -1990,7 +2053,7 @@ async function runAcceptanceTestDirectly(runDir) {
  * @returns {Array<{ num: number, title: string, script: string }>}
  */
 function parseRegressionDimensions() {
-  const checklistPath = join(REPO_ROOT, 'FORGE/playbook/regression-checklist.md');
+  const checklistPath = join(REPO_ROOT, 'playbook/regression-checklist.md');
   const md = readFileSync(checklistPath, 'utf-8');
   const lines = md.split('\n');
 
@@ -2069,9 +2132,14 @@ async function execRegressionDim(script, timeoutMs = 60_000) {
     const { stdout, stderr, code } = await runCommand(script2, REPO_ROOT, timeoutMs);
     let output = `${stdout}\n${stderr}`.trim();
     let exitCode = code ?? null;
+    // F15 显式标记透传（release-gate run-01 verdict §6 流程前置项）：归一化不再只靠
+    // output 尾注——结构化 normalized 字段同步进 precheck JSON，worker/人工可机读
+    // 区分「原生 exitCode」与「driver 归一化 exitCode」，防归一化掩盖语义失败。
+    let normalized = null;
     // 归一化规则：非零退出 + 输出零失败标记 = 语义性退出码（grep 无命中等），非真 FAIL
     if (exitCode !== 0 && exitCode !== null && !/(❌|FAIL|⚠️|缺失|漂移|超标|CRITICAL)/.test(output)) {
       output += `\n[driver] exit 语义归一化：原 exit=${exitCode} 但输出无失败标记——判定为语义性退出码（grep 无命中/尾判假），重写为 0。若该维度确有问题，请在维度脚本补显式 ❌ 输出（见 regression-checklist.md 维护公约·维度脚本编写三铁律）`;
+      normalized = { from: exitCode, to: 0, reason: 'semantic-exit' };
       exitCode = 0;
     }
     // run-16 修复（R-01 假绿根因）：反向防御——exit=0 但输出含显式 ❌。
@@ -2094,9 +2162,10 @@ async function execRegressionDim(script, timeoutMs = 60_000) {
     const userOutput = output.split('\n').filter(l => !l.startsWith('[driver]')).join('\n');
     if (exitCode === 0 && /^[\s>*#•·-]*❌/m.test(userOutput)) {
       output += `\n[driver] 反向防御：原 exit=0 但输出含显式 ❌——维度脚本以 || echo ❌ 收尾导致失败被 exit 0 掩盖（假绿），重写为 1。真失败见上方 ❌ 行；若为脚本误报请修脚本（见 regression-checklist.md 维度脚本编写三铁律）。`;
+      normalized = { from: exitCode, to: 1, reason: 'reverse-guard-failgreen' };
       exitCode = 1;
     }
-    return { exitCode, output: output.slice(0, 8000) };
+    return { exitCode, output: output.slice(0, 8000), ...(normalized ? { normalized } : {}) };
   } catch (err) {
     return { exitCode: null, output: `[driver] 执行异常: ${err.message}` };
   }
@@ -2107,7 +2176,7 @@ async function execRegressionDim(script, timeoutMs = 60_000) {
  *
  * 文件格式：
  * {
- *   "meta": { "source": "FORGE/playbook/regression-checklist.md", "dims": 49, "runAt": "..." },
+ *   "meta": { "source": "playbook/regression-checklist.md", "dims": 49, "runAt": "..." },
  *   "dims": {
  *     "1": { "num": 1, "title": "CHANGELOG 纯度与完整性", "exitCode": 0, "output": "..." },
  *     ...
@@ -2126,7 +2195,7 @@ async function runRegressionPrecheck(runDir) {
 
   const payload = {
     meta: {
-      source: 'FORGE/playbook/regression-checklist.md',
+      source: 'playbook/regression-checklist.md',
       dims: dims.length,
       runAt: new Date().toISOString(),
       note: '由 driver 预执行生成（v1.2.5+ 方案 A）。worker 只读此文件判定，禁止重新执行命令。',
@@ -2150,7 +2219,7 @@ async function runRegressionPrecheck(runDir) {
 
   const executeDim = async (dim) => {
     const timeout = DIM_TIMEOUT_OVERRIDE[dim.num] ?? 60_000;
-    const { exitCode, output } = await execRegressionDim(dim.script, timeout);
+    const { exitCode, output, normalized } = await execRegressionDim(dim.script, timeout);
     // v1.3.8 run-10 修复：output 按行截断（保留前 12 行 + 截断标记）。
     // 91 维 × 平均 567 字符 ≈ 51KB JSON → 555 行，worker 的 sf_read 上限 500 行
     // 读不全 → 末尾维度数据缺失（run-10：59/91 维不可判定）。按行截断后总量
@@ -2183,6 +2252,7 @@ async function runRegressionPrecheck(runDir) {
       output: truncatedOutput,
       truncated: outLines.length > MAX_DIM_LINES || output.length > MAX_DIM_CHARS,
       rawLen: output.length, lineCount: outLines.length,
+      ...(normalized ? { normalized } : {}),
     };
   };
 
@@ -2210,6 +2280,7 @@ async function runRegressionPrecheck(runDir) {
     payload.dims[String(num)] = {
       num: r.num, title: r.title, exitCode: r.exitCode,
       output: r.output, truncated: r.truncated,
+      ...(r.normalized ? { normalized: r.normalized } : {}),
     };
     console.log(`  [precheck] 维度 ${r.num} ${r.title.slice(0, 24)}... exit=${r.exitCode ?? 'ERR'} (${r.rawLen}B${r.lineCount > 12 ? `→${r.lineCount} 行截断` : ''})`);
   }
@@ -2239,19 +2310,22 @@ async function runRegressionPrecheck(runDir) {
  * @returns {Array<{ num: number, title: string }>}
  */
 function parseAcceptanceScenarios() {
-  const accPath = join(REPO_ROOT, 'FORGE/playbook/acceptance-test.sh');
+  const accPath = join(REPO_ROOT, 'playbook/acceptance-test.sh');
   const src = readFileSync(accPath, 'utf-8');
   const scenarios = [];
   // 匹配 scenario <num> "<title>..."> 或 scenario <num> 换行 "<title>"
   // v1.4.0 修复（run-22 coverage P1-1 误报根因）：场景**内容字符串**里可能出现
   // 「...A19 scenario 48...」字样（echo 文案）——旧正则无行首锚定会误匹配为场景声明
   // （S48 title='>'）。要求 scenario 前是行首/换行（(^|\n)\s*）。
-  const re = /(^|\n)\s*scenario\s+(\d+)\s*(?:\([^)]*\))?\s*"([^"]{0,120})/g;
+  // 标题上限 400：v1.4.9 修复批起场景壳标题承载断言面清单（S419 达 221 字符，
+  // 全仓最长 S376 达 236 字符），120 上限会把「tool 入口 happy-path」段静默截断——
+  // coverage 按 precheck 标题对账时判后段无锚点，产出「零覆盖」假红（run-04 P1-2 实锤）。
+  const re = /(^|\n)\s*scenario\s+(\d+[a-z]?)\s*(?:\([^)]*\))?\s*"([^"]{0,400})/g;
   let m;
   while ((m = re.exec(src)) !== null) {
     const title = m[3].trim();
     if (title.length > 0) {
-      scenarios.push({ num: parseInt(m[2], 10), title });
+      scenarios.push({ num: parseInt(m[2], 10), label: m[2], title });
     }
   }
   return scenarios;
@@ -2270,14 +2344,64 @@ function parseChangelogModules(changelogRelPath) {
     return [];
   }
   const md = readFileSync(absPath, 'utf-8');
+  const lines = md.split('\n');
   const modules = [];
-  for (const line of md.split('\n')) {
-    const m = line.match(/^##\s+(.+)$/);
-    if (m && !/^##\s+(背景|前置依赖|状态)/.test(line)) {
-      modules.push({ title: m[1].trim() });
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^##\s+(.+)$/);
+    if (!m || /^##\s+(背景|前置依赖|状态)/.test(lines[i])) continue;
+    // 模块正文（本标题 → 下一个 ## 标题）中引用的场景号，供 V 做「模块 ↔ 场景」对账。
+    // v1.4.8 run-02 实证：此前模块只有 title，V 只能标「映射矩阵完全缺失」——清单两侧各持
+    // 一半线索（模块无场景、场景无模块），故补这一侧的结构化线索（非替代 V 的语义判定）。
+    let body = '';
+    for (let j = i + 1; j < lines.length && !/^##\s/.test(lines[j]); j++) body += lines[j] + '\n';
+    const refs = new Set();
+    for (const r of body.matchAll(/S(\d{1,3}[a-z]?)(?:\s*[-–~]\s*S?(\d{1,3}[a-z]?))?/g)) {
+      refs.add('S' + r[1]);
+      if (r[2]) {
+        const a = parseInt(r[1], 10), b = parseInt(r[2], 10);
+        if (b > a && b - a <= 20) for (let k = a; k <= b; k++) refs.add('S' + k);
+      }
     }
+    modules.push({ title: m[1].trim(), line: i + 1, scenarioRefs: [...refs] });
   }
   return modules;
+}
+
+/**
+ * 从 acceptance 原始日志解析逐场景执行结果（v1.4.8 run-02 · coverage P0-3 修复）。
+ *
+ * 背景：旧 precheck 的 scenarios[] 只有声明清单（num/label/title），没有任何「跑没跑、结果如何」
+ * 的信息——V 据此只能判「全量场景无任何执行结果」而挂起。然而 driver 在 judgment-only 模式下
+ * 读的 acceptance 实证一直存在（acceptance.md 的 SUMMARY 即来自它），只是未落到 precheck 里。
+ *
+ * 来源优先级：{runDir}/acceptance-raw.log → {REPO_ROOT}/acceptance-raw.log
+ * （judgment-only 模式不拷贝日志进 runDir，故必须有主仓回退）。
+ * 标记形态：`━━━ 场景 N: 标题 ━━━` 之后的 `✅ PASS` / `❌ FAIL` / `⏭ SKIP`。
+ * FAIL/SKIP 判定优先于 PASS（同场景多次回声时以否定结论为准，fail-closed 取向）。
+ *
+ * @returns {{source: string|null, results: Map<string,string>}}
+ */
+function parseAcceptanceResults(runDir) {
+  const candidates = [join(runDir, 'acceptance-raw.log'), join(REPO_ROOT, 'acceptance-raw.log')];
+  const logPath = candidates.find((p) => existsSync(p)) || null;
+  const results = new Map();
+  if (!logPath) return { source: null, results };
+  let src;
+  try { src = readFileSync(logPath, 'utf-8'); } catch { return { source: null, results }; }
+  let cur = null;
+  const settle = (verdict) => { if (cur) { results.set(cur, verdict); cur = null; } };
+  for (const line of src.split('\n')) {
+    const sc = line.match(/━+\s*场景\s+(\d+[a-z]?)\s*[:：]/);
+    if (sc) { settle('PASS'); cur = sc[1]; continue; }
+    if (!cur) continue;
+    // 精确匹配 fail()/warn() 的输出形态（`  ❌ FAIL: ` / `  ⏭ SKIP: `——两空格缩进 + 冒号）。
+    // 宽匹配会把**被测系统自身**的输出误记为场景失败：实测 `[sofagent] 判定: ❌ FAIL (exit 2)`
+    // 是场景「违规 commit 被拦截」的预期产物，宽匹配会误报 2 例 FAIL。
+    if (/^\s{1,4}❌ FAIL:/.test(line)) settle('FAIL');
+    else if (/^\s{1,4}⏭ SKIP/.test(line)) settle('SKIP');
+  }
+  settle('PASS');
+  return { source: logPath, results };
 }
 
 /**
@@ -2304,13 +2428,51 @@ async function runCoveragePrecheck(runDir, target) {
   const changelogModules = parseChangelogModules(changelogRel);
   const scenarios = parseAcceptanceScenarios();
 
+  // 豁免清单（playbook/.coverage-exempt）：标题命中的 changelog 模块标 exempt——
+  // 非交付性章节（如修复批施工记录）不参与场景对账（与 check-review-system ⑥段同一豁免源）
+  let exemptKeywords = [];
+  const exemptPath = join(process.cwd(), 'playbook/.coverage-exempt');
+  if (existsSync(exemptPath)) {
+    exemptKeywords = readFileSync(exemptPath, 'utf-8').split('\n').map((l) => l.trim()).filter((l) => l !== '' && !l.startsWith('#'));
+  }
+  for (const m of changelogModules) {
+    if (exemptKeywords.some((k) => (m.title || '').includes(k))) m.exempt = true;
+  }
+
+  // v1.4.8 run-02（coverage P0-3）：合并逐场景执行结果——旧 precheck 只有声明清单，
+  // V 无法判定「哪些真跑过 / 结果如何」，只能按 fail-closed 挂起。此处把 acceptance 实跑
+  // 结果写进同一份证据，使「覆盖」可区分「已执行且通过」与「未执行」。
+  const { source: accSource, results: accResults } = parseAcceptanceResults(runDir);
+  let accPass = 0, accFail = 0, accSkip = 0, accNotRun = 0;
+  if (accSource) {
+    for (const s of scenarios) {
+      const r = accResults.get(s.label);
+      if (r === 'PASS') { s.result = 'PASS'; accPass++; }
+      else if (r === 'FAIL') { s.result = 'FAIL'; accFail++; }
+      else if (r === 'SKIP') { s.result = 'SKIP'; accSkip++; }
+      else { s.result = 'NOT_RUN'; accNotRun++; }
+    }
+  }
+
   const payload = {
     meta: {
       changelogPath: changelogRel,
       modules: changelogModules.length,
       scenarios: scenarios.length,
       runAt: new Date().toISOString(),
+      acceptance: {
+        source: accSource,
+        executed: accPass + accFail + accSkip,
+        pass: accPass, fail: accFail, skip: accSkip, notRun: accNotRun,
+        rule: 'scenarios[].result ∈ {PASS,FAIL,SKIP,NOT_RUN}。NOT_RUN = 本次未执行（不等于失败，但不得计为已覆盖）。覆盖结论必须区分「已执行且通过」与「未执行」两种状态；source 为 null 表示未找到 acceptance 日志，此时全部场景按 NOT_RUN 处理。',
+      },
       note: '由 driver 预执行生成（v1.2.5+ 方案 A）。worker 只读此文件做覆盖交叉判定，禁止重新探索文件。',
+      count_verification: {
+        rule: 'scenarios.length === meta.scenarios；逐条清单 = scenarios[]（label 唯一，num 为整数主编号）',
+        method: 'JSON.parse 后 scenarios.length，与 meta.scenarios 严格相等',
+        scope_note: 'S368/S32 等前移/随动场景均在 scenarios[] 数组内、计入口径；编号断档是历史合并/退役所致，断档号不计入',
+      },
+      exempt: { count: exemptKeywords.length, keywords: exemptKeywords, rule: 'changelog 数组中 exempt:true 的模块为非交付性章节（如修复批施工记录），跳过场景对账，coverage.md 中标注 EXEMPT 即可，不计入缺口' },
     },
     changelog: changelogModules,
     scenarios,
@@ -2644,119 +2806,33 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * （launchd 收养），宿主会话结束不影响存活。日志 stdio 绑文件 fd（非 ignore）。
  */
 function spawnDetachedDriver(args, logPath, env = {}) {
-  mkdirSync(dirname(logPath), { recursive: true });
-  const logFd = openSync(logPath, 'a');
-  try {
-    const child = spawn(process.execPath, [__filename, ...args], {
-      detached: true,
-      stdio: ['ignore', logFd, logFd],
-      env: { ...process.env, ...env },
-    });
-    child.unref();
-    return child.pid;
-  } finally {
-    closeSync(logFd);
-  }
+  return spawnDetachedDriverGeneric(__filename, args, logPath, env);
 }
 
 /**
- * 死因审计——Harness「审计」能力落地。
- * driver 死后把死因证据落盘 runDir/death-audit.jsonl（append）：
- * verdict = signal-abort（latest.json stopReason='aborted-signal'，SIGTERM 优雅）
- *         / external-kill（无 stopReason + driver.pid 残留 = 非优雅退出，默认）。
+ * resume 参数提取（release-gate 特有：单轮 V+F 流程，只取 target——无 maxRounds 概念）。
  */
-function auditDriverDeath(runDir, liveness) {
-  const entry = {
-    ts: new Date().toISOString(),
-    heartbeatAgeMs: liveness.heartbeatAgeMs ?? null,
-    lastEvent: liveness.lastEvent ?? null,
-    phase: liveness.phase ?? null,
-    pidfile: (() => {
-      try {
-        const p = join(runDir, 'driver.pid');
-        return existsSync(p) ? readFileSync(p, 'utf-8').trim() : null;
-      } catch { return null; }
-    })(),
-    stopReason: null,
-    verdict: 'external-kill',
-  };
-  try {
-    const latestPath = join(runDir, 'latest.json');
-    if (existsSync(latestPath)) {
-      const latest = JSON.parse(readFileSync(latestPath, 'utf-8'));
-      if (latest.stopReason) entry.stopReason = latest.stopReason;
-    }
-  } catch { /* latest.json 读失败不阻断审计 */ }
-  if (entry.stopReason === 'aborted-signal') entry.verdict = 'signal-abort';
-  try {
-    appendFileSync(join(runDir, 'death-audit.jsonl'), JSON.stringify(entry) + '\n');
-  } catch { /* 审计落盘失败不阻断 watcher 主循环 */ }
-  return entry;
-}
-
-/**
- * 从 runDir 现有元数据构造 resume 参数（target）。
- * latest.json 优先，resume-point.json 兜底。缺 target 返回 null（无法续跑）。
- * release-gate 无 maxRounds 概念（单轮 V+F 流程），只取 target。
- */
-function buildRespawnArgs(runDir) {
-  for (const f of ['latest.json', 'resume-point.json']) {
-    try {
-      const p = join(runDir, f);
-      if (!existsSync(p)) continue;
-      const j = JSON.parse(readFileSync(p, 'utf-8'));
-      if (j && typeof j.target === 'string' && j.target) {
-        return { target: j.target };
-      }
-    } catch { /* 单个源损坏继续尝试下一个 */ }
+function extractReleaseGateRespawnArgs(j) {
+  if (j && typeof j.target === 'string' && j.target) {
+    return { args: ['--target', j.target, '--resume'] };
   }
   return null;
 }
 
 /**
- * watcher 主管主循环——Harness 理念：注入（启动规则）→ 审计（死因落盘）→
- * 回溯（--resume 断点续跑）。每 intervalSec 读 status.json 心跳；心跳停 →
- * 死因审计 → spawnDetachedDriver --resume 拉起；verdict.md 产出 → watcher 退出。
+ * watcher 适配（--watch 模式入口）——v1.4.6 守护 v2：收编 driver-base 共享循环
+ * （三缺口修复：respawn 封顶 / 快速死亡环检测 / watcher 心跳）+ 差异注入。
  */
 async function runWatcher(runDir, intervalSec, thresholdSec) {
-  const log = (msg) => console.log(`[watcher] ${new Date().toISOString()} ${msg}`);
-  mkdirSync(runDir, { recursive: true });
-  try { writeFileSync(join(runDir, 'watcher.pid'), String(process.pid)); } catch { /* pidfile 失败不阻断 */ }
-  log(`启动 pid=${process.pid} · 盯 ${runDir} · interval=${intervalSec}s threshold=${thresholdSec}s`);
-
-  let resumeCount = 0;
-  while (true) {
-    if (existsSync(join(runDir, 'verdict.md'))) {
-      log('✅ verdict.md 已产出——主管任务完成，退出');
-      return;
-    }
-    const live = checkDriverLiveness(runDir, { thresholdMs: thresholdSec * 1000 });
-    if (live.alive) {
-      await sleep(intervalSec * 1000);
-      continue;
-    }
-    const death = auditDriverDeath(runDir, live);
-    log(`🛑 driver 死亡（heartbeat ${Math.round((death.heartbeatAgeMs ?? 0) / 1000)}s 未更新）→ verdict=${death.verdict} phase=${death.phase ?? '?'}`);
-    const respawn = buildRespawnArgs(runDir);
-    if (!respawn) {
-      log('⚠️ 无法构造 resume 参数（缺 target）——主管退出，需人工介入');
-      return;
-    }
-    resumeCount++;
-    log(`🔄 自动拉起 driver #${resumeCount}：--target ${respawn.target} --resume`);
-    try {
-      spawnDetachedDriver(
-        ['--target', respawn.target, '--resume'],
-        join(runDir, 'driver.log'),
-        { SOFAGENT_DAEMON_CHILD: '1' },
-      );
-    } catch (err) {
-      log(`💥 spawn 失败: ${err.message}——主管退出，需人工介入`);
-      return;
-    }
-    // 拉起后睡眠一轮，避免 driver 刚启动 status.json 未生成被误判 dead 反复拉起
-    await sleep(intervalSec * 1000);
-  }
+  const result = await runWatcherShared({
+    driverEntry: __filename,
+    runDir,
+    intervalSec,
+    thresholdSec,
+    extractArgs: extractReleaseGateRespawnArgs,
+  });
+  // 退出码语义：verdict-done=0（正常）；resume-max/quick-death-loop/spawn-fail=1（需人工）
+  process.exit(result.rc);
 }
 
 /**
@@ -2781,7 +2857,7 @@ async function ensureAcceptancePreRun(args, runDir) {
       console.log(`  [driver] --skip-acceptance 已从 ${externalLog} 复制预跑日志到 runDir`);
     } else {
       console.log('  [driver] --skip-acceptance 已指定，但未找到预跑日志');
-      console.log(`  [driver] 请先手动预跑：bash FORGE/playbook/acceptance-test.sh > ${externalLog} 2>&1`);
+      console.log(`  [driver] 请先手动预跑：bash playbook/acceptance-test.sh > ${externalLog} 2>&1`);
       writeFileSync(preRunLog,
         '--skip-acceptance 模式：未预跑 acceptance-test.sh。\n' +
         `请手动预跑后把日志放到 ${externalLog}（driver 会自动复制），\n` +
@@ -2836,9 +2912,11 @@ release-gate-driver.mjs - FORGE release-gate-loop Driver
   --acceptance-range <S-S>  [v1.3.8 交付七] acceptance 分片抽查化——全流程模式下只跑
                             指定场景区间（如 --acceptance-range S294-S310，本版新增
                             场景），不跑全量 12 分片。与 --judgment-only 互斥使用
-  --auto-fix                [v1.3.8 交付七] 显式开启 F 修复链。默认关闭——verdict
-                            FAIL 即 loop-end，无 f-diagnose/f-fix/f-audit 产物，
-                            修复责任交回主 session（阶段四）
+  --auto-fix                开启 F 修复链（**默认已开**，此处为幂等显式声明）。
+                            verdict FAIL → f-diagnose → f-fix → f-audit → 下一轮 V，
+                            最多 MAX_FIX_ROUNDS 轮自动收敛，无需人工介入。
+  --no-auto-fix             关闭 F 修复链——verdict FAIL 即 loop-end，无 f-* 产物，
+                            修复责任交回主 session（仅在需要人工判断修复范围时使用）
   --check-alive <runDir>    [v1.3.8 交付五] liveness 探针——只认 status.json 心跳
                             不认日志（LLM 长窗口日志冻结 ≠ 死亡）。心跳 <90s →
                             RC=0 输出 alive；超时 → RC=1 输出 dead + 最后 event/phase
@@ -3487,7 +3565,7 @@ async function main() {
       console.log('[driver] --judgment-only：未找到脚本层预跑日志，主动执行 acceptance-test.sh（一次性）...');
       const { execSync } = await import('node:child_process');
       try {
-        const raw = execSync('bash FORGE/playbook/acceptance-test.sh', {
+        const raw = execSync('bash playbook/acceptance-test.sh', {
           cwd: REPO_ROOT,
           encoding: 'utf-8',
           timeout: 600_000, // 10 分钟上限（314 场景实测约 1.5 分钟）
@@ -3665,7 +3743,7 @@ async function main() {
   //  流程：verdict FAIL → f-diagnose → f-fix → f-audit → 回到 verdict 判定
   //  最多 MAX_FIX_ROUNDS 轮，每轮独立诊断+修复+审计
   // ═══════════════════════════════════════════════════════════
-  const MAX_FIX_ROUNDS = 3;
+  const MAX_FIX_ROUNDS = 5;   // 五轮上线口径：F 链自动修复上限 5 轮（原先 3 轮）
   const F_STEPS = ['f-diagnose', 'f-fix', 'f-audit'];
   // run-01 假 PASS 修复：f-audit 真实结果跨迭代传递（保守判定，见下方收敛逻辑）
   let lastAuditGateResult = null;

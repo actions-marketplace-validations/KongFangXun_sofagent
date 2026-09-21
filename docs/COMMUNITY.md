@@ -1,6 +1,8 @@
 # COMMUNITY.md · sofagent 社区
 
-> v1.4.3 · 2026-09-01（UTC）· 孔放勋
+<p align="center"><img src="assets/sofagent.png" alt="sofagent" width="96" /></p>
+
+> v1.5.0 · 2026-09-19（UTC）· ✅ 已发版 · 孔放勋
 
 ## 📌 当前状态
 
@@ -13,14 +15,14 @@
 
 ## 🪜 贡献者阶梯
 
-详见 [CONTRIBUTING.md §贡献者阶梯](../CONTRIBUTING.md)。
+详见 [CONTRIBUTING.md](../CONTRIBUTING.md) 的「新人 30 秒快速开始」与「成为维护者」两节。
 
 ## 🎯 从哪开始
 
 | 类型 | 说明 | 难度 |
 |------|------|:--:|
 | **跨平台测试** | 在 Windows/WSL/Linux 上跑 install.sh + verify.sh，报告结果 | ★ |
-| **FAQ 补充** | HANDBOOK §三（场景三：排查问题）需要更多真实场景的回答 | ★ |
+| **FAQ 补充** | [HANDBOOK](./HANDBOOK.md) 的「排查与自定义」节需要更多真实场景的回答 | ★ |
 | **文档翻译** | README 已有英文版，需要维护和更新 | ★★ |
 | **安全审计** | 审查 install.sh / 审计规则（`engine/audit/src/rules/`）的安全性 | ★★★ |
 | **规则优化** | 改进审计规则（`engine/audit/src/rules/rule-a*.ts` + `skill-safety-engine.ts`）的正则，减少误报 | ★★★ |
@@ -30,7 +32,7 @@
 | 指标 | 状态 | 需要什么 |
 |------|:--:|------|
 | 外部 contributor | 0 | 👋 你（项目 2026 年 6 月创建，太新——不是没吸引力） |
-| 跨平台实测数据 | OpenClaw 完整，其余 4 平台部分 | Windows/Hermes Agent 实测 |
+| 跨平台实测数据 | OpenClaw 完整，其余平台部分覆盖 | Windows / Hermes Agent 实测 |
 | A/B 对照实验 | v0.93 已完成（10 组，结论：增量 = f(陷阱难度)） | 独立测试者 / 真实 Skill 加载对照 |
 | 多语言文档 | 中英双语 README，HANDBOOK 仅中文 | 英文翻译 |
 
@@ -41,7 +43,7 @@ sofagent 的约束效果的增量数据需要独立验证，不能只靠作者�
 **复现指南**：[docs/evidence/benchmark/reproduction-guide.md](./evidence/benchmark/reproduction-guide.md)
 
 **最小复现路径**（30 分钟）：
-1. 克隆 [sofagent-test-suite](https://github.com/cedric123123/sofagent-test-suite)（baseline `56160e1`；⚠️ 测试套件仓库即将公开，若 404 请按下方 fixture 手动创建）
+1. 克隆 [sofagent-test-suite](https://github.com/cedric123123/sofagent-test-suite)（baseline `56160e1`；⚠️ 该仓库尚在公开流程中——若暂时 404，可先跳过本步，用你自己的仓库构造同款任务）
 2. 跑 Task 1（camelCase → snake_case）——A 裸 Agent vs B sofagent 约束
 3. 手动评分：变量名误伤率（改了几个不该改的变量名 / 总变量数）
 4. 把结果发到 [GitHub Discussions](https://github.com/KongFangXun/sofagent/discussions)
@@ -58,11 +60,11 @@ sofagent 的约束效果的增量数据需要独立验证，不能只靠作者�
 4. 迟到的重复 PR → 关闭并致谢，欢迎转为 review 意见
 5. 范围重叠但不同 → 拆分合并，不整单取舍
 
-> 提前开 PR 不自动获得优先权——先到先得只看上面五条。此规则在出现第一份外部重复 PR 前生效。
+> 提前开 PR 不自动获得优先权——先到先得只看上面五条。本规则当前即生效（第一份外部重复 PR 出现前同样适用）。
 
 ## 行为准则
 
-我们就一条规矩：对事尖锐，对人客气。做不到？issue 见。
+我们就一条规矩：对事尖锐，对人客气。做不到的话，欢迎直接开 Issue 指出——这也是「对人客气」的一部分。
 
 ## 联系方式
 

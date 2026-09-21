@@ -2,20 +2,20 @@
 // A16 非授权文件变更（安全层 · 工程规范）
 // 检测敏感目录/文件类型被修改或删除——行为级检测
 // v1.3.7 新增
-// v1.4.3: 审计引擎源码自保护——检测 engine/audit/src/ 核心文件被修改
+// v1.5.0: 审计模块源码自保护——检测 engine/audit/src/ 核心文件被修改
 // evidenceMode: git-diff
 // ============================================================
 
-import type { AuditContext, RuleCheck } from './types';
+import type { AuditContext, RuleScan, RuleStatus } from './types';
 /**
- * v1.2.5 §4.9.3: 审计引擎核心源码——Agent 不可修改
+ * v1.2.5 §4.9.3: 审计模块核心源码——Agent 不可修改
  *
- * 这些路径如果被 Agent 修改，可能意味着审计引擎被篡改
+ * 这些路径如果被 Agent 修改，可能意味着审计模块被篡改
  * （如从 critical 列表里删除规则、修改检测逻辑）。
  * 硬编码在规则内，零配置即生效。
  */
 const AUDIT_ENGINE_PROTECTED_PATHS: string[] = [
-  // 审计引擎核心——runner / index / types
+  // 审计模块核心——runner / index / types
   'engine/audit/src/rules/runner.ts',
   'engine/audit/src/rules/index.ts',
   'engine/audit/src/rules/types.ts',
@@ -45,18 +45,12 @@ const AUDIT_ENGINE_PROTECTED_PATHS: string[] = [
   'engine/core/src/shared/rule-constants.ts',
 ];
 
-export function checkRuleA16(ctx: AuditContext): RuleCheck {
-  const rule: RuleCheck = {
-    name: 'A16 非授权文件变更',
-    number: 16,
-    status: 'PASS',
-    details: [],
-    evidenceMode: 'git-diff',
-    ruleClass: '工程规范',
-  };
+export function scanA16(ctx: AuditContext): RuleScan {
+  let status: RuleStatus = 'PASS';
+  const details: string[] = [];
 
   const config = ctx.config?.A16;
-  if (!config?.enabled) return rule;
+  if (!config?.enabled) return { status, details };
 
   const protectedDirs: string[] = config.protected_dirs || [];
   const sensitiveTypes: string[] = config.sensitive_types || [];
@@ -76,19 +70,19 @@ export function checkRuleA16(ctx: AuditContext): RuleCheck {
       }
     }
 
-    // v1.2.5 §4.9.3: 审计引擎源码自保护
-    // 检测 diff 文件是否命中审计引擎核心源码路径
+    // v1.2.5 §4.9.3: 审计模块源码自保护
+    // 检测 diff 文件是否命中审计模块核心源码路径
     if (file.status === 'added' || file.status === 'modified') {
       if (AUDIT_ENGINE_PROTECTED_PATHS.includes(file.path)) {
-        violations.push(`审计引擎源码被修改: ${file.path}（审计规则源码不应被 Agent 修改，请人工审查）`);
+        violations.push(`审计模块源码被修改: ${file.path}（审计规则源码不应被 Agent 修改，请人工审查）`);
       }
     }
   }
 
   if (violations.length > 0) {
-    rule.status = 'WARN';
-    rule.details.push(violations.join('; '));
+    status = 'WARN';
+    details.push(violations.join('; '));
   }
 
-  return rule;
+  return { status, details };
 }

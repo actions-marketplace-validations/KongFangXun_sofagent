@@ -1,10 +1,10 @@
 // sofagent-inject · OpenClaw 原生插件（code-plugin）
 // 约束注入：before_prompt_build 时把 sofagent 四层加载链注入系统上下文。
 //   L1 core-rules.md（核心铁律）· L2 think.md（反思区）· L3 fde.md（用户规则）· L4 knowledge/（知识库）
-// 复用 @sofagent/harness 的 buildConstrainedSystemPrompt（npm API 场景同源实现），
+// 复用 @sofagent/inject 的 buildConstrainedSystemPrompt（npm API 场景同源实现），
 // 与 engine/hooks/sofagent-load-chain（OpenClaw hook 形态）职责互补、不合并。
-// 品牌色 #16B8F3（sofagent 主色）。
 // API 分级：/* @public */ 导出对 OpenClaw 运行时契约锁定（register 入口 + pluginMeta）。
+
 
 /* @public */ export interface InjectPluginMeta {
   id: string;
@@ -14,17 +14,32 @@
   brandColor: string;
 }
 
+// v1.4.5 (T7/R4): 版本运行时读取 package.json——此前硬编码 '1.4.0'，发版 bump 后
+// pluginMeta.version 落后 4 个版本（package.json 1.4.4）。tsconfig 无 resolveJsonModule
+// （import json 编译不过），包输出为 CJS（无 type:module）→ 直接用 require 同步读。
+// 路径相对本文件编译产物 dist/index.js → 上溯一级即 package.json。
+// 读不到（打包剥离等）兜底 '0.0.0-unknown'——缺版本比错版本诚实。
+const _pkg: { version?: string } = require('../package.json');
+
 /* @public */ export const pluginMeta: InjectPluginMeta = {
   id: 'sofagent-inject',
   name: 'sofagent 注入',
-  version: '1.4.0',
-  description: '约束注入——before_prompt_build 注入四层加载链（core-rules/think.md/fde.md/knowledge）',
+  version: _pkg.version ?? '0.0.0-unknown',
+  description: '给 OpenClaw 加上约束注入——每次构建提示词前带上企业铁律 / 反思 / 用户规则 / 知识库（四层加载链）',
   brandColor: '#16B8F3',
 };
 
 // 宽松 API 类型——OpenClaw 运行时注入 register(api)，本地无 SDK 时避免硬类型依赖
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type OpenClawApi = any;
+
+/**
+ * 已解析的项目根（hook 读配置后记下来）。
+ * 🔴 为什么需要：hook 读 `config.projectRoot`，而工具此前硬编码 `process.cwd()`——
+ * 用户在 openclaw.json 里指定 projectRoot 后，工具预览的注入内容会读错目录（误导调试，
+ * 表现为「明明有约束配置却显示无内容」）。两处必须同源：hook 未跑过时才回落 cwd。
+ */
+let configuredRoot: string | undefined;
 
 /* @public */ export function register(api: OpenClawApi): void {
   const logger = api?.logger ?? console;
@@ -35,8 +50,9 @@ type OpenClawApi = any;
       try {
         // 动态 require：依赖未装/能力不可用时降级（插件可独立安装）
         // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const m = require('@sofagent/harness');
+        const m = require('@sofagent/inject');
         const projectRoot = ctx?.config?.plugins?.entries?.['sofagent-inject']?.config?.projectRoot ?? process.cwd();
+        configuredRoot = projectRoot; // 与工具同源（见文件头 configuredRoot 说明）
         const injected = typeof m.buildConstrainedSystemPrompt === 'function' ? m.buildConstrainedSystemPrompt(projectRoot) : '';
         if (injected) {
           return { prependSystemContext: injected };
@@ -63,14 +79,14 @@ type OpenClawApi = any;
         async execute(_id: string, _params: Record<string, unknown>) {
           try {
             // eslint-disable-next-line @typescript-eslint/no-require-imports
-            const m = require('@sofagent/harness');
-            const projectRoot = process.cwd();
+            const m = require('@sofagent/inject');
+            const projectRoot = configuredRoot ?? process.cwd(); // 与 hook 同源：config.projectRoot 生效
             const injected = typeof m.buildConstrainedSystemPrompt === 'function' ? m.buildConstrainedSystemPrompt(projectRoot) : '';
             return {
               content: [{ type: 'text', text: injected ? `已注入四层加载链（${injected.length} 字符）：\n${injected.slice(0, 500)}` : '无注入内容（项目无约束配置）' }],
             };
           } catch (err) {
-            return { content: [{ type: 'text', text: `sofagent_inject 依赖 @sofagent/harness 不可用：${err instanceof Error ? err.message : String(err)}` }] };
+            return { content: [{ type: 'text', text: `sofagent_inject 依赖 @sofagent/inject 不可用：${err instanceof Error ? err.message : String(err)}` }] };
           }
         },
       },

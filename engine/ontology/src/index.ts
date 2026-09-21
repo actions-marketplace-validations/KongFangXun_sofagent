@@ -1,4 +1,4 @@
-// ── API 分级契约（v1.4.3 四）────────────────────────────
+// ── API 分级契约（v1.5.0 四）────────────────────────────
 // `/* @public */`：公开 API——semver 锁定，变更必须 bump 版本 + CHANGELOG 记录
 //                 （外部依赖方与跨平台适配器只许 import 这一层）
 // `/* @internal */`：内部 API——不承诺稳定性，破坏性变更无需 bump
@@ -20,6 +20,10 @@
 /* @public */ export type { LifecycleMigrationRequest, LifecycleMigrationResult, OntologySkipEntry, OntologySkipLog } from './merge-engine';
 /* @public */ export { mergeSharedOntology } from './shared-merge';
 /* @public */ export { generateOntologyView } from './ontology-view';
+
+// ── v1.5.0 第二章：双时态时点快照 + 渐进加载三层 ──
+/* @public */ export { stateAt, isValidAt, progressiveLoad, defaultBudget } from './query';
+/* @public */ export type { EntityDigest, EntityRelations, LoadTier, TokenBudget, DowngradeTrace } from './query';
 
 // ── Dream Cycle synthesize 落点（v1.1.6 新增）──
 /* @public */ export { synthesize, getRegistered, clearRegistered } from './synthesize';

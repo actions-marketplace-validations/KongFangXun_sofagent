@@ -2,9 +2,7 @@
 
 > **想给 FORGE 加新 loop？这份文档告诉你怎么搭。** 从 driver 脚本结构到三个必踩的坑，每条都来自真实 debug 会话。
 >
-> v1.4.3 · 2026-09-01（UTC）
-
-<img src="../docs/assets/sofagent.png" alt="sofagent" width="160" />
+> v1.5.0 · 2026-09-19（UTC）· ✅ 已发版
 
 - [一、技术栈：一句话声明](#一技术栈一句话声明)
 - [二、为什么选 LangGraph（弃用 deepagents）](#二为什么选-langgraph弃用-deepagents)
@@ -18,7 +16,7 @@
 
 ## 一、技术栈：一句话声明
 
-**FORGE loop = LangChain Core（LLM 调用底座）+ LangGraph `createReactAgent`（编排引擎）。**
+**FORGE loop = LangChain Core（LLM 调用底座）+ LangGraph `createReactAgent`（编排模块）。**
 
 不多不少。不用 deepagents 全家桶，不用 LangChain 全家桶（Document Loader / Vector Store / RAG pipeline 都不碰）。完整技术选型原则见 [VALIDATION](../VALIDATION.md#技术选型原则用什么不用什么)。
 
@@ -35,7 +33,7 @@ const agent = createReactAgent({ llm: model, tools, prompt: systemPrompt });
 
 ## 二、为什么选 LangGraph（弃用 deepagents）
 
-deepagents 早期启发了编排引擎设计，后因三个**不可逆硬伤**弃用，改用 LangGraph `createReactAgent`（同一套 React 模式，但节点/边全暴露，白盒可控）：
+deepagents 早期启发了编排模块设计，后因三个**不可逆硬伤**弃用，改用 LangGraph `createReactAgent`（同一套 React 模式，但节点/边全暴露，白盒可控）：
 
 | 硬伤 | 说明 |
 |------|------|
@@ -155,26 +153,7 @@ try {
 
 ### 3.7 spawnWorker 独立进程模型
 
-每个步骤在独立 `node` 子进程中执行，保证真·零上下文：
-
-```js
-function spawnWorker(step, roundDir, target, round) {
-  return new Promise((resolveP, rejectP) => {
-    const child = spawn(process.execPath, [
-      __filename, '--worker', '--step', step,
-      '--round-dir', roundDir, '--target', target,
-    ], {
-      cwd: REPO_ROOT,
-      stdio: ['pipe', 'inherit', 'inherit'],
-      env: { ...process.env, FORGE_ROUND: String(round) },
-    });
-    child.on('close', (code) => {
-      if (code === 0) resolveP();
-      else rejectP(new Error(`worker ${step} 退出码 ${code}`));
-    });
-  });
-}
-```
+每个步骤在独立 `node` 子进程中执行，保证真·零上下文（完整实现见 `FORGE/src/fresh-eyes-driver.mjs`）。核心模式：`spawn(process.execPath, [__filename, '--worker', '--step', step, ...])`，stdio 继承、`FORGE_ROUND` 环境变量传轮次，`close` 事件里非 0 退出码 reject。
 
 步骤 ①②（双盲独立审查）可并行调用 `spawnParallel`；步骤 ③④⑤ 必须串行（有数据依赖）。
 
@@ -194,6 +173,8 @@ function spawnWorker(step, roundDir, target, round) {
 - [ ] **driver catch 块写 ERROR + LOOP_END 事件**——否则 Dashboard 看到"永远在跑"
 - [ ] **`runs/` 目录放在 loop 自己目录下**——`.gitignore` 加 `FORGE/SKILL/*/runs/`
 - [ ] **`LEDGER.md` 追加一行记录**——git 跟踪的跨 run 永久索引
+- [ ] **注入片段登记**——buildSystemPrompt 拼入的每段有名 / token 估算 / owner；新段超 1K token 须标记并进入复审清单（Codex AGENTS.md 同款纪律的运行时近似，Node 无编译期保证）
+- [ ] **系统注入走 `core/context` 等价物**——注入物一律经登记表校验大小上限，不做无上限字符串拼接（no unbounded items）
 
 ---
 
@@ -209,18 +190,7 @@ function spawnWorker(step, roundDir, target, round) {
 
 审查类步骤（a-check）用 150 不会 OOM，因为消息增长慢（大量是工具调用结果，短文本）；但 a-consolidate 要读取两份完整的 check 报告 + 产出 findings.md + result.md，单条消息体积大，150 步累积就爆了。
 
-**修复**：
-
-```js
-// 按步骤类型区分 recursionLimit
-const STEP_RECURSION_LIMITS = {
-  'a-check':       150,  // 审查类：需要大量读文件+搜索
-  'b-check':       150,
-  'a-consolidate': 50,   // 文本处理类：合并/格式化，50 步够
-  'b-fix':         60,   // 修复类：需要读写文件，介于两者之间
-  'a-verify':      50,   // 验证类：读 findings + summary 对比
-};
-```
+**修复**：按步骤类型区分 recursionLimit——配置表见 [§3.4](#34-step_recursion_limits按步骤区分)，审查类 150 / 文本处理类 50，不能一刀切。
 
 **经验值参考**：
 
@@ -258,9 +228,7 @@ const STEP_RECURSION_LIMITS = {
 
 **修复**：两个层面——
 
-**层面 1：步骤级 try/catch + 降级函数**（代码见 [§3.6](#36-失败降级机制)）
-
-在 `spawnWorker('a-consolidate', ...)` 外面包 try/catch，catch 里调 `writeFallbackFindings(roundDir)` 写降级产物。降级产物质量不如正常流程，但"有"比"没有"强——一个步骤崩不能拖死整条链。
+**层面 1：步骤级 try/catch + 降级函数**（实现见 [§3.6](#36-失败降级机制)——一个步骤崩不能拖死整条链）
 
 **层面 2：driver catch 块写可见性事件**
 
@@ -412,9 +380,9 @@ FORGE/SKILL/fresh-eyes-loop/
 
 ---
 
-# FORGE 内部架构（自 ARCHITECTURE §二 迁入 · v1.4.3）
+## FORGE 内部架构（内部工具链）
 
-> 本篇原是 [ARCHITECTURE §二](../../docs/ARCHITECTURE.md) 的「⚙️ FORGE 自迭代工具链」小节——FORGE 是内部工具链，细节归本指南（Loop 开发者读），ARCHITECTURE 保留四种能力的架构概要。锚点 `#四节点状态机v113` 随内容迁至本文件，外部引用已同步更新。
+> 本篇原是 [ARCHITECTURE §二](../../docs/ARCHITECTURE.md) 的「⚙️ FORGE 自迭代工具链」小节——FORGE 是内部工具链，细节归本指南（Loop 开发者读），ARCHITECTURE 保留五种能力的架构概要。锚点 `#四节点状态机v113` 随内容迁至本文件，外部引用已同步更新。
 
 ### ⚙️ FORGE 自迭代工具链（内部）
 
@@ -433,21 +401,19 @@ FORGE/SKILL/fresh-eyes-loop/
 >
 > 行业从 Loop Engineering 热到 Graph Engineering，但 Loop 没有被淘汰——**Loop 是带回边的 Graph**，复杂 Graph 内部嵌套大量局部 Loop。sofagent 的 fresh-eyes-loop（A/B 双盲审查 5 步循环）就是一个 Loop，它未来会成为 v1.3.1 控制图里的一个子图节点。演进路径是"Loop 跑通一个 → 编排进 Graph"，不是"丢掉 Loop 换成 Graph"。
 >
-> Graph 的价值在于把**不可合并的独立角色 + 交接点**直接写进系统里——实现→测试→独立审查、合规审批强制节点、多来源并行检索后合并冲突。sofagent 的审计（24 条规则，其中 19 条纯确定性 git-diff，其余需 LLM 语义判断）= "必须走固定流程"；编排引擎（createReactAgent）= "让模型自由判断"——这正是 Graph Engineering 真正的工程难点：**控制权分配**。
+> Graph 的价值在于把**不可合并的独立角色 + 交接点**直接写进系统里——实现→测试→独立审查、合规审批强制节点、多来源并行检索后合并冲突。sofagent 的审计（24 条规则，其中 19 条纯确定性 git-diff，其余需 LLM 语义判断）= "必须走固定流程"；编排模块（createReactAgent）= "让模型自由判断"——这正是 Graph Engineering 真正的工程难点：**控制权分配**。
 >
 > **一句话分界线：看「谁决定下一步」。** 节点是 Agent 还是 Workflow，不看节点里装了什么（大模型调用、工具调用、子 Agent 都只是积木），只看下一步去哪由谁决定——**模型现场决定 = Agent；代码提前写死 = Workflow**。所以 Workflow 的节点可以是任意类型，关键在控制流归谁。生产环境的主流打法正是"骨架确定、关节灵活"：Workflow 锁死主流程，需要灵活判断的节点才嵌 Agent——纯 Agent 不可控，纯 Workflow 太脆弱，两者组合才是稳态（对应本文件下方「Workflow 的混合架构」）。
 
 > 💡 **「翻译官不应该有决策权」——智能与控制分离**
 >
-> 受控智能体引擎的实践验证了一个核心判断：**模型负责理解，不负责执行。** LLM 的不可替代价值是把模糊的自然语言翻译成结构化意图（意图识别、参数提取、歧义消解）；但写操作的确认、权限校验、状态流转——所有需要确定性的控制——必须握在系统代码手里，不交给概率性的模型。你永远无法 100% 确定模型不会在某个奇怪的上下文里，把一句模棱两可的话判定为"用户确认了"。
+> 行业对受控智能体引擎的共识判断验证了一个核心判断：**模型负责理解，不负责执行。** LLM 的不可替代价值是把模糊的自然语言翻译成结构化意图（意图识别、参数提取、歧义消解）；但写操作的确认、权限校验、状态流转——所有需要确定性的控制——必须握在系统代码手里，不交给概率性的模型。你永远无法 100% 确定模型不会在某个奇怪的上下文里，把一句模棱两可的话判定为"用户确认了"。
 >
 > 这正是 sofagent 审计的设计逻辑：24 条规则中 19 条是纯 git-diff（零 token、不调 LLM、100% 确定性），不是因为模型不够聪明，而是因为**确认这件事，必须由系统代码硬判断**——"是就是，不是就不是"，没有概率空间。模型产出意图（工程师 Agent 写代码），系统决定能不能放行（审计跑规则）——这就是"智能属于模型，控制属于系统"在 sofagent 的工程落地。
->
-> 📖 来源：受控智能体引擎设计实践（2026-07）·「智能属于模型，控制属于系统」
 
 **工具集设计约束**：每个 Sub Agent 的工具集应零重叠、无歧义——工具功能描述不能模糊交叉。当工具数上百时，瓶颈不在模型推理而在工具描述歧义。v1.1.0 daemon 工具注册将做静态重叠检测。
 
-**为什么多 Agent 协作 > 单强模型**：来自 Apple Dex RSI 训练团队的一手观察——基于 self-attention 架构的固有局限，单模型处理超长上下文有不可逾越的上限。多 Agent 协作（分治验证 + 多路径冗余 + 记忆机制）效果远超单强模型。核心推论：**工程化能力具备独立于模型基础能力的结构性壁垒**，不会被通用模型迭代轻易覆盖。sofagent 的编排引擎（Sub Agent 分治 + Maker-Checker 分离）正是这个理论的产品化落地。
+**为什么多 Agent 协作 > 单强模型**：来自 Apple Dex RSI 训练团队的一手观察——基于 self-attention 架构的固有局限，单模型处理超长上下文有不可逾越的上限。多 Agent 协作（分治验证 + 多路径冗余 + 记忆机制）效果远超单强模型。核心推论：**工程化能力具备独立于模型基础能力的结构性壁垒**，不会被通用模型迭代轻易覆盖。sofagent 的编排模块（Sub Agent 分治 + Maker-Checker 分离）正是这个理论的产品化落地。
 
 **解题/验证分离**：RSI 研究表明，同一 Agent 自验覆盖率仅 7-33%，分离为独立验证后提升至 73%（内部实测参考值，非外部基准）。这与审计的"不信任 Agent 自我报告"原则同构——解题 Agent 和验证 Agent 必须物理隔离，验证是核心基因，需分领域（代码用单测、数学用形式化证明、非标准领域用多 Agent 协作）。
 
@@ -467,7 +433,7 @@ FORGE/SKILL/fresh-eyes-loop/
 
 #### 四节点状态机（v1.1.3+）
 
-编排引擎的核心是 LangGraph StateGraph——一条 `engineer → audit → reviewer → human_confirm` 的流水线，跑挂了能回退重试，中断了能从断点续跑。
+编排模块的核心是 LangGraph StateGraph——一条 `engineer → audit → reviewer → human_confirm` 的流水线，跑挂了能回退重试，中断了能从断点续跑。
 
 ```mermaid
 flowchart LR
@@ -525,7 +491,7 @@ flowchart LR
 
 > 📐 2026-07 行业新概念「Graph Engineering」把 Prompt→Context→Harness→Loop→**Graph** 的演进框定为五层工程化方法。核心判断：「先做扎实前四层再上 Graph，跳过前四层直接上图会组织混乱」。sofagent 前四层已扎实（v1.2.0 完成），**Graph 层是自然进化而非跳步。** Carlos E. Perez（[From Loop Engineering to Graph Engineering?](https://engineering.zooz.com/intuitionmachine/from-loop-engineering-to-graph-engineering-d3ebeb08511c)）系统论证了四类失效与拓扑解法，并指出真正的分界线不在 Loop vs Graph，而在是否显式化了 grounding。理论根 = FSM/Statecharts（Harel 1987）。
 
-sofagent 的编排引擎天然就是一张**控制图（Control Graph）**——不必新造能力，只需用这套精确词汇重新表述已有实现：
+sofagent 的编排模块天然就是一张**控制图（Control Graph）**——不必新造能力，只需用这套精确词汇重新表述已有实现：
 
 | Graph Engineering 构件 | sofagent 对应实现 | 源码位置 |
 |------|------|------|
@@ -533,7 +499,7 @@ sofagent 的编排引擎天然就是一张**控制图（Control Graph）**——
 | **★Reality Anchor**（无锚点 = 披 PM 外衣的幻觉） | `audit` 节点——只看 `git diff HEAD` 硬证据（A1-A11、A14-A23 + E1-E2/E4，共 24 条），不信任 Agent 自报，比"只看 PR 号"更硬。**Grounding 三必要条件**（Carlos E. Perez）：① audit 规则不可篡改 = ground-truth ② `acceptance-test.sh` = 冻结验收标准 ③ 用户 task 来自系统外部 | `@sofagent/audit` |
 | **可审计状态文件**（状态落盘可复核） | `FileCheckpointer` 每节点前后 snapshot 到 `.sofagent/checkpoint/`，`resumeLoopGraph()` 断点续跑 | `engine/orchestrator/src/graph/checkpoint.ts` |
 | **数据图 Data Graph**（知识图谱/血缘） | 蓄水池（知识库 `knowledge/`） + 市政规划（Ontology，Ledger-Views-Policy）——与编排控制图正交 | `knowledge/` + Ontology 层 |
-| **Org Graph（稳定角色）** | 四节点（engineer/audit/reviewer/human_confirm）是稳定角色——不随任务变化；变动的是节点内的 Work Graph 子拓扑 | `engine/orchestrator/src/loop/graph.ts:128-132` |
+| **Org Graph（稳定角色）** | 四节点（engineer/audit/reviewer/human_confirm）是稳定角色——不随任务变化；变动的是节点内的 Work Graph 子拓扑 | `engine/orchestrator/src/loop/graph.ts` |
 | **Work Graph（临时拓扑）** | 每个任务的子任务拆分 + 并行 engineer 实例 = 任务结束即解散的工作图；Planner 节点 + 并行子图已落地 | ✅ 已交付 |
 
 **控制图 vs 数据图二分天然具备**：管道（Workflow / StateGraph）= 控制图，决定"先干什么后干什么"；蓄水池 + 市政规划 = 数据图，承载"知道什么、怎么理解"。两者解耦——控制图无知识库也能跑（纯编排），数据图无控制图也能沉淀（Dream Cycle 独立跑）。

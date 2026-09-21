@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // sofagent-orchestrate-compare · 编排方案 A/B 对比 + 任务编排 CLI
 //
-// v1.4.3: ao 完全退役，createReactAgent 为唯一编排引擎。
+// v1.5.0: ao 完全退役，createReactAgent 为唯一编排模块。
 // 新增连续胜出计数器（CONSECUTIVE_WINS_REQUIRED = 2）+ ab-state.json 持久化。
-// v1.4.3：迁移至 @sofagent/orchestrator，import → 同包内 composer
+// v1.5.0：迁移至 @sofagent/orchestrator，import → 同包内 composer
 //
 // 用法:
 //   sofagent-orchestrate-compare --current <dir> --candidate <dir> --output <dir>
@@ -14,11 +14,12 @@ import { execFileSync } from 'child_process';
 import { existsSync, readdirSync, readFileSync, statSync, mkdirSync, writeFileSync, copyFileSync, renameSync, rmSync } from 'fs';
 import { join, resolve, dirname } from 'path';
 import { createHash } from 'crypto';
+import { atomicWriteSync } from '@sofagent/core';
 import { composeWithReactAgent, compose, type ComposeVariant } from './composer';
 import { runDAG } from './dag-runner';
 import { DATA_DIR, ORCHESTRATOR_DIR } from '@sofagent/core';
 
-const VERSION = '1.4.3';
+const VERSION = '1.5.0';
 
 export interface Metric { runCount: number; auditViolations: number; avgSteps: number; firstPassRate: number; }
 interface Args { current: string; candidate: string; output: string; }
@@ -64,21 +65,6 @@ function readAbState(statePath: string): AbState {
     }
   } catch { /* ignore corrupt file */ }
   return { candidateSkill: '', currentSkill: '', consecutiveWins: 0, lastComparedAt: '' };
-}
-
-function atomicWriteSync(filePath: string, content: string): void {
-  const tmp = `${filePath}.tmp.${process.pid}`;
-  writeFileSync(tmp, content, 'utf-8');
-  try {
-    renameSync(tmp, filePath);
-  } catch (e: any) {
-    if (e.code === 'EXDEV') {
-      copyFileSync(tmp, filePath);
-      try { require('fs').unlinkSync(tmp); } catch { /* */ }
-    } else {
-      throw e;
-    }
-  }
 }
 
 interface CompareResult {
@@ -131,10 +117,14 @@ function logPromotion(state: AbState): void {
       const existing = readFileSync(noticePath, 'utf-8');
       writeFileSync(noticePath, existing + entry);
     } else {
-      writeFileSync(noticePath, `# 编排引擎通知\n${entry}`);
+      writeFileSync(noticePath, `# 编排模块通知\n${entry}`);
     }
     warn('A/B promote 已记录到 daemon-notice.md');
-  } catch { /* notice 写入失败不影响主流程 */ }
+  } catch (err) {
+    // v1.4.8 F-10: 静默吞错改降级可见——「不阻断主流程」的原设计意图不变，但
+    // 失败必须留痕（用户看不到 promote 通知，也不知道「通知没送达」这件事本身）。
+    warn(`daemon-notice 写入失败: ${err instanceof Error ? err.message : String(err)}（promote 已生效，仅通知未落盘）`);
+  }
 }
 
 // ════════════════════════════════════════
@@ -481,7 +471,7 @@ export async function composeTask(args: string[]): Promise<void> {
   console.log('');
   info('Step 3/3 · 执行编排...');
 
-  // v1.0.7: createReactAgent 是唯一编排引擎，直接输出方案
+  // v1.0.7: createReactAgent 是唯一编排模块，直接输出方案
   const executeFile = existsSync(workflowFile) ? workflowFile : '';
   if (executeFile) {
     ok('编排方案已就绪');

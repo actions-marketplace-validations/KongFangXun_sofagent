@@ -1,6 +1,6 @@
 # sofagent · 企业部署指南
 
-> v1.4.3 · 2026-09-01 · 孔放勋
+> v1.5.0 · 2026-09-19（✅ 已发版） · 孔放勋
 
 > sofagent 在企业内网部署的配置说明。普通用户不需要看这份文档——默认安装就行；想分步骤把团队用起来看 [team-deploy.md](./team-deploy.md)。
 
@@ -21,7 +21,7 @@ Agent 检测到后跳过 ClawHub 搜索，Skills 手动放入 `~/.openclaw/skill
 
 ### 3. 编排降级
 
-编排引擎基于 LangGraph createReactAgent（v1.2.0 从 deepagents 迁移，v1.0.7 起 ao 已完全退役）。不可用时手动降级：
+编排模块基于 LangGraph createReactAgent（v1.2.0 从 deepagents 迁移，v1.0.7 起 ao 已完全退役）。不可用时手动降级：
 - 手动拆任务
 - 用 task-record.sh 逐条记录
 - 手动闭环
@@ -42,9 +42,9 @@ task/logs 和 think.md 以明文 Markdown 存储，可能含代码片段和对�
 
 | 检查项 | 状态 | 说明 |
 |------|:--:|------|
-| 数据存储位置 | ✅ 本地 | 不上云，不调外部 API（离线模式） |
+| 数据存储位置 | ✅ 本地 | 不上云，不调外部 API（离线模式；唯一例外：显式配置模型推理端点后，Dream Cycle「真实大脑」反思 / train_serve 推理会把 prompt 上下文发往用户配置的模型 API——opt-in 默认关闭，详见 [SECURITY.md「已知风险」](../../SECURITY.md)） |
 | 数据脱敏 | ✅ | A2/A9 命中行脱敏后存储 |
-| 数据加密 | ❌ 当前明文 | 加密能力已实现（AES-256-GCM + SOFAGENT-AGE-V1）但**接线未启用**（规划 v1.4.7，尚未实现）——审计历史主链与 task/logs、think.md、knowledge/ 当前均为**明文**（脱敏管道仍生效）。强合规场景（GDPR/等保/SOC2）请按「明文存储」评估风险并配 OS 级全盘加密，边界见 LIMITATIONS #4 |
+| 数据加密 | ◐ 主链已加密 | daemon start 已接线（AES-256-GCM + SOFAGENT-AGE-V1）——密钥就绪后审计历史主链**密文落盘**；task/logs、think.md、knowledge/ 附链目录仍**明文**（脱敏管道仍生效，权威清单见 LIMITATIONS #4）。强合规场景（GDPR/等保/SOC2）附链请配 OS 级全盘加密 |
 | 权限控制 | ✅ 700 | install.sh 自动设置 |
 | 数据保留策略 | ✅ 已完成 | cleanup.sh 自动清理，支持 --purge --before |
 | 审计日志 | ✅ 已完成 | task-record.sh 独立审计日志 + task/logs 追溯双通道 |
@@ -123,10 +123,10 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: '18'
       - run: bash install.sh
@@ -134,6 +134,51 @@ jobs:
 ```
 
 > `--ci` 模式：WARN 不阻断（exit 1），FAIL 阻断（exit 2），紧凑输出。
+
+### ④ 静态加密批量激活（20 台级无头部署）
+
+静态加密（AES-256-GCM，密钥落 `~/.sofagent/keys/` 0600）默认交互确认——批量部署时逐台交互不可行，用 env 通道显式确认：
+
+**第 1 步 · 生成一次密钥并分发**（密钥同源，跨机可恢复）：
+
+```bash
+# 管理机首次启动 daemon：交互引导生成密钥 + 指纹确认 + 备份确认（指纹打印在启动输出）
+sofagent-daemon start
+# 无头批量部署跳过交互（非交互场景）：
+#   SOFAGENT_CONFIRM_BACKUP=1 sofagent-daemon start
+
+# 预共享分发到 20 台目标机（scp + 0600 权限）
+for host in $(cat hosts.txt); do
+  ssh "$host" 'mkdir -p ~/.sofagent/keys && chmod 700 ~/.sofagent/keys'
+  scp ~/.sofagent/keys/master.key "$host":~/.sofagent/keys/master.key
+  ssh "$host" 'chmod 600 ~/.sofagent/keys/master.key'
+done
+```
+
+**第 2 步 · 无头激活**（env 显式确认，替代交互 readline）：
+
+```bash
+# 每台目标机：env 通道确认备份后启动 daemon 即激活
+SOFAGENT_CONFIRM_BACKUP=1 sofagent-daemon start
+# 验证：密文前缀在位即激活成功
+head -1 ~/.sofagent/data/audit/history.jsonl | grep -c "SOFAGENT-AGE-V1"   # 期望 1
+```
+
+**第 3 步 · 批量样例脚本**（三步合一）：
+
+```bash
+#!/usr/bin/env bash
+# fleet-crypto-activate.sh · 20 台批量激活静态加密
+set -euo pipefail
+while IFS= read -r host; do
+  ssh "$host" 'mkdir -p ~/.sofagent/keys && chmod 700 ~/.sofagent/keys'
+  scp -q ~/.sofagent/keys/master.key "$host":~/.sofagent/keys/master.key
+  ssh "$host" 'chmod 600 ~/.sofagent/keys/master.key && SOFAGENT_CONFIRM_BACKUP=1 sofagent-daemon start' \
+    && echo "✅ $host 激活" || echo "❌ $host 失败（查 daemon 日志）"
+done < hosts.txt
+```
+
+> ⚠️ 安全边界：master.key 是全 fleet 同源密钥——单机失窃即全 fleet 密文暴露，强隔离场景应逐机生成（去掉分发步，每台各自 `sofagent-daemon start` + 本机确认）；备份指纹记录务必离线保管，密钥丢失 = 加密数据永久不可读（见 [SECURITY](../../SECURITY.md) 静态加密节）。
 
 ### 其他方案
 
@@ -175,9 +220,9 @@ sofagent-audit --init    # 数据写入 /data/sofagent-hr/data/
 # 将各机器的 ~/.sofagent/data/ 通过 NFS/共享存储挂载到 dashboard 所在机器
 #
 # ⚠️ 安全警告：NFS/共享存储挂载明文审计目录与"数据不出本机"的数据主权立场存在矛盾。
-#    history.jsonl 当前为明文 JSONL（含文件路径、代码片段摘要）——静态加密接线
-#    规划 v1.4.7 尚未实现，接线前无密钥激活路径（见上方合规清单「数据加密」行）。
-#    明文态下 NFS 挂载使同 NFS 卷的其他
+#    密钥就绪时 history.jsonl 为 SOFAGENT-AGE-V1 密文（daemon start 已接线引导），
+#    但密钥未激活/非交互跳过时仍为明文 JSONL，且附链目录（task/logs/think.md 等）
+#    恒为明文（见上方合规清单「数据加密」行）。明文态下 NFS 挂载使同 NFS 卷的其他
 #    主机可能读取。如需此方案，务必：
 #    ① NFS export 限制为 dashboard 机器 IP（ro 只读挂载）
 #    ② NFS export 使用 sec=sys + root_squash，防止非授权 UID 读取
@@ -209,7 +254,7 @@ sofagent 对 Windows 的支持是**实验性**的：
 | 能力 | macOS/Linux | Windows |
 |------|:-----------:|:-------:|
 | git hook（commit-msg / post-commit） | ✅ 完全支持 | ⚠️ 需 Git Bash（原生 cmd.exe 不支持 bash hook 脚本） |
-| 审计引擎（sofagent-audit） | ✅ 完全支持 | ✅ 支持（Node.js 跨平台） |
+| 审计模块（sofagent-audit） | ✅ 完全支持 | ✅ 支持（Node.js 跨平台） |
 | MCP Server | ✅ | ✅ |
 | daemon 常驻进程 | ✅ | ❌ 不支持（v1.2.9 PM2 守护面向 macOS/Linux，Windows 待排期） |
 | orchestrator 编排 | ✅ | ⚠️ 部分功能依赖 Unix signal |
@@ -237,10 +282,14 @@ sofagent 的审计记录以 JSONL 格式存储在 `data/audit/history.jsonl`，�
 
 ### 日志格式（核心字段）
 
+> ⚠️ **字段以 `AuditHistoryEntry` 真实 schema 为准**（`engine/audit/src/audit-history.ts`，下例为单行精简示意——每行一个完整审计事件对象，规则判定在 `ruleResults` 数组内而非扁平铺开）：
+
 ```jsonl
-{"timestamp":"2026-07-30T10:00:00Z","rule":"A1","status":"PASS","file":"src/main.ts","detail":"no secret found"}
-{"timestamp":"2026-07-30T10:00:01Z","rule":"A3","status":"FAIL","file":"src/utils.ts","detail":"modified files outside scope"}
+{"timestamp":"2026-07-30T10:00:00Z","diffRange":"HEAD~1..HEAD","exitCode":0,"diffFileCount":3,"commitMsg":"feat: add login","ruleResults":[{"name":"secret-leak","number":2,"status":"PASS","details":[]},{"name":"out-of-scope","number":3,"status":"SKIPPED","details":["quick mode: no task input"]}]}
+{"timestamp":"2026-07-30T10:00:01Z","diffRange":"HEAD~2..HEAD~1","exitCode":2,"diffFileCount":5,"commitMsg":"update config","ruleResults":[{"name":"secret-leak","number":2,"status":"FAIL","details":["src/utils.ts:3 leaked AWS AKIA key"]}],"prevHash":"a1b2c3…","engine":"sofagent-audit"}
 ```
+
+关键字段速查：`timestamp`（ISO 8601）/ `diffRange`（审计区间）/ `exitCode`（0=PASS / 1=WARN / 2=FAIL）/ `ruleResults[]`（逐规则 name/number/status/details）/ `diffFileCount`（变更文件数）/ `commitMsg` / `prevHash`（链完整性）/ `engine`（审计模块标识）。可选字段：`commitSha` / `parentSha` / `commitPhase` / `actionGovernance`（动作溯源组）/ `agentId`（Agent 身份码）。
 
 ### SIEM 对接方案
 
@@ -267,22 +316,23 @@ sofagent 的审计记录以 JSONL 格式存储在 `data/audit/history.jsonl`，�
   chmod 600 ~/.sofagent/federation.token
   ```
 - **安全注意**：文件权限必须收紧为 600（仅当前用户可读写），防止同机其他用户读取
-- **轮换策略**：定期更换 token，配合审计日志中 `federation_id` 字段追溯设备身份
+- **轮换策略**：定期更换 token；设备身份配合审计日志的 `engine`/`timestamp` 字段及设备目录隔离做追溯（`federation_id` 不是 history.jsonl 的真实字段——见下方「审计追溯」）
 
 ### 审计追溯
 
 - 每台设备的审计日志独立存储于本地 `data/audit/history.jsonl`（JSONL，每行一条审计记录）
-- **集中查看**：通过 rsync 等工具汇总各设备日志到中央节点后，用 jq 聚合分析（P1-30 修正：原文档所述聚合命令不存在，实际为 JSONL 文件 + jq）：
+- **集中查看**：通过 rsync 等工具汇总各设备日志到中央节点后，用 jq 聚合分析（修正：原文档所述聚合命令不存在，实际为 JSONL 文件 + jq）：
   ```bash
-  cat */data/audit/history.jsonl | jq -s '[.[] | select(.exitCode > 0)] | {total: length, fails: length}'
-  cat */data/audit/history.jsonl | jq -r '.[] | [.timestamp, .commitSha, .engine] | @tsv'
+  # 按设备目录汇总统计违规（exitCode 判定：1=WARN / 2=FAIL）
+  cat */data/audit/history.jsonl | jq -s '[.[] | select(.exitCode > 0)] | {total: length}'
+  cat */data/audit/history.jsonl | jq -r '[.timestamp, (.commitSha // .parentSha // "-"), .engine] | @tsv'
   ```
-- **跨设备一致性**：history 条目含 `timestamp`/`commitSha`/`engine` 字段；设备身份靠文件路径（`<device>/data/audit/history.jsonl`）区分——条目本身不存 hostname/federation_id（P1-30 修正：原文档所述字段与实际 JSONL 不符）
+- **跨设备一致性**：history 条目含 `timestamp`/`prevHash`/`engine` 字段；设备身份靠文件路径（`<device>/data/audit/history.jsonl`）区分——条目本身不存 hostname/federation_id（修正：原文档所述字段与实际 JSONL 不符）
 
 ### 安全建议
 
 | 措施 | 说明 |
 |------|------|
 | token 最小化 | 每台设备用独立 token，避免单 token 泄露影响全集群 |
-| 定期轮换 | 建议 90 天轮换一次，token 变更后更新各设备环境变量 |
+| 定期轮换 | 建议 90 天轮换一次，token 变更后同步更新各设备的 token 文件 |
 | 日志隔离 | 设备间 audit log 不自动同步——需通过中央管道做聚合，避免单设备被控后污染全量日志 |

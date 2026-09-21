@@ -1,10 +1,10 @@
 {
   "name": "cordis-plugin-sofagent-fde",
-  "version": "1.4.3",
+  "version": "1.5.0",
   "engines": {
     "node": ">=18"
   },
-  "description": "FDE 进场方法论桥接——本体数据视图生成（fde_* 六 tool 为规划中形态，见 sofagent ROADMAP）（sofagent 品牌插件 · 主色 #16B8F3）",
+  "description": "FDE 进场与能力流通——把企业业务梳理成 AI 能力，并让这些能力在企业内被发布、发现、调用、评价、退役（seam: non-seam:tool-set）——桥接 @sofagent/orchestrator publishCapability / @sofagent/ontology generateOntologyView / @sofagent/core restoreSnapshot",
   "private": true,
   "license": "MIT",
   "author": "KongFangXun",
@@ -22,11 +22,92 @@
   "sofagent": {
     "type": "dsh-plugin",
     "family": "cordis",
-    "seam": "plugin"
+    "seam": "non-seam:tool-set",
+    "seamSemantics": "非宿主事件接入（tool 集）——本体 / FDE / 公地三域工具按需调用（v1.4.9 P2 合并原 -ontology 与 -commons 面）",
+    "featureGates": {
+      "ontology": [
+        "read_entity",
+        "read_concept",
+        "list_entities",
+        "list_concepts",
+        "create_entity",
+        "create_concept",
+        "update_entity",
+        "delete_entity",
+        "delete_concept",
+        "validate_ontology",
+        "ontology_import",
+        "search_knowledge"
+      ],
+      "fde": [
+        "fde_compose",
+        "fde_interview",
+        "fde_classify",
+        "fde_quantify",
+        "fde_derive",
+        "fde_distill",
+        "fde_deploy"
+      ],
+      "commons": [
+        "commons_publish",
+        "commons_search",
+        "commons_invoke",
+        "commons_rate",
+        "commons_retire",
+        "commons_harvest_rule"
+      ]
+    },
+    "tools": [
+      "get_think",
+      "write_think",
+      "sofagent_compose",
+      "search_knowledge",
+      "read_entity",
+      "read_concept",
+      "list_entities",
+      "read_lessons",
+      "read_think_md",
+      "create_entity",
+      "create_concept",
+      "update_entity",
+      "delete_entity",
+      "delete_concept",
+      "validate_ontology",
+      "activate_workflow",
+      "list_agents",
+      "list_concepts",
+      "agent_identity",
+      "create_agent",
+      "fde_compose",
+      "commons_publish",
+      "commons_search",
+      "commons_invoke",
+      "commons_rate",
+      "commons_retire",
+      "commons_harvest_rule",
+      "ontology_import",
+      "fde_interview",
+      "fde_classify",
+      "fde_quantify",
+      "fde_derive",
+      "fde_distill",
+      "fde_deploy",
+      "trace_reconcile"
+    ],
+    "toolsRoles": [
+      "fde",
+      "commons"
+    ]
+  },
+  "//optionalDependencies": "v1.4.5 T6 (R4)：src/index.ts 惰性 await import（懒加载 + 缺依赖降级不抛；v1.4.8 起该样板由 @sofagent/dsh-plugin-kit 统一封装；v1.4.9 P2 起厚插件多包 bridges 按序解析、部分可用即部分成功），此前未声明任何依赖——对齐 root package.json F-18 optionalDependencies 先例。",
+  "optionalDependencies": {
+    "@sofagent/orchestrator": "1.5.0",
+    "@sofagent/ontology": "1.5.0",
+    "@sofagent/core": "1.5.0"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.0"
   },
   "dsh": {
     "bundle": {

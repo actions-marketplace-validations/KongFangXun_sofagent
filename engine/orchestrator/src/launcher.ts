@@ -3,14 +3,12 @@
 // v1.3.7 新增：动态 import @langchain/langgraph，启动/关闭 Agent 实例
 // v1.3.7 新增：runtime.json 状态管理（name/status/startedAt/lastActive/pid）
 // v1.3.7 新增：buildConstrainedSystemPrompt() 四层约束加载链
-// v1.4.3：迁移至 @sofagent/orchestrator，buildConstrainedSystemPrompt → @sofagent/harness
+// v1.5.0：迁移至 @sofagent/orchestrator，buildConstrainedSystemPrompt → @sofagent/inject
 // ============================================================
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, copyFileSync, unlinkSync, readdirSync, statSync } from 'fs';
 import { join, dirname } from 'path';
-import { randomBytes } from 'crypto';
-import { loadEnvConfig } from '@sofagent/core';
-import { getPersonaContent } from '@sofagent/core';
+import { loadEnvConfig, getPersonaContent, atomicWriteSync } from '@sofagent/core';
 import type { SubAgentDefinition } from './registry';
 import { resolveLLMModel } from './loop/nodes';
 
@@ -57,21 +55,6 @@ function getRuntimePath(): string {
  * 原子写入——先写临时文件，再 rename 覆盖目标。
  * rename 在同文件系统上是原子操作，防止并发写脏读。
  */
-function atomicWriteSync(filePath: string, content: string): void {
-  const tmp = `${filePath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
-  writeFileSync(tmp, content, 'utf-8');
-  try {
-    renameSync(tmp, filePath);
-  } catch (err: any) {
-    if (err.code === 'EXDEV') {
-      copyFileSync(tmp, filePath);
-      unlinkSync(tmp);
-    } else {
-      throw err;
-    }
-  }
-}
-
 /**
  * 读取 runtime.json，不存在时返回空状态
  */
@@ -203,13 +186,13 @@ function listKnowledgeTopN(dir: string, n: number): string[] {
 /**
  * 构建带约束的 system prompt（四层加载链）
  *
- * v1.1.0：委托给 @sofagent/harness 中的 buildConstrainedSystemPrompt。
+ * v1.1.0：委托给 @sofagent/inject 中的 buildConstrainedSystemPrompt。
  * 本文件的 buildConstrainedSystemPrompt 保留为兼容导出。
  *
  * @param skillDir 约束文件目录（如 .sofagent/）
  * @returns 拼接后的 system prompt 字符串
  */
-export { buildConstrainedSystemPrompt } from '@sofagent/harness';
+export { buildConstrainedSystemPrompt } from '@sofagent/inject';
 
 // ════════════════════════════════════════
 // LangGraph Agent 启动/关闭
@@ -362,11 +345,11 @@ export async function spawnSubAgent(
     const { composeWithReactAgent } = await import('./composer');
     // composeTask 自带 agent 名称信息
     const result = await composeWithReactAgent(prompt);
-    return result ?? `Agent "${agent.name}" 已接收任务，但编排引擎未返回结果。`;
+    return result ?? `Agent "${agent.name}" 已接收任务，但编排模块未返回结果。`;
   } catch {
-    // 编排引擎不可用时返回提示
+    // 编排模块不可用时返回提示
     return [
-      `⚠️ sofagent 提示：编排引擎未安装，Agent "${agent.name}" 的 prompt 已生成，可手动执行：`,
+      `⚠️ sofagent 提示：编排模块未安装，Agent "${agent.name}" 的 prompt 已生成，可手动执行：`,
       '',
       '```yaml',
       `agent: ${agent.name}`,

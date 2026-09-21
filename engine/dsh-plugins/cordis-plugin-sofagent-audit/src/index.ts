@@ -1,116 +1,255 @@
-// ============================================================
-// cordis-plugin-audit · DSH 反向插件（v1.4.0 交付五）
-// ============================================================
-// 每个插件干一件事、可独立安装渐进采用——只引对应 @public API 子集。
-// seam 挂载：tools/result + tools/pre-execute + fs/write-intent
-// 版本同步：sofagent v1.4.3 → 各 plugin v0.1.0（DSH Cordis 协议 breaking change 时 bump major）
+// cordis-plugin-sofagent-audit · DSH 反向插件（v1.5.0 P2 合并批：吸收原 -gate 验收门禁面）
+// seam 挂载：tools/result + tools/pre-execute + fs/write-intent + agent/turn-stopping
+// # 语义：工具结果留证 + 工具执行前拦截 + 文件写入意图拦截（放行） + Turn 停止验收判定
+//   （判定源 = checkDangerousCommand / check_acceptance——引擎包既有 @public，零改动）
+// 清单生成源 = engine/dsh-plugins/plugins.json（生成 package.json 的 description/sofagent/dsh 段与 cordis.patch.yml）；本文件的 seam 字面量由生成器 --check 与之对账。
+//
+// v1.5.0 P2 吸收说明（F3）：原 -gate 独立承载 agent/turn-stopping 验收门禁，但其
+// 判定源（define_acceptance / check_acceptance 两 MCP tool）与 -audit 同族（机器可判定
+// 审计），拆两包造成「审计归 audit、验收归 gate」的人为割裂。本插件把验收 seam 并入
+// 四值声明，settings 补 acceptanceGate 独立开关（默认开；关档即不参与 Turn 停止判定——
+// 与 F2 分档同语义：档位是 settings 字段，不另造判定源）。
 
-/** 插件元数据（DSH profile/注册表消费） */
-export const pluginMeta = {
-  id: 'cordis-plugin-sofagent-audit',
-  version: '0.1.0',
-  description: '变更机器审阅——24 规则 + git diff 硬证据 + 节点级审计（seam: tools/result + tools/pre-execute + fs/write-intent）',
-  seam: 'tools/result + tools/pre-execute + fs/write-intent',
-} as const;
+import {
+  createSofagentPlugin,
+  seamHelpers,
+  type SeamHandler,
+  type SeamHelpers,
+} from '../../plugin-kit/dist/index.js';
 
-/** 依赖的 sofagent 能力说明（供 DSH skill 引导链展示） */
-export const capability = '审计引擎（git diff 硬证据 + 24 规则）';
+// ── 事件接线共用的环境解析与防御式取数 ────────────────────────────────────────
+// 适配层红线：只做鸭子类型读取，宿主/引擎面缺席一律降级不抛——接线故障不得
+// 升级成任务故障（handler 内所有失败路径都 fail-open + 可见日志）。
 
-/**
- * 调用对应的 sofagent @public API（懒加载 + 降级不抛）。
- * 包装层职责：把 sofagent 能力暴露成 DSH 可调用的插件函数。
- */
-export async function invoke<T = unknown>(...args: unknown[]): Promise<T> {
+/** 项目根：显式环境变量优先，缺省取宿主进程工作目录（与 CLI/MCP 侧同口径） */
+const projectRoot = (): string => process.env.SOFAGENT_PROJECT_ROOT ?? process.cwd();
+
+/** 数据目录：交给 @sofagent/core 自己的解析（与 MCP/CLI 同源），不可达则交引擎兜底 */
+async function resolveDataDir(helpers: SeamHelpers): Promise<string | undefined> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const m = await import('@sofagent/audit');
-    const fn = m.runRules;
-    if (typeof fn !== 'function') {
-      throw new Error('runAudit 不是可调用函数（@sofagent/audit 公共 API）');
-    }
-    return await (fn as (...a: unknown[]) => unknown)(...args) as T;
+    const dir = await helpers.call('@sofagent/core', 'getDataDir');
+    return typeof dir === 'string' && dir !== '' ? dir : undefined;
   } catch (err) {
-    // 依赖未装/能力不可用时降级返回错误信息（不抛——插件可独立安装，缺依赖时优雅提示）
-    throw new Error('cordis-plugin-audit 依赖 @sofagent/audit 不可用：' + (err instanceof Error ? err.message : String(err)));
+    helpers.log(`数据目录解析不可用（交引擎默认值）：${errMsg(err)}`);
+    return undefined;
   }
 }
 
+/** 从宿主工具执行对象取命令字符串（仅命令类工具的入参带 `command`） */
+function commandOf(exec: unknown): string | null {
+  const args = (exec as { arguments?: unknown } | null | undefined)?.arguments;
+  if (args === null || typeof args !== 'object') return null;
+  const cmd = (args as Record<string, unknown>).command;
+  return typeof cmd === 'string' && cmd.trim() !== '' ? cmd : null;
+}
+
+/** 留证所需的身份：从宿主 exec 上尽力取 (agentId, sessionId)，取不到即放弃留证 */
+function identityOf(exec: unknown): { agentId: string; sessionId: string } | null {
+  const agent = (exec as { agent?: unknown } | null | undefined)?.agent as
+    | { id?: unknown; session?: { id?: unknown; header?: { id?: unknown } } }
+    | undefined;
+  const agentId = typeof agent?.id === 'string' ? agent.id : '';
+  const rawSessionId = agent?.session?.id ?? agent?.session?.header?.id;
+  const sessionId = typeof rawSessionId === 'string' ? rawSessionId : '';
+  return agentId !== '' && sessionId !== '' ? { agentId, sessionId } : null;
+}
+
+/** 一次性日志表——接线自证与降级提示只打一次，避免按事件刷屏 */
+const loggedOnce = new Set<string>();
+function logOnce(helpers: SeamHelpers, key: string, message: string): void {
+  if (loggedOnce.has(key)) return;
+  loggedOnce.add(key);
+  helpers.log(message);
+}
+
+const errMsg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
 /**
- * DSH Cordis 插件契约（v1.4.0 补全）：默认导出 apply(ctx) 注册能力。
- * 插件被挂进 DSH profile（dsh.bundle + cordis.patch.yml）后由 Cordis loader 调用；
- * apply 把 sofagent 审计能力注册为 ctx 服务（sofagent.audit），其他插件/Agent 可经 ctx 调用。
+ * Turn 停止判定的防重表：每 (agent, turn) 至多续跑一次。
+ * 必要性：宿主在每一步收尾都会再派发 `agent/turn-stopping`，若验收始终不过而
+ * 每次都续跑，Turn 会被拉成无限循环——本表把它约束成「每 turn 一次」。
  */
-export default {
-  apply(ctx: unknown): void {
-    const c = ctx as {
-      provide?: (name: string, service: Record<string, unknown>) => unknown;
-      dynamicCordisRunner?: {
-        define?: (request: Record<string, unknown>) => unknown;
-      };
-      [key: string]: unknown;
-    };
-    const service = { invoke, meta: pluginMeta, capability };
-    if (typeof c.provide === 'function') {
-      c.provide('sofagent.audit', service);
-    } else {
-      // 降级：无 provide API 时挂到 ctx 命名空间（保持可发现）
-      const cur = (c.sofagent ?? {}) as Record<string, unknown>;
-      c.sofagent = { ...cur, audit: service };
-    }
-    // v1.4.0 第二步（Dynamic Cordis Runner）：把 sofagent audit 注册为动态插件，
-    // 让 WebUI Plugin list（dynamicCordisRunner/inventory）显示加载状态 + 品牌名。
-    // inject: [dynamicCordisRunner] 后服务已就绪；define 是进程内 registry.add（sessionId 仅记录字段）。
+const lastSteeredTurn = new WeakMap<object, unknown>();
+
+/**
+ * seam 事件处理器（v1.5.0 章十）——四个事件位的**实现**（此前只有声明）。
+ *
+ * 🔴 判定逻辑零改动：全部判定都来自引擎包既有 @public API
+ *    （`checkDangerousCommand` / `checkAcceptance`），插件层只负责接管子 + 转形状。
+ * 🔴 失败一律 fail-open：判定源不可达时放行 + 打可见日志，绝不把接线故障
+ *    变成工具执行失败或 Turn 中止。
+ */
+const seamHandlers: Record<string, SeamHandler> = {
+  /**
+   * 工具执行前——宿主 waterfall（listener 约定 `(exec, next)`，不调 next 即否决）。
+   * 判定源 = `@sofagent/orchestrator.checkDangerousCommand`（与 sofagent 自家运行时
+   * `wrapToolsWithGate` 同源，故 DSH 侧与自家运行时的拦截口径一致）。
+   */
+  'tools/pre-execute': async (...args: unknown[]) => {
+    const helpers = seamHelpers(args);
+    const [exec, next] = args;
+    const cont = async (): Promise<unknown> =>
+      typeof next === 'function' ? await (next as () => unknown)() : undefined;
+    const command = commandOf(exec);
+    if (command === null) return await cont(); // 非命令类工具不参与判定（不改变既有语义）
     try {
-      const runner = c.dynamicCordisRunner as { define?: (r: Record<string, unknown>) => unknown } | undefined;
-      if (runner && typeof runner.define === 'function') {
-        const res = runner.define({
-          name: 'sofagent-audit',
-          purpose: 'sofagent 审计插件——24 规则 + git diff 硬证据（品牌色 #16B8F3）',
-          code: {
-            host: [
-              'module.exports = {',
-              '  async main(ctx, args) {',
-              '    return { ok: true, source: "sofagent-audit", message: "审计服务就绪（24 规则）" };',
-              '  }',
-              '};',
-            ].join('\n'),
-          },
-          plugin: { kind: 'new', idPrefix: 'soga' },
-          // sessionId 仅作记录字段（define 不校验会话真实性）——profile apply 无会话上下文，传固定标记
-          sessionId: 'profile-boot',
-        });
-        console.error('[sofagent-audit] dynamicCordisRunner.define 成功:', JSON.stringify(res));
-      } else {
-        console.error('[sofagent-audit] dynamicCordisRunner 服务不可用（inject 未生效）');
+      const reason = await helpers.call('@sofagent/orchestrator', 'checkDangerousCommand', command);
+      if (typeof reason === 'string' && reason !== '') {
+        helpers.log(`工具执行前拦截：${reason}`);
+        return { kind: 'deny', reason: `sofagent 工具门禁：${reason}` };
       }
     } catch (err) {
-      // define 失败不崩——动态注册为增强项（WebUI Plugin list 显形）
-      console.error('[sofagent-audit] dynamicCordisRunner.define 失败:', err instanceof Error ? err.message : String(err));
+      logOnce(
+        helpers,
+        'pre-execute-unavailable',
+        `工具执行前判定不可用（本次放行，不阻断宿主工具执行）：${errMsg(err)}`,
+      );
     }
-    // v1.4.0 第二步（Settings namespace）：注册 sofagent-audit 配置命名空间，
-    // 让 WebUI Settings → Plugins → Plugin configuration 显示 sofagent 审计插件（可配置 + 品牌色）。
+    return await cont();
+  },
+
+  /**
+   * 工具结果留证——宿主 emit（listener 约定 `(exec, result)`，返回值无意义）。
+   * 留证口径：**只留失败结果**（被门禁拦下的调用、工具自身报错）——成功结果已由
+   * 宿主 session 日志承担，全量落库只会给决策日志灌入与判定无关的噪声。
+   */
+  'tools/result': async (...args: unknown[]) => {
+    const helpers = seamHelpers(args);
+    const [exec, result] = args;
+    if ((result as { isError?: unknown } | null | undefined)?.isError !== true) return;
+    const id = identityOf(exec);
+    if (id === null) {
+      logOnce(
+        helpers,
+        'result-no-identity',
+        '工具结果留证：宿主 exec 未带 agent/session 标识——留证跳过（身份不可达，不猜测）',
+      );
+      return;
+    }
+    const info = exec as { name?: unknown; callId?: unknown } | null | undefined;
     try {
-      const settings = c.settings as { register?: (ns: string, schema: unknown, opts?: Record<string, unknown>) => unknown } | undefined;
-      if (settings?.register) {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const s = require('@deepseek-ai/schemastery') as {
-          object: (shape: Record<string, unknown>) => unknown;
-          boolean: () => unknown;
-          string: () => unknown;
-        };
-        const schema = s.object({
-          enabled: s.boolean(),
-          rules: s.string(),
-          brandColor: s.string(),
-        });
-        settings.register('sofagent-audit', schema, { base: { enabled: true, rules: '24', brandColor: '#16B8F3' } });
-        console.error('[sofagent-audit] settings.register 成功（Plugin configuration 可见）');
-      } else {
-        console.error('[sofagent-audit] settings 服务不可用（inject 未生效）');
-      }
+      await helpers.call(
+        '@sofagent/audit',
+        'emitDecision',
+        {
+          agentId: id.agentId,
+          sessionId: id.sessionId,
+          kind: 'TOOL_GATE',
+          moment: 'ACT',
+          category: 'skip',
+          why: `工具结果留证：${typeof info?.name === 'string' && info.name !== '' ? info.name : '未知工具'} 返回错误`,
+          artifactRef:
+            typeof info?.callId === 'string' && info.callId !== '' ? `tool-call/${info.callId}` : undefined,
+        },
+        await resolveDataDir(helpers),
+      );
     } catch (err) {
-      // settings 服务在 profile apply 时可能未就绪——跳过不崩（配置面板注册为增强项）
-      console.error('[sofagent-audit] settings.register 失败:', err instanceof Error ? err.message : String(err));
+      logOnce(helpers, 'result-emit-failed', `工具结果留证写入失败（不阻断宿主）：${errMsg(err)}`);
+    }
+  },
+
+  /**
+   * 文件写入意图——宿主 waterfall（listener 约定 `(target, actor, next)`）。
+   * 🔴 本事件位当前是**放行接线**：sofagent 引擎包没有「按目标路径判定写意图」的
+   *    @public 判定源，按马鞍铁律（只接线、不新造判定）不做触发式拦截——
+   *    订阅真实、disposer 真实、装载状态可自证，但不假装有判定。
+   */
+  'fs/write-intent': async (...args: unknown[]) => {
+    const helpers = seamHelpers(args);
+    const next = args[2]; // waterfall 约定 (target, actor, next)
+    logOnce(
+      helpers,
+      'fs-write-intent-passthrough',
+      '文件写入意图事件已接线（放行——引擎侧无「按路径判定写意图」的既有 API，不为接线新造判定）',
+    );
+    return typeof next === 'function' ? await (next as () => unknown)() : undefined;
+  },
+
+  /**
+   * Turn 停止验收判定——宿主 serial（listener 约定 `(payload)`，payload 含
+   * `{ agent, turn, signal }`）。判定源 = `@sofagent/orchestrator.checkAcceptance`。
+   *
+   * 「验收不过不放行」的机制：宿主在该事件上**不使用返回值**，真正能续跑 Turn 的
+   * 唯一手段是向 agent 送一条消息（宿主 Stop hook 同法：`agent.steer(...)`），
+   * 宿主随后复查 inbox 决定是否继续。故本 handler 走 `agent.steer`。
+   *
+   * 🔴 三重保险，避免把「接上验收」变成「Turn 打不住」：
+   *    ① 未定义验收（failedCount = -1）不拦——「没有验收定义」≠「验收不过」；
+   *    ② 每 (agent, turn) 至多续跑一次；
+   *    ③ 全程 fail-open：判定源 / 消息工厂 / steer 任一不可用只记日志，不抛。
+   */
+  'agent/turn-stopping': async (...args: unknown[]) => {
+    const helpers = seamHelpers(args);
+    const [payload] = args;
+    if (helpers.flags().acceptanceGate === false) return; // 关档：不参与 Turn 停止判定
+    const taskId = (process.env.SOFAGENT_TASK_ID ?? '').trim();
+    if (taskId === '') return; // 无任务标识 → 无验收可判（不凭空阻断收尾）
+    let verdict: unknown;
+    try {
+      verdict = await helpers.call(
+        '@sofagent/orchestrator',
+        'checkAcceptance',
+        (await resolveDataDir(helpers)) ?? '',
+        taskId,
+        projectRoot(),
+      );
+    } catch (err) {
+      logOnce(helpers, 'turn-stopping-unavailable', `Turn 停止验收判定不可用（不拦截本次停止）：${errMsg(err)}`);
+      return;
+    }
+    const v = (verdict ?? {}) as { ok?: unknown; failedCount?: unknown };
+    if (v.ok !== false || typeof v.failedCount !== 'number' || v.failedCount <= 0) return;
+    const p = (payload ?? {}) as { agent?: unknown; turn?: unknown };
+    const agent = p.agent as { steer?: unknown } | null | undefined;
+    if (agent === null || agent === undefined || typeof agent.steer !== 'function') {
+      logOnce(
+        helpers,
+        'turn-stopping-no-steer',
+        'Turn 停止验收未通过，但宿主 agent 无 steer 面——本次无法续跑（记日志，不异常）',
+      );
+      return;
+    }
+    if (lastSteeredTurn.get(agent as object) === p.turn) return; // ② 每 turn 至多一次
+    lastSteeredTurn.set(agent as object, p.turn);
+    try {
+      const message = await helpers.call('@deepseek-ai/dsh-llm', 'createUserMessage', {
+        content: [
+          { type: 'text', text: `sofagent 验收未通过（${v.failedCount} 条未达）——先修完再收尾。` },
+        ],
+        source: { kind: 'plugin', plugin: 'sofagent-audit' },
+      });
+      (agent.steer as (m: unknown) => unknown)(message);
+      helpers.log(
+        `Turn 停止验收未通过（${v.failedCount} 条）——已向宿主 agent 续跑一条修正指令（本 turn 内至多一次）`,
+      );
+    } catch (err) {
+      logOnce(helpers, 'turn-stopping-steer-failed', `验收续跑指令构造失败（不拦截本次停止）：${errMsg(err)}`);
     }
   },
 };
+
+/** 插件声明（本文件唯一手写处；适配层红线由 kit 承担：ctx 鸭子类型 + 宿主 API 缺席降级不抛） */
+const kit = createSofagentPlugin(
+  {
+    id: 'cordis-plugin-sofagent-audit',
+    seam: 'tools/result + tools/pre-execute + fs/write-intent + agent/turn-stopping',
+    seamSemantics: '工具结果留证 + 工具执行前拦截 + 文件写入意图拦截（放行） + Turn 停止验收判定（v1.4.9 P2 吸收原 -gate 验收门禁；判定源 = checkDangerousCommand/check_acceptance，不另造）',
+    capability: '审计与验收（git diff 硬证据 + 24 规则 + 机器可判定验收）',
+    bridgePkg: '@sofagent/audit',
+    bridgeApi: 'runRules',
+    description: '变更机器审阅 + 验收硬门禁——24 规则 + git diff 硬证据 + Turn 停止验收判定（验收不过不放行，开关独立可关）',
+    // audit 专属 envelope（其余插件走 kit 默认值）
+    purpose: 'sofagent 审计插件——24 规则 + git diff 硬证据 + 验收门禁',
+    readyMessage: '审计与验收服务就绪（24 规则 + Turn 停止验收）',
+    // v1.4.9 P2（F3）：rules 为既有字段；acceptanceGate = 验收门禁独立开关（默认 'true' 开）——
+    // 关档即本插件的 agent/turn-stopping 面不参与 Turn 停止判定（审计三 seam 不受影响）
+    settingsExtra: { rules: '24', acceptanceGate: 'true' },
+    seamHandlers,
+  },
+  require('../package.json') as { version?: string },
+);
+
+export const pluginMeta = kit.pluginMeta; // 插件元数据（DSH profile/注册表消费）
+export const capability = kit.capability; // 依赖的 sofagent 能力说明（DSH skill 引导链展示）
+export const invoke = kit.invoke; // 桥接 @sofagent/* 公共 API（懒加载 + 降级不抛）
+export default kit.plugin; // DSH Cordis 插件契约（apply 三段式由 kit 提供）

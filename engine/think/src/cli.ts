@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// think CLI · v1.4.3
+// think CLI · v1.5.0
 
 const args = process.argv.slice(2);
 const subcommand = args[0];
@@ -39,7 +39,7 @@ async function main() {
         process.exit(1);
       }
 
-      console.log(`sofagent-think v${require('../../package.json').version} — 生成 think.md 条目`);
+      console.log(`sofagent-think v${require('../package.json').version} — 生成 think.md 条目`);
       try {
         const diffFiles = parseDiff(diffRange);
         if (diffFiles.length === 0) {

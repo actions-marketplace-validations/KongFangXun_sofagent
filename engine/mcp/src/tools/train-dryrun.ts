@@ -1,5 +1,5 @@
 // ============================================================
-// train-dryrun.ts · MCP tool：train_dryrun（v1.4.3 章五）
+// train-dryrun.ts · MCP tool：train_dryrun（v1.5.0 章五）
 // ============================================================
 //
 // 训练 dry-run——失败前预防的 MCP 面：管线连通 + 数据抽样 + 显存
@@ -73,7 +73,7 @@ export async function trainDryrunTool(args: TrainDryrunArgs): Promise<TrainDryru
   }
 
   try {
-    const orch = await import('@sofagent/orchestrator');
+    const orch = await import('@sofagent/train');
     // 相对路径按 data 目录解析（对齐 train_submit 的 data_path 口径）
     const resolvedPath = data_path.startsWith('/')
       ? data_path

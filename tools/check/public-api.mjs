@@ -28,15 +28,16 @@ const UPDATE = process.argv.includes('--update-baseline');
 
 // 包清单：[目录, 入口源文件]
 const PACKAGES = [
-  ['@sofagent/harness', 'engine/harness/src/index.ts'],
+  ['@sofagent/inject', 'engine/inject/src/index.ts'],
   ['@sofagent/ontology', 'engine/ontology/src/index.ts'],
   ['@sofagent/core', 'engine/core/src/index.ts'],
   ['@sofagent/rules', 'engine/rules/src/index.ts'],
   ['@sofagent/think', 'engine/think/src/index.ts'],
   ['@sofagent/audit', 'engine/audit/src/public-api.ts'],
   ['@sofagent/eval', 'engine/eval/src/index.ts'],
-  ['@sofagent/skillopt', 'engine/skillopt/src/index.ts'],
+  ['@sofagent/evolve', 'engine/evolve/src/index.ts'],
   ['@sofagent/orchestrator', 'engine/orchestrator/src/index.ts'],
+  ['@sofagent/train', 'engine/train/src/index.ts'],
   ['@sofagent/daemon', 'engine/daemon/src/index.ts'],
   ['@sofagent/ab-test', 'engine/ab-test/src/index.ts'],
   ['@sofagent/load-chain', 'engine/hooks/sofagent-load-chain/src/handler.ts'],
@@ -47,6 +48,7 @@ const PACKAGES = [
 // ── AST 语义解析（复用官方 AST 规则引擎；不可用回退正则）──
 
 let astEngine = null;
+let regexWarned = false;
 function getAstEngine() {
   if (astEngine !== null) return astEngine;
   try {
@@ -105,6 +107,14 @@ function extractPublicSymbols(entryPath) {
     exports = engine.extractExports(entryPath.split('/').pop(), src);
     basis = 'ast';
   } else {
+    // 降级 fail-loud：正则口径与 AST 存在差量（实测 ~8 符号），静默降级会让
+    // 「文档声称符号数校验」以错误口径误报——一次性显著提示失败原因与修复命令。
+    if (!regexWarned) {
+      regexWarned = true;
+      console.warn('⚠️  AST 引擎不可用（engine/rules/dist/ast/engine.js 缺失）——已回退正则解析：');
+      console.warn('    正则口径与 AST 存在差量，「文档声称符号数校验」可能误报（口径分歧）。');
+      console.warn('    修复：npm ci && npm run build --workspace=engine/core && npm run build --workspace=engine/rules');
+    }
     exports = extractExportsRegex(src).map((name) => ({ name, line: 0 }));
     basis = 'regex';
   }
@@ -214,15 +224,22 @@ function actualTotal() {
 
 function claimedTotals() {
   const claims = new Set();
-  const re = /(\d{3,4})\s*(?:个)?\s*(?:符号|symbols)/gi;
+  // v1.4.7 批次 M：正则放宽容忍中缀——AR:216「1456 个 @public 符号」中数字与「符号」
+  // 之间被「个 @public」拦截导致门禁自部署以来从未校验过任何声称（NO MATCH 实测），
+  // 还把「没验证」打印成「无基线冲突风险」。收口：数字后允许 ≤12 个非句读中缀字符
+  // （个/@public/等），三种形态（中缀/含「个」/纯 symbols）全命中。
+  // 中缀字符集再排除「括号 / 箭头」：否则相邻小句里的数字会被回连成一次假声称——
+  // 实案「…（2494→2491）+ 新功能新增 56 符号…」中的「56 符号」跨过「）」回连到前面
+  // 的 2491，取出一个文档从未声称过的数。括号与箭头都是小句边界，不属中缀。
+  const re = /(\d{3,4})[^。；\n（）()→]{0,12}?(?:符号|symbols)/gi;
   for (const f of DOC_FILES) {
     if (!existsSync(f)) continue;
     const text = readFileSync(f, 'utf-8');
     let m;
     while ((m = re.exec(text)) !== null) {
       const n = parseInt(m[1], 10);
-      // 只收集与 @public/@internal 语境接近的声称（800-2000 区间，避开测试数 2903 等）
-      if (n >= 800 && n <= 2000) claims.add(n);
+      // 只收集与 @public/@internal 语境接近的声称（800-3000 区间，避开测试数 4088 等）
+      if (n >= 800 && n <= 3000) claims.add(n);
     }
   }
   return [...claims];
@@ -242,7 +259,9 @@ if (claims.length > 0) {
     }
   }
 } else {
-  console.log(`\n📋 文档声称符号数校验：未提取到声称（跳过，无基线冲突风险）`);
+  // v1.4.7 批次 M：空 claims = 异常信号而非安全态——三文档全部含声称是常态，
+  // 提取不到说明表述形态变了（正则失配），须人工确认而非替用户下「无风险」结论。
+  console.log(`\n⚠️ 未提取到声称——请人工确认 README/README.en/ARCHITECTURE 三文档的符号数表述形态是否变化`);
 }
 
 if (docMismatch > 0) {

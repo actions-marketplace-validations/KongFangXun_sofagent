@@ -1,4 +1,4 @@
-// ── API 分级契约（v1.4.3 四）────────────────────────────
+// ── API 分级契约（v1.5.0 四）────────────────────────────
 // `/* @public */`：公开 API——semver 锁定，变更必须 bump 版本 + CHANGELOG 记录
 //                 （外部依赖方与跨平台适配器只许 import 这一层）
 // `/* @internal */`：内部 API——不承诺稳定性，破坏性变更无需 bump
@@ -11,8 +11,16 @@
  */
 
 // Cron
-/* @public */ export { startCron } from './cron';
+/* @public */ export { startCron, loadTrainArchiveCronConfig } from './cron';
 /* @public */ export type { CronJob } from './cron';
+
+// v1.4.5 第五章：训练产物归档任务（@weekly 冷存 + 90 天覆写销毁 + 磁盘预警）
+/* @public */ export {
+  DEFAULT_TRAIN_ARCHIVE_CONFIG,
+  loadTrainArchiveConfig,
+  runTrainArchiveTask,
+} from './tasks/train-archive';
+/* @public */ export type { TrainArchiveConfig, TrainArchiveTaskResult } from './tasks/train-archive';
 
 // Scheduler（定时任务 · v1.3.8 交付四：cron 三档糖 @daily/@weekly/@monthly）
 /* @public */ export { createScheduler, nextCronTime, expandCronSugar } from './scheduler';
@@ -56,7 +64,20 @@
 
 // Dream Cycle（v1.1.6 新增：6 阶段流水线替换旧散点周报/经验提取脚本）
 /* @public */ export { runDreamCycle, loadLedger, loadState } from './dream-cycle/state-machine';
-/* @public */ export { MockLLM, RealLLM } from './dream-cycle/llm-mock';
+// v1.4.5 第七章五：RealLLM 真脑迁至 real-provider.ts（MockLLM 降级为测试专用）
+/* @public */ export { MockLLM } from './dream-cycle/llm-mock';
+/* @public */ export {
+  RealLLM,
+  createDefaultProvider,
+  resolveActiveEndpoint,
+} from './dream-cycle/real-provider';
+/* @public */ export type { ProviderStatus, ProviderResolution } from './dream-cycle/real-provider';
+/* @public */ export {
+  validateKnowledgeQuality,
+  mockExtractForDiff,
+  mockSynthesizeForDiff,
+} from './dream-cycle/quality-gate';
+/* @public */ export type { QualityGateResult } from './dream-cycle/quality-gate';
 /* @public */ export type {
   Stage,
   Ledger,
@@ -71,6 +92,30 @@
   DreamCycleResult,
 } from './dream-cycle/types';
 /* @public */ export { DREAM_CYCLE_STAGES } from './dream-cycle/types';
+// v1.4.5 第七章一：持续样本采集（≥7 天采样器——evolution report 数据源）
+/* @public */ export {
+  SAMPLE_TARGET_DAYS,
+  collectDailySample,
+  loadCursor,
+  readAllSamples,
+  summarizeSamples,
+  readDailyEvalStats,
+  countKnowledgeEntities,
+  countCorrectionReflows,
+  collectDailyDetails,
+  evolutionDir,
+  sampleFilePath,
+  cursorFilePath,
+} from './dream-cycle/continuous-sampler';
+/* @public */ export type {
+  DailySample,
+  SamplerCursor,
+  SampleResult,
+  CorrectionBackflow,
+  LowScoreFeedback,
+  RepeatFailure,
+  ToolUsageStat,
+} from './dream-cycle/continuous-sampler';
 
 // Inspectors
 /* @public */ export {
@@ -79,13 +124,14 @@
   checkKnowledgeFreshness,
   checkSkillStaleness,
   accumulateWarnings,
-  runInspectors,
   runHealthReport,
-  DEFAULT_INSPECTOR_CONFIG,
   generateDataSovereigntyDaily,
   generateDataSovereigntyWeekly,
   generateDataSovereigntyMonthly,
+  // v1.4.8 深模块条目 2：runInspectors / DEFAULT_INSPECTOR_CONFIG 降 @internal
+  //（包内外零运行时消费者——活路径是 runLayeredInspection；内部仍导出供测试）
 } from './inspectors';
+/* @internal */ export { runInspectors, DEFAULT_INSPECTOR_CONFIG } from './inspectors';
 /* @public */ export type { InspectorConfig, InspectorResult, DaemonHealth } from './inspectors';
 
 // v1.2.4 P0：分层巡检（L1/L2/L3）+ L3 新 inspector
@@ -101,11 +147,11 @@
 /* @public */ export type { FailureCluster } from './inspectors/failure-pattern';
 /* @public */ export { runOntologyCoverage } from './inspectors/ontology-coverage';
 
-// v1.2.4 P0b：eval 失败检测（进化引擎核心闭环）
+// v1.2.4 P0b：eval 失败检测（进化能力核心闭环）
 /* @public */ export { runEvalFailuresCheck } from './inspectors/eval-failures';
 
-// v1.2.4 P1：skillopt 自动触发 inspector
-/* @public */ export { runSkilloptTrigger } from './inspectors/skillopt-trigger';
+// v1.2.4 P1：evolve 自动触发 inspector
+/* @public */ export { runEvolveTrigger } from './inspectors/evolve-trigger';
 
 // v1.2.4 P1b：Dashboard 历史趋势 + 任务统计
 /* @public */ export { runDailySnapshot } from './inspectors/daily-snapshot';
@@ -143,6 +189,88 @@
   WebhookPusherOptions,
   WebhookPusher,
 } from './webhook/index';
+
+// G9 设备注册 / 发现 / 心跳（v1.4.9 T1+T11+T12）
+/* @public */ export {
+  isOnline,
+  DEVICE_HEARTBEAT_TIMEOUT_MS,
+  registerDevice,
+  gateDevice,
+  listDevices,
+  reportHeartbeat,
+  scanOfflineDevices,
+  enqueueDeviceTask,
+  claimDeviceTask,
+  reassignOrHold,
+  appendDeviceEvent,
+  verifyDeviceEventsChain,
+  deviceRegistryPath,
+  deviceEventsPath,
+  deviceTasksPath,
+} from './device-registry';
+/* @public */ export type {
+  DeviceKind,
+  DeviceRecord,
+  DeviceRegistryFile,
+  DeviceTask,
+  DeviceTasksFile,
+  DeviceEventRecord,
+  RegisterResult,
+  DeviceGateResult,
+  HeartbeatResponse,
+  EnqueueResult,
+  ClaimResult,
+  ReassignResult,
+} from './device-registry';
+
+// T10 第三项：执行侧模型清单扫描 + skill 快照类型（v1.4.9 批 4）
+/* @public */ export {
+  DEFAULT_PROBE_ENDPOINTS,
+  PROBE_TIMEOUT_MS,
+  scanRegistryModels,
+  probeEndpoint,
+  scanModelInventory,
+} from './model-inventory';
+/* @public */ export type {
+  AvailableModelEntry,
+  RuntimeSkillPackage,
+  ModelInventory,
+} from './model-inventory';
+
+// G11 数据上行 WAL 暂存 + 断点续传（v1.4.9 T3）
+/* @public */ export {
+  UPLOAD_WAL_FILE,
+  uploadWalPath,
+  deriveUploadAesKey,
+  enqueueUpload,
+  ackUpload,
+  failUpload,
+  readUploadCursor,
+  pendingUploads,
+  decryptPendingUpload,
+  uploadWalStats,
+} from './upload-wal';
+/* @public */ export type {
+  UploadWalType,
+  UploadWalRecord,
+  EnqueueUploadResult,
+  PendingUpload,
+} from './upload-wal';
+
+// /health 三态健康巡检端点（v1.4.9 T1 验收 ⑥）
+/* @public */ export {
+  buildHealthVerdict,
+  collectHealthChecks,
+  startHealthEndpoint,
+} from './health-endpoint';
+/* @public */ export type {
+  HealthVerdict,
+  CheckStatus,
+  HealthCheckItem,
+  HealthSnapshot,
+  HealthEndpointOptions,
+  HealthEndpointHandle,
+} from './health-endpoint';
 
 // OpenClaw Federation（联邦查询 · v1.1.8 新增）
 /* @public */ export { loadOpenClawChannel, createMemoryChannel, filterOnlinePeers } from './federation/channel';
@@ -202,6 +330,7 @@
   deleteOutboxFile,
   moveOutboxToFailed,
   cleanupFailedOutbox,
+  drainOutbox,
 } from './push-target';
 
 // v1.3.6 交付⑬：Agent 疲劳度检测（3 信号采集 → 评分 → daemon-health.json）
@@ -219,12 +348,15 @@
 /* @public */ export type { FatigueSignals, FatigueReport, FatigueAction } from './fatigue';
 
 // v1.3.5 交付 5 #1：FDE 陪跑期（部署后前 2 周每日 Refine 巡检）
+// v1.5.0 章五：期满总结报告（generateCompanionReport——执行统计+终态分布+介入汇总）
 /* @public */ export {
   runCompanionDaily,
   getCompanionState,
+  generateCompanionReport,
+  companionReportPath,
   COMPANION_DAYS,
 } from './companion';
-/* @public */ export type { CompanionState, CompanionRunResult } from './companion';
+/* @public */ export type { CompanionState, CompanionRunResult, CompanionReportStats } from './companion';
 
 // v1.3.5 交付 5 #4：FDE 节点注册表巡检（fde-registry.yaml cadence 调度）
 /* @public */ export { runFdeCompanionDaily } from './inspectors/fde-companion-daily';

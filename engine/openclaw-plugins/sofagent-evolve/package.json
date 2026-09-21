@@ -1,7 +1,8 @@
 {
   "name": "sofagent-evolve",
-  "version": "1.4.3",
-  "description": "经验沉淀——think.md 反思条目生成 + 反思区注入（Dream Cycle + skillopt 数据源），品牌色 #16B8F3",
+  "version": "1.5.0",
+  "private": true,
+  "description": "经验沉淀——think.md 反思条目生成 + 反思区注入（Dream Cycle + evolve 数据源）",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "openclaw": {
@@ -41,9 +42,9 @@
   },
   "homepage": "https://github.com/KongFangXun/sofagent#readme",
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^24.13.4",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.0"
   },
   "engines": {
     "node": ">=18"

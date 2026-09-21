@@ -1,4 +1,4 @@
-// ── API 分级契约（v1.4.3 四）────────────────────────────
+// ── API 分级契约（v1.5.0 四）────────────────────────────
 // `/* @public */`：公开 API——semver 锁定，变更必须 bump 版本 + CHANGELOG 记录
 //                 （外部依赖方与跨平台适配器只许 import 这一层）
 // `/* @internal */`：内部 API——不承诺稳定性，破坏性变更无需 bump
@@ -22,3 +22,14 @@
 /* @public */ export { runABTest } from './ab-runner';
 // v1.3.5 交付 1：MCP run_ab_test 消费（latest.json 持久化）
 /* @public */ export { persistABTestResult } from './persistence';
+// v1.4.5 第七章一：进化模块 A/B 对照（开/关双跑 + 显著性判定）
+/* @public */ export {
+  runEvolutionAB,
+  defaultEvolutionABConfig,
+  twoProportionZTest,
+  SIGNIFICANCE_Z_THRESHOLD,
+} from './evolution-ab';
+/* @public */ export type {
+  EvolutionABConfig,
+  EvolutionABResult,
+} from './evolution-ab';

@@ -226,32 +226,124 @@ describe('ToolGate · wrapToolsWithGate 拦截语义（v1.2.1 P0）', () => {
 
 // ════════════════════════════════════════
 // 运行时接线验证（v1.2.1 半闭环修复的核心验收）
+// v1.4.8 深模块条目 4：gate 接线从 loop/nodes.ts 收编到
+//   loop/middleware-registry.ts（公共接线入口 gateToolsForRole）
+//   + loop/agent-runner.ts（engineer/reviewer 两角色执行骨架各自接线）
+// 断言强度不变，仅跟随符号落点更新扫描目标。
 // ════════════════════════════════════════
 
-describe('ToolGate · nodes.ts 运行时接线（v1.2.1 验收标准）', () => {
-  // 测试：engineer + reviewer 两个 LOOP 节点都必须接入 gate——
-  //       静态验证 loop/nodes.ts 源码中 wrapToolsWithGate 出现 ≥4 次。
-  // 依据：changelog v1.2.1 质量验证表——"grep wrapToolsWithGate 在 nodes.ts 有 4 处命中"
-  //       （import × 1 + engineer 节点调用 + reviewer 节点调用，双节点各自完整接线）。
-  // 🔴 当前实测仅 3 处（import + engineer + reviewer），此用例预期 FAIL，
-  //    工程师完成 v1.2.1 接线补全后转绿。
-  it('testNodesTsWiring_engineerAndReviewer_atLeast4WrapToolsWithGateHits', () => {
-    const nodesPath = path.resolve(__dirname, '..', 'loop', 'nodes.ts');
-    const source = fs.readFileSync(nodesPath, 'utf-8');
+describe('ToolGate · LOOP gate 运行时接线（v1.2.1 验收标准）', () => {
+  const wiringSources = ['middleware-registry.ts', 'agent-runner.ts']
+    .map((f) => fs.readFileSync(path.resolve(__dirname, '..', 'loop', f), 'utf-8'))
+    .join('\n');
 
-    const hits = source.match(/wrapToolsWithGate/g) ?? [];
+  // 测试：engineer + reviewer 两个 LOOP 角色都必须接入 gate——
+  //       静态验证接线源中 wrapToolsWithGate 出现 ≥4 次。
+  // 依据：changelog v1.2.1 质量验证表——"grep wrapToolsWithGate 在接线源有 4 处命中"
+  //       （每个接线位点：import × 1 + 调用 + 接线模式注释）。
+  it('testLoopGateWiring_wrapToolsWithGate_atLeast4Hits', () => {
+    const hits = wiringSources.match(/wrapToolsWithGate/g) ?? [];
     expect(hits.length).toBeGreaterThanOrEqual(4);
   });
 
-  // 测试：engineer 与 reviewer 两个节点各自创建独立 gate——
-  //       静态验证 nodes.ts 中 createToolGate 至少被调用 2 次（每节点一个 gate 实例）。
+  // 测试：engineer 与 reviewer 各自创建独立 gate——
+  //       静态验证接线源中 createToolGate 至少被调用 2 次（每角色一个 gate 实例）。
   // 依据：changelog v1.2.1 修复表——"defaultRunEngineer + defaultRunReviewer 均调用
   //       createToolGate() 创建 gate → wrapToolsWithGate() 包装工具集"。
-  it('testNodesTsWiring_createToolGate_calledAtLeastTwice', () => {
-    const nodesPath = path.resolve(__dirname, '..', 'loop', 'nodes.ts');
-    const source = fs.readFileSync(nodesPath, 'utf-8');
-
-    const hits = source.match(/createToolGate\(/g) ?? [];
+  it('testLoopGateWiring_createToolGate_calledAtLeastTwice', () => {
+    const hits = wiringSources.match(/createToolGate\(/g) ?? [];
     expect(hits.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ════════════════════════════════════════
+// v1.4.8 第二章：app_tool_policy 策略维度（双实现同步——sandbox 中介版 + tools.ts 规则接线版）
+// ════════════════════════════════════════
+
+import { createToolGate as createSandboxGate } from '../sandbox/tool-gate';
+
+describe('ToolGate · app_tool_policy（v1.4.8 第二章 · sandbox 中介版）', () => {
+  const APP_POLICY = {
+    apps: {
+      'clawhub-plugin-a': ['run_audit', 'get_think'],
+    },
+  };
+
+  it('策略声明的 app×tool → allow，事件带 appName + policySource', () => {
+    const gate = createSandboxGate({ appToolPolicy: APP_POLICY });
+    const id = gate.register('run_audit', 'low');
+    const v = gate.check(id, 'clawhub-plugin-a');
+    expect(v.action).toBe('allow');
+    const ev = gate.exportEvents().find((e) => e.toolName === 'run_audit');
+    expect(ev?.appName).toBe('clawhub-plugin-a');
+    expect(ev?.policySource).toBe('app_tool_policy');
+  });
+
+  it('策略外的 tool（app 声明但 tool 未列）→ deny，reason 可追溯', () => {
+    const gate = createSandboxGate({ appToolPolicy: APP_POLICY });
+    const id = gate.register('write_think', 'low'); // low 风险本会 allow——策略优先拦截
+    const v = gate.check(id, 'clawhub-plugin-a');
+    expect(v.action).toBe('deny');
+    if (v.action === 'deny') expect(v.reason).toContain('未声明调用 tool「write_think」');
+  });
+
+  it('未声明的 app → deny（fail-closed）', () => {
+    const gate = createSandboxGate({ appToolPolicy: APP_POLICY });
+    const id = gate.register('run_audit', 'low');
+    const v = gate.check(id, 'unknown-app');
+    expect(v.action).toBe('deny');
+    if (v.action === 'deny') expect(v.reason).toContain('未在 app_tool_policy 中声明');
+  });
+
+  it('配置策略但调用未声明 app → deny（fail-closed 拒无归属调用）', () => {
+    const gate = createSandboxGate({ appToolPolicy: APP_POLICY });
+    const id = gate.register('run_audit', 'low');
+    const v = gate.check(id); // 不带 appName
+    expect(v.action).toBe('deny');
+  });
+
+  it('未配置 appToolPolicy（单机默认）→ 行为与现版一致', () => {
+    const gate = createSandboxGate(); // 无策略
+    const id = gate.register('run_audit', 'low');
+    expect(gate.check(id).action).toBe('allow');
+    expect(gate.check(id, 'any-app').action).toBe('allow');
+    // 无归属事件不带 appName 字段
+    const ev = gate.exportEvents()[0]!;
+    expect(ev.appName).toBeUndefined();
+  });
+});
+
+describe('ToolGate · app_tool_policy（v1.4.8 第二章 · tools.ts 规则接线版）', () => {
+  const APP_POLICY = {
+    apps: {
+      'clawhub-plugin-a': ['sf_read'],
+    },
+  };
+
+  it('策略声明 tool → 规则引擎照常判定（allow 路径）', () => {
+    const gate = createToolGate({ appToolPolicy: APP_POLICY, appName: 'clawhub-plugin-a' });
+    const v = gate('sf_read', { path: '/tmp/any.txt' });
+    expect(v.allowed).toBe(true);
+  });
+
+  it('策略外 tool → deny，reason 带 app+tool+策略来源', () => {
+    const gate = createToolGate({ appToolPolicy: APP_POLICY, appName: 'clawhub-plugin-a' });
+    const v = gate('sf_write', { path: '/tmp/x.txt', content: 'y' });
+    expect(v.allowed).toBe(false);
+    expect(v.reason).toContain('[app_tool_policy]');
+    expect(v.reason).toContain('clawhub-plugin-a');
+    expect(v.reason).toContain('sf_write');
+  });
+
+  it('未声明 app → deny（fail-closed）', () => {
+    const gate = createToolGate({ appToolPolicy: APP_POLICY, appName: 'unknown-app' });
+    const v = gate('sf_read', { path: '/tmp/a' });
+    expect(v.allowed).toBe(false);
+    expect(v.reason).toContain('未在策略中声明');
+  });
+
+  it('未配置 appToolPolicy → 行为与现版一致', () => {
+    const gate = createToolGate(); // 无策略
+    expect(gate('sf_read', { path: '/tmp/a' }).allowed).toBe(true);
   });
 });

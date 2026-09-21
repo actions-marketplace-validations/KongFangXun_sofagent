@@ -1,17 +1,17 @@
 # Evidence.md — sofagent 真的有用吗？
 
 > ⚠️ **版本说明**：以下实验数据基于 v0.92-v0.93（prompt 前缀注入，4 条核心规则）。
-> 当前 v1.4.3 已升级为 SKILL 文件加载链 + 24 条规则体系。
+> 当前 v1.5.0 已升级为 SKILL 文件加载链 + 24 条规则体系。
 >
 > 📌 **已知缺口（自 v1.2.3 挂起至今，未还）**：v1.2.3 起的对照实验数据仍缺。不是忘补——按本页「诚实声明」的口径，**作者自测不计入证据**，需第三方独立运行，而独立样本至今未凑齐。此缺口在补齐前一直挂在这里，不删不绕。
 
-> 当前单元测试数：见 `tools/test-count.sh` 实跑（audit 包 / 全 workspace 汇总），**当前 v1.4.3：全 workspace 3619 测试**。历史沿革：v1.2.4：audit 包 507、全 workspace 1320 测试（共 1320，全绿）。v1.2.3：audit 包 498、全 workspace 1207 测试。v1.2.1：audit 包 428、全 workspace 984（v1.2.1 acceptance-test 场景扩展 + 审查维度新增）。v1.2.0：audit 包 423、全 workspace 957（物理结构重构不增测试 + rules-engine 新增 28 + DP-2 signConfig 回归测试）。
+> 当前单元测试数：见 `tools/check/test-count.sh` 实跑（audit 包 / 全 workspace 汇总），**本页时点值（v1.4.7 发版快照）：全 workspace 4279 测试（12 包 workspace 口径，与 [ROADMAP](../ROADMAP.md) v1.4.7 条目同源）**——本页是**历史锚点页、不追当值**（当值见 [WIKI §六](../WIKI.md) 与 [README](../../README.md)）。⚠️ **口径声明**：README「工程可信度」行的 4468 系 **13 包口径**当前值，与本页 12 包口径的 4279 **不同口径、不可直接比较**——报数必须声明口径，勿互相「订正」。历史沿革：v1.2.4：audit 包 507、全 workspace 1320 测试（共 1320，全绿）。v1.2.3：audit 包 498、全 workspace 1207 测试。v1.2.1：audit 包 428、全 workspace 984（v1.2.1 acceptance-test 场景扩展 + 审查维度新增）。v1.2.0：audit 包 423、全 workspace 957（物理结构重构不增测试 + rules-engine 新增 28 + DP-2 signConfig 回归测试）。
 
 > ⚠️ **中文版为完整版（截至 Case 025，2026-07-06）。** 英文版同步至 Case 025。
 
 > 我们不替你回答。以下是装了 sofagent 的人自己记录的。
 
-> ⚠️ **诚实声明**：以下数据含作者自测。复盘评分为 LLM 自评（非 OpenClaw 平台无工程隔离）。企业级评估需配合外部审计 + 独立评估器。静态加密当前**能力已实现、接线未启用**（AES-256-GCM 已在 `crypto-init.ts` 落库，激活入口 `initDataEncryption()` 尚未接入 daemon 启动路径，接线排期 v1.4.7；强合规场景请配合外部加密卷，详见 [SECURITY](../../SECURITY.md)）。当前数据适合探索性评估，不适用于生产决策。
+> ⚠️ **诚实声明**：以下数据含作者自测。复盘评分为 LLM 自评（非 OpenClaw 平台无工程隔离）。企业级评估需配合外部审计 + 独立评估器。静态加密已接线 daemon 启动路径（密钥就绪后审计历史主链密文落盘；附链目录仍明文，见 LIMITATIONS 权威清单；强合规场景请配合外部加密卷，详见 [SECURITY](../../SECURITY.md)）。当前数据适合探索性评估，不适用于生产决策。
 
 > 📊 **历史 A/B benchmark 数据**（v0.92-v0.93 期间实验记录，存档参考）：
 >
@@ -27,7 +27,7 @@
 
 - **持续使用 >1 周的用户数**：1 家（截至 2026-07-30）
 - **FDE 部署完成但尚未进入持续使用的**：3 家
-> 此数据随每次发版更新。正式用户增长计划原定以「静态加密上线」为启动前提——该前提当前**尚未满足**（加密能力已实现，接线排期 v1.4.7，见 [SECURITY](../../SECURITY.md)），故计划未启动，启动条件待重新拍板。
+> 此数据随每次发版更新。正式用户增长计划原定以「静态加密上线」为启动前提——主链加密已接线（daemon start 引导，密钥就绪后审计历史密文落盘），附链目录仍明文（见 LIMITATIONS 权威清单）；启动条件是否满足待重新拍板。
 > 如果你在用——不是测试，是日常在用——请告诉我们用了多久。
 >
 > （注：Case 016-019 原始部署报告/workflow.yaml 在部署企业内网，联系维护者获取。）
@@ -65,10 +65,10 @@
 | 2026-06-22 | KongFangXun | Claude Code (v0.82) | 一次性测试 | 8 维度 | ❌ 不能 | **0/8 硬约束生效**：scripts/ 未部署，编排引擎完全失效 | — | scripts/ 未部署（🔴）；CLAUDE.md 种子指令未写入（🟡）；daemon 不检测 claude（🟡） | **Claude Code 与 Hermes Agent 同属"手动平台"。三个断裂点导致效果 = 0。详见 [Case 011](./cases/claude-v082-2026-06-22/)。** |
 | 2026-06-24 | @jm4170134-droid（小嘉） | Mac mini (DeepSeek Reasoner, v0.86 tag) | 一次性测试 | 5 任务 A/B | ✅ 能 | **5 维度全正向**：陷阱注释全部保留 vs 部分移除、exports 完整 vs 遗漏、首次无 bug 5/5 vs 4/5、类型严谨 vs `any` 绕过 | — | N=1 单次运行（方差未知）；反序组设计（B 先 A 后）；评估非盲 | **社区第三方 A/B：5 个代码重构任务，sofagent 组全面优于裸 Agent 组。两组同模型（DeepSeek Reasoner），唯一变量是 sofagent 有无。详见 [Case 012](./cases/community-ab-test-2026-06-24/)。** |
 | 2026-06-24 | @cedric123123（明我小助手） | OpenClaw main session (Opus 4.7) | 一次性测试 | task6 + task7 | ✅ 能 | **16/16 满分，但数据不可信**：6 个方法论硬伤导致无法归因 | task6: ~150K / task7: ~226K | 🔴 实际加载 v0.81-0.85 非 v0.86 / 🔴 无对照组 / 🔴 模型未控制（Opus vs deepseek）/ 🟡 N=2 / 🟡 task7 过于显眼 / 🟡 MEMORY.md 污染 | **满分报告 ≠ 可信报告。task6 读型分流 8/8 + task7 Loop 退出 8/8，但版本错配 + 无对照 + 模型混淆。方法论教训详见 [反案例 003](./anti-cases/003-test-methodology-pitfalls.md)。** |
-| 2026-07-01 | KongFangXun | WorkBuddy + OpenClaw（工程模型，v0.99） | 一次性测试 | 49 用例 + ao compose | ✅ 能 | **确定性测试 42/49 通过，2 个 P0（npm pack 打包源文件 + bin 无执行权限）当场修复**；ao compose 4 并行多智能体审查编排成功（76s / 57K token），但 Agent 无法自动读项目文件，审查为模拟性 | ~58K/会话 | ao compose Agent 无文件注入能力（P1）；audit-history 目录路径不一致（P2 已修）；MCP 未初始化时重复响应（P2 已修）；非 git 仓库无友好提示（P2 已修） | **Case 013：v0.99 发版前三线并行测试（确定性 + 工程模型代码审查 + ao 多智能体）。核心代码全绿：398 测试 + tsc 零错误 + 版本号 34 项一致 + 零依赖属实 + 命令注入防护到位。3 个 P0 + 10 个 P1 + 3 个 P2 全部当场修复。ao compose 业务流结构正确（4 并行+汇总），但发现 Agent 无文件注入能力是编排引擎的下一个改进点。** |
+| 2026-07-01 | KongFangXun | WorkBuddy + OpenClaw（工程模型，v0.99） | 一次性测试 | 49 用例 + ao compose | ✅ 能 | **确定性测试 42/49 通过，2 个 P0（npm pack 打包源文件 + bin 无执行权限）当场修复**；ao compose 4 并行多智能体审查编排成功（76s / 57K token），但 Agent 无法自动读项目文件，审查为模拟性 | ~58K/会话 | ao compose Agent 无文件注入能力（P1）；audit-history 目录路径不一致（P2 已修）；MCP 未初始化时重复响应（P2 已修）；非 git 仓库无友好提示（P2 已修） | **Case 013：v0.99 发版前三线并行测试（确定性 + 工程模型代码审查 + ao 多智能体）。核心代码全绿：398 测试 + tsc 零错误 + 版本号 34 项一致 + 零依赖属实 + 命令注入防护到位。3 个 P0 + 10 个 P1 + 3 个 P2 全部当场修复。ao compose 工作流结构正确（4 并行+汇总），但发现 Agent 无文件注入能力是编排引擎的下一个改进点。** |
 | 2026-07-01 | AI Agent（WorkBuddy + OpenClaw 自动执行） | WorkBuddy + OpenClaw 2026.6.8（工程模型，v0.99.2） | 一次性测试 | 6 TC 自动化测试套件 | ✅ 能 | **6/6 全绿**：daemon 核心功能 + verifysh 50 项（注：v0.99.2 时 verify 报 50 项，v0.99.3 后实测 41 项） + MCP 4 tools + 审计六步闭环 + ao 0.7.5 + macOS 全绿。v1.0 准入条件 3 项 ⏳→✅ | ~15K/会话 | TC-1 daemon 需重试一次（macOS 无 timeout 命令，改用后台进程+sleep）；install.sh 存在但缺 darwin 平台分支代码 | **Case 014：v0.99.2 质量加固 + 本地验证。18 个问题修复（3 P0 + 9 P1 + 6 P2），406 测试全绿（v0.99.2 时测试数；后续版本持续增长，当前数以 `tools/check/test-count.sh` 实测为准），版本号 33 项一致。测试由 Agent 自动执行，零人工介入。详见 [Case 014](./cases/v0992-release-test-2026-07-01/)。** |
 | 2026-07-01 | 关联企业同事 | WorkBuddy（工程模型，v0.99.2） | 一次性测试 | 5 TC 靶向违规构造 | ✅ 能 | **5/5 100% 检出**：A2 密钥/A3 越界/A4 删配置/A5 commit/E1 缺测试。A3 守门员效应确认。扩展规则框架正常。 | ~3K/会话 | 靶向构造非真实场景；未测误报率；密钥正则要求 48 字符 | **Case 015：审计引擎检出率首次外部实测。关联企业同事在独立仓库中构造已知违规，全部检出。详见 [Case 015](./cases/v0992-audit-detection-2026-07-01/)。** |
-| 2026-07-02 | FDE（Agent 辅助）| OpenClaw (macOS, v0.99.4) | FDE 部署 | 71+ 业务流节点 + 2 🔄 节点 | ✅ 能 | 制造业 200+人，7部门梳理，4小时产出完整部署方案 + workflow.yaml | — | 需批量导入功能；管理类节点判定标准需增强 | **Case 016：锂电制造企业 FDE 部署——半天走完传统咨询 1-2 周的工作量。详见 [Case 016](../archive/evidence/fde-forever-battery-2026-07-02/)。** |
+| 2026-07-02 | FDE（Agent 辅助）| OpenClaw (macOS, v0.99.4) | FDE 部署 | 71+ 工作流节点 + 2 🔄 节点 | ✅ 能 | 制造业 200+人，7部门梳理，4小时产出完整部署方案 + workflow.yaml | — | 需批量导入功能；管理类节点判定标准需增强 | **Case 016：锂电制造企业 FDE 部署——半天走完传统咨询 1-2 周的工作量。详见 [Case 016](../archive/evidence/fde-forever-battery-2026-07-02/)。** |
 | 2026-07-02 | Cedric（今绘行空）| OpenClaw (Windows, v0.99.4) | FDE 部署 | 5 岗位 25 节点 + 1 🔄 上线 | ✅ 能 | 5人微团队，2小时走完十步，1个🔄节点已上线钉钉每日推送。首个 Windows 外部验证 | — | PowerShell curl 别名冲突；中文推送乱码 | **Case 017：农业科技微团队 FDE 部署——Windows 环境全链路跑通。详见 [Case 017](../archive/evidence/fde-jinhui-2026-07-02/)。** |
 | 2026-07-02 | 小嘉（蔓嘉电商）| OpenClaw (macOS, v0.99.4) | 持续使用 ~3 周 | 2 🔄 节点日常运转 | ✅ 能 | 电商运营 2 个 🔄 节点已上线运转（周报+对账），年释放 ~440-590 小时。截至 2026-07-04 运行约 3 周 | — | 平台反爬限制运营数据获取；需离线安装文档 | **Case 018：电商运营 FDE 部署——首个持续使用的外部案例。详见 [Case 018](./cases/fde-manjia-2026-07-02/)。** |
 | 2026-07-02 | 姚旭琛（上善能及）| OpenClaw (macOS, v0.99.4) | FDE 部署 | 2 产线 Agent + 1 知识库 Agent 规划 | ✅ 能 | 已有 2 个产线 Agent 稳定运行数月，FDE 部署新 Enterprise 知识库 Agent。产出 10+ 份方案文档 + Phase 1 代码 | — | Webhook 机器人单向限制 | **Case 019：能源科技 FDE 部署——在已有 AI 基础设施上扩展新 Agent。详见 [Case 019](../archive/evidence/fde-shangshan-2026-07-02/)。** |

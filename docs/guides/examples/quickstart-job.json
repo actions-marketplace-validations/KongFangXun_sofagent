@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "v1",
+  "jobId": "quickstart-demo-job",
+  "dataPath": "quickstart-data.csv",
+  "baseModel": "Qwen3-0.6B",
+  "algorithm": "sft",
+  "hyperparams": {
+    "epochs": 1,
+    "maxSteps": 8
+  },
+  "checkpointPath": "data/train/quickstart-demo/quickstart-demo-job/checkpoints",
+  "outputDir": "data/train/quickstart-demo/quickstart-demo-job/output",
+  "budget": {
+    "maxMinutes": 5,
+    "maxSteps": 8
+  }
+}

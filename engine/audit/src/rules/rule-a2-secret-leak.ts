@@ -1,7 +1,7 @@
 // ============================================================
 // A2 不泄密钥（安全层 · 业务底线）
 // 检测 diff 新增行内容是否含密钥字符串 → 命中任意一条 → FAIL
-// v1.4.3：输出聚合——同文件同模式多次命中时限量显示，避免超大 diff 输出爆炸
+// v1.5.0：输出聚合——同文件同模式多次命中时限量显示，避免超大 diff 输出爆炸
 // v1.3.7 补编码绕过检测——新增行尝试 base64/hex 解码后再跑正则，
 //   命中则报警（此前 `printf 'AKIA...' | base64 > encoded.txt` 即可绕过）。
 //   另补 .gitattributes -diff 绕过检测——把文件标记为 -diff 会让 git diff
@@ -9,8 +9,8 @@
 // evidenceMode: git-diff
 // ============================================================
 
-import type { AuditContext, RuleCheck } from './types';
-import { SECRET_PATTERNS, stripDataUris } from '@sofagent/core';
+import type { AuditContext, RuleScan, RuleStatus } from './types';
+import { SECRET_PATTERNS, stripDataUris, REDACTION_PATTERNS } from '@sofagent/core';
 
 /**
  * 密钥泄漏检测正则模式
@@ -54,7 +54,12 @@ function tryDecodeBase64(s: string): string | null {
     if (cleaned && /[\x20-\x7E\u4e00-\u9fff]/.test(cleaned)) {
       return cleaned;
     }
-  } catch { /* 解码失败忽略 */ }
+    debugLogDecode('base64', s, '解码结果不含可打印文本（剥离 FFFD 后为空/纯二进制）');
+  } catch (e) {
+    // v1.4.5 T14: 解码异常留 debug 痕（SOFAGENT_DEBUG=1 时输出）——
+    // 此前静默吞掉，charset 门槛通过但 Buffer 抛错的真实样本无从排查
+    debugLogDecode('base64', s, e instanceof Error ? e.message : String(e));
+  }
   return null;
 }
 
@@ -70,8 +75,30 @@ function tryDecodeHex(s: string): string | null {
     if (cleaned && /[\x20-\x7E\u4e00-\u9fff]/.test(cleaned)) {
       return cleaned;
     }
-  } catch { /* 解码失败忽略 */ }
+    debugLogDecode('hex', hexStr, '解码结果不含可打印文本（剥离 FFFD 后为空/纯二进制）');
+  } catch (e) {
+    debugLogDecode('hex', hexStr, e instanceof Error ? e.message : String(e));
+  }
   return null;
+}
+
+/**
+ * v1.4.5 T14: 解码路径 debug 留痕——SOFAGENT_DEBUG=1 时向 stderr 输出
+ * 「哪个候选串、走哪条解码路径、为何被丢弃」。候选串本身可能含密钥，
+ * 输出前过 REDACTION_PATTERNS 脱敏（调试信息不能变成新的泄漏面），
+ * 且截断至 48 字符（诊断只需形态不需全文）。默认关闭零噪声。
+ */
+function debugLogDecode(kind: 'base64' | 'hex', candidate: string, reason: string): void {
+  if (process.env.SOFAGENT_DEBUG !== '1') return;
+  try {
+    let safe = candidate.slice(0, 48);
+    for (const { pattern, replacement } of REDACTION_PATTERNS) {
+      safe = safe.replace(pattern, replacement);
+    }
+    process.stderr.write(`[sofagent-audit][debug] A2 ${kind} 候选丢弃（${reason}）: ${safe}\n`);
+  } catch {
+    // debug 留痕自身绝不抛错（诊断面不能反过来破坏审计主流程）
+  }
 }
 
 /**
@@ -148,17 +175,32 @@ function extractCallArgLiterals(content: string): string[] {
 function candidatePlaintexts(content: string): string[] {
   // v1.4.4：入口先剥离 data URI 内嵌资源——base64 图像解码/原文的随机 40 位段
   // 会撞密钥正则（实锤：dashboard logo 70KB PNG data-URI 误报 AWS Secret Key）。
-  // data URI 是标准 Web 资源内嵌形态非密钥载体；剥离后剩余文本照常走全路径检测
-  // （资源以外藏真密钥仍会被抓）。URL-safe base64 载荷（含 -_）不匹配剥离正则，保持原扫。
+  // data URI 是标准 Web 资源内嵌形态非密钥载体；剥离后剩余文本照常走全路径检测。
+  // v1.4.8 fresh-eyes（finding-10）：整段剥离不分 mime 曾重开夹带通道——
+  // `data:application/octet-stream;base64,<标准b64>` 载荷在进入任何扫描候选前
+  // 被静默删除（v1.3.7 printf|base64 同款绕过换信封复现）。现在非 web 资源
+  // mime（image/font/audio/video 之外）的 b64 载荷（含 URL-safe 形态）解码后
+  // 照常进候选；资源 mime 维持剥离豁免（PNG logo 误报原始场景不受影响）。
+  const candidates: string[] = [];
+  const dataUriPayloadRe =
+    /data:(?!image\/|font\/|audio\/|video\/)[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,([A-Za-z0-9+/=_-]+)/gi;
+  let pm: RegExpExecArray | null;
+  while ((pm = dataUriPayloadRe.exec(content)) !== null) {
+    const decoded = tryDecodeBase64(pm[1] ?? '');
+    if (decoded) candidates.push(decoded);
+  }
   const stripped = stripDataUris(content);
-  const candidates: string[] = [stripped];
+  candidates.push(stripped);
   const trimmed = stripped.trim();
 
   // P1-A4: 带变量前缀的赋值行（如 `token = <b64>` / `key: <hex>`）
   // 提取等号/冒号后的值部分，尝试解码——堵住 `token = <base64>` 绕过路径
   const assignMatch = trimmed.match(/(?:^|\s)([\w.-]+)\s*[:=]\s*(.+)$/);
   if (assignMatch) {
-    const valuePart = assignMatch[2]!.trim().replace(/['"`;,\s]+$/g, '');
+    // 首尾都剥：尾部剥引号/分号/逗号/空白（行尾语义）；头部剥三种引号——
+    // 红队实锤（R1）：仅剥尾时 `awsSecretKey = "QUtJ..."` 的头引号留在值里，
+    // base64 字符集校验被 kill，带引号密钥（Python/JS 最常见形态）恰好逃逸。
+    const valuePart = assignMatch[2]!.trim().replace(/^['"`]+|['"`;,\s]+$/g, '');
 
     // base64 候选（值部分）
     const b64Decoded = tryDecodeBase64(valuePart);
@@ -247,35 +289,58 @@ function detectNewBinaryFiles(ctx: AuditContext): string[] {
   return hits;
 }
 
-export function checkRuleA2(ctx: AuditContext): RuleCheck {
-  const rule: RuleCheck = {
-    name: 'A2 不泄密钥',
-    number: 2,
-    status: 'PASS',
-    details: [],
-    evidenceMode: 'git-diff',
-    ruleClass: '业务底线',
-  };
+/**
+ * Cyrillic→拉丁高频同形折叠表（R2 红队成果）——只用于检测，不改原文。
+ * 背景：NFKC 只折叠全角/连字，不折叠跨字母系统的视觉同形字——
+ * `рсk-proj-...`（рс 为 Cyrillic）可同时骗过前缀锚与赋值值起点。
+ * 映射覆盖高频密钥前缀字符（sk-/rc-/akia 等）与字母数字主体段。
+ */
+const CYRILLIC_HOMOGLYPHS: Record<string, string> = {
+  а: 'a', е: 'e', о: 'o', р: 'p', с: 'c', у: 'y', х: 'x',
+  і: 'i', ј: 'j', κ: 'k', В: 'B', А: 'A', С: 'C', Е: 'E',
+  О: 'O', Р: 'P', Х: 'X', К: 'K', М: 'M', Т: 'T',
+};
+
+export function foldHomoglyphs(text: string): string {
+  return text.replace(/[а-яА-ЯїієґЇІЄҐκ]/g, (ch) => CYRILLIC_HOMOGLYPHS[ch] ?? ch);
+}
+
+export function scanA2(ctx: AuditContext): RuleScan {
+  let status: RuleStatus = 'PASS';
+  const details: string[] = [];
 
   const { diffFiles } = ctx;
 
   // 聚合结构：Map<"文件路径|密钥标签", string[]>
   const groupedDetections = new Map<string, { file: string; label: string; count: number }>();
+  // v1.4.8 fresh-eyes（finding-11）：测试文件内的密钥形态命中——不 FAIL，但强制 WARN 人工确认
+  const testExemptDetections = new Map<string, { file: string; label: string; count: number }>();
 
   for (const file of diffFiles) {
+    // 测试文件豁免：测试用例合法包含密钥形态作为 fixture（对抗性 golden-set
+    // 红队样本、正则回归用例等；对齐 A9 同款豁免先例）。v1.4.8 fresh-eyes
+    // （finding-11）：豁免不再静默——文件命名完全在被审计 Agent 控制下，
+    // 真实密钥放进 *.test.ts 即全绿；命中照常记录，循环后统一降级 WARN
+    // 提示人工确认，而非静默放行。
+    const isTestFile = file.path.includes('.test.') || file.path.includes('__tests__/') || file.path.endsWith('.fixture');
+    const detections = isTestFile ? testExemptDetections : groupedDetections;
     for (const line of file.lines) {
       // 只检查新增行（以 + 开头且不是 +++）
       if (line.startsWith('+') && !line.startsWith('+++')) {
         const content = line.substring(1);
         // v1.2.9: — zero-width 字符归一化（防止 U+200B/U+200C/U+200D/U+FEFF 拆分密钥绕过）
         let normalized = content.replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
-        // v1.3.1 #46: NFKC Unicode 归一化——防止全角字符（如 ｓｋ-）或同形字符绕过密钥检测。
-        // NFKC 将兼容性字符折叠为标准形式（全角字母→半角、连字→拆分），堵住 Unicode 同形攻击。
+        // v1.3.1 #46: NFKC Unicode 归一化——防止全角字符（如 ｓｋ-）绕过密钥检测。
+        // NFKC 将兼容性字符折叠为标准形式（全角字母→半角、连字→拆分）。
+        // ⚠️ NFKC 不折叠跨字母系统的 Cyrillic 同形字（рс≠rc）——R2 红队实锤：
+        // 同形前缀可骗过模式锚。检测前追加同形折叠（foldHomoglyphs，只影响
+        // 检测候选不改原文），声称对齐 SECURITY.md「NFKC + 同形折叠表」表述。
         try {
           normalized = normalized.normalize('NFKC');
         } catch {
           // normalize 在极少数情况下可能失败（无效 surrogate pair），保留原值继续
         }
+        normalized = foldHomoglyphs(normalized);
         // 原行 + base64/hex 解码候选（v1.2.9: 用归一化后的内容防 zero-width 绕过）
         for (const candidate of candidatePlaintexts(normalized)) {
           for (const { pattern, label, contextKeyword } of SECRET_PATTERNS) {
@@ -285,28 +350,34 @@ export function checkRuleA2(ctx: AuditContext): RuleCheck {
               // 二次判定防误报。
               if (contextKeyword && !contextKeyword.test(candidate)) continue;
               const key = `${file.path}|${label}`;
-              const existing = groupedDetections.get(key);
+              const existing = detections.get(key);
               if (existing) {
                 existing.count++;
               } else {
-                groupedDetections.set(key, { file: file.path, label, count: 1 });
+                detections.set(key, { file: file.path, label, count: 1 });
               }
             }
           }
           // v1.4.0 交付四③：SECRET_ASSIGNMENT_REGEX——赋值形态通用检测（补已知格式之外的空档）
           // 覆盖 api_key=xxx / token: "xxx" / secret = xxx / password=xxx 等通用赋值；
           // 值长度 ≥8 且排除常见占位符（REPLACE_ME/your_/example/xxx）——保守防误报
+          // v1.4.8 修复：函数调用 RHS 豁免——`apiKey: resolveApiKey(role)` 的 RHS 是运行时读取
+          // （与 env 引用同语义），此前被当硬编码密钥误报；尾锚 `(?![\w(])` 兼防贪婪回溯
+          // （无锚时 `resolveApiKey(` 会回溯成 `resolveApiKe` 绕过断言）
           const ASSIGNMENT_PATTERN =
-            /(?:api[_-]?key|apikey|access[_-]?token|auth[_-]?token|token|secret|passwd|password)\s*[=:]\s*["']?([A-Za-z0-9_\-./+=]{8,})/i;
+            /(?:api[_-]?key|apikey|access[_-]?token|auth[_-]?token|token|secret|passwd|password)\s*[=:]\s*["']?([A-Za-z0-9_\-./+=]{8,})(?![\w(])/i;
           const m = candidate.match(ASSIGNMENT_PATTERN);
           const assigned = m?.[1];
-          if (assigned && !/^(REPLACE_ME|YOUR_[A-Z_]+|EXAMPLE|PLACEHOLDER|CHANGE_ME|xxxx+)$/i.test(assigned)) {
+          // env 引用豁免：值以 process.env / os.Getenv 等「运行时读取」开头的是代码引用
+          // 不是硬编码密钥（apiKey: process.env.SOFAGENT_MODEL_API_KEY 同构写法全仓通行）
+          const isEnvReference = /^(process\.env|os\.Getenv|env\.)/i.test(assigned ?? '');
+          if (assigned && !isEnvReference && !/^(REPLACE_ME|YOUR_[A-Z_]+|EXAMPLE|PLACEHOLDER|CHANGE_ME|xxxx+)$/i.test(assigned)) {
             const key = `${file.path}|密钥赋值`;
-            const existing = groupedDetections.get(key);
+            const existing = detections.get(key);
             if (existing) {
               existing.count++;
             } else {
-              groupedDetections.set(key, { file: file.path, label: '密钥赋值形态', count: 1 });
+              detections.set(key, { file: file.path, label: '密钥赋值形态', count: 1 });
             }
           }
         }
@@ -315,7 +386,7 @@ export function checkRuleA2(ctx: AuditContext): RuleCheck {
   }
 
   if (groupedDetections.size > 0) {
-    rule.status = 'FAIL';
+    status = 'FAIL';
     const parts: string[] = [];
     for (const { file, label, count } of groupedDetections.values()) {
       if (count > MAX_DISPLAY_PER_GROUP) {
@@ -324,20 +395,36 @@ export function checkRuleA2(ctx: AuditContext): RuleCheck {
         parts.push(`${file}: 检测到 ${label}${count > 1 ? ` ×${count}` : ''}`);
       }
     }
-    rule.details.push(
+    details.push(
       `检测到疑似密钥/令牌泄漏: ${parts.join('; ')}。密钥不应硬编码到源码中。`
+    );
+  }
+
+  // v1.4.8 fresh-eyes（finding-11）：测试文件豁免命中降级 WARN——非静默放行
+  if (testExemptDetections.size > 0) {
+    if (status === 'PASS') status = 'WARN';
+    const parts: string[] = [];
+    for (const { file, label, count } of testExemptDetections.values()) {
+      parts.push(`${file}: ${label}${count > 1 ? ` ×${count}` : ''}`);
+    }
+    // finding-13：detail 按最终状态区分——整体已 FAIL 时不再写「不 FAIL」误导人工确认
+    const exemptNote = status === 'FAIL'
+      ? '测试文件豁免命中（已并入 FAIL 处置，需人工确认）'
+      : '测试文件豁免命中（不 FAIL 但需人工确认）';
+    details.push(
+      `${exemptNote}: ${parts.join('; ')}。测试文件命名在被审计 Agent 控制下，请确认以上命中均为合法 fixture 而非真实密钥夹带。`
     );
   }
 
   // .gitattributes -diff 绕过检测（v1.3.8 P1-A2 升级为 FAIL）
   // 红队实测两步隐身：第一步提交 .gitattributes 标记 secrets.js -diff（此处仅 WARN 放行），
   // 第二步提交密钥文件——git diff 不输出内容行，A2 无内容可扫静默全绿。
-  // -diff 标记对审计引擎是「结构性隐藏证据」，合法场景（真正的二进制产物如 .png/.lock）
+  // -diff 标记对审计模块是「结构性隐藏证据」，合法场景（真正的二进制产物如 .png/.lock）
   // 极少需要 -diff；按 fail-closed 原则升级 FAIL，用户确属误报可用 --ruleset 自定义豁免。
   const attrHiddenTargets = detectGitattributesDiffHidden(ctx);
   if (attrHiddenTargets.length > 0) {
-    rule.status = 'FAIL';
-    rule.details.push(
+    status = 'FAIL';
+    details.push(
       `检测到 .gitattributes 将以下文件标记为 -diff（内容不会出现在 git diff 中，A2 无法扫描——两步隐身路径：先标记 -diff 再提交密钥文件即静默绕过）: ${attrHiddenTargets.join(', ')}。如属真实二进制产物请改用审计友好的标记方式（如 .gitattributes 注释说明），密钥文件必须移除 -diff 标记。`
     );
   }
@@ -345,11 +432,11 @@ export function checkRuleA2(ctx: AuditContext): RuleCheck {
   // 新增二进制文件 WARN（内容扫描盲区——git 不输出二进制内容行，密钥可藏身）
   const binaryFiles = detectNewBinaryFiles(ctx);
   if (binaryFiles.length > 0) {
-    if (rule.status === 'PASS') rule.status = 'WARN';
-    rule.details.push(
+    if (status === 'PASS') status = 'WARN';
+    details.push(
       `检测到 ${binaryFiles.length} 个新增二进制文件（${binaryFiles.slice(0, 5).join(', ')}${binaryFiles.length > 5 ? ' 等' : ''}）：二进制文件不扫内容，请人工确认无密钥夹带。`
     );
   }
 
-  return rule;
+  return { status, details };
 }

@@ -102,10 +102,10 @@ describe('renderReport · 报告结构', () => {
     expect(md).toContain('## 6. 异常告警');
   });
 
-  it('报告末尾包含生成引擎签名', () => {
+  it('报告末尾包含审计模块签名', () => {
     // 测试：底部含版本签名行
     const md = renderReport('daily', '2026-07-28', makeStats());
-    expect(md).toContain('sofagent 数据主权审计引擎');
+    expect(md).toContain('sofagent 数据主权审计模块');
   });
 });
 

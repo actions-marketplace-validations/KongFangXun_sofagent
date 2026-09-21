@@ -4,15 +4,15 @@
 // 入口路由 tool——传入用户请求，匹配 workflow 节点，返回路由结果。
 // 匹配判定记 audit decision（kind=ORCHESTRATION），保证路由决策可审计。
 //
-// ⚠️ type 修饰符不可运行时解构（v1.4.3 fde-compose 踩过的坑）：
+// ⚠️ type 修饰符不可运行时解构（v1.5.0 fde-compose 踩过的坑）：
 //   正确：顶层 import type { RouteResult } + 运行时只解构 routeRequest 值
 //   错误：const { routeRequest, type RouteResult } = require(...) → build 失败
 // ============================================================
 
 // 运行时值导入（routeRequest 是函数，运行时需要）
-import { routeRequest } from '@sofagent/orchestrator';
+import { routeRequest } from '@sofagent/orchestrator/workflow';
 // 类型导入（RouteResult / ParsedWorkflow 是类型，仅编译期——不可运行时解构）
-import type { RouteResult, ParsedWorkflow } from '@sofagent/orchestrator';
+import type { RouteResult, ParsedWorkflow } from '@sofagent/orchestrator/workflow';
 // 审计写入（emitDecision 是函数，运行时需要）
 import { emitDecision } from '@sofagent/audit';
 // 类型导入（RouteReason 是类型，仅编译期——v1.3.6 交付⑧）

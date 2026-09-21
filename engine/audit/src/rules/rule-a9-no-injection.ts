@@ -2,13 +2,13 @@
 // A9 不纳注入（安全层 · 业务底线）
 // 检测 git diff 新增行中是否含 prompt injection 模式
 // evidenceMode: git-diff（纯正则检测，--silent 可跑）
-// v1.4.3: 追加中文注入检测正则（T01）
+// v1.5.0: 追加中文注入检测正则（T01）
 // 上下文感知扫描——字符串字面量/注释仅走 HIGH 置信度，
 // 消除 MEDIUM 模糊档在文案/注释中的整类误报（详见 splitCodeContext）。
 // ============================================================
 
 import { getAddedLines } from '@sofagent/core';
-import type { AuditContext, RuleCheck } from './types';
+import type { AuditContext, RuleScan, RuleStatus } from './types';
 
 /**
  * 脱敏 A9 details 中的命中行——防止密钥外泄。
@@ -182,7 +182,7 @@ export function scoreLineHighOnly(line: string, wasTransformed: boolean): number
 
 /**
  * 代码/正文上下文评分：完整模式（HIGH + MEDIUM）。
- * 与改动前 checkRuleA9 对单行的评分语义保持一致。
+ * 与改动前 scanA9 对单行的评分语义保持一致。
  */
 export function scoreFullContext(s: string): number {
   const norm = normalizeLine(s);
@@ -241,15 +241,9 @@ export function splitCodeContext(line: string): { code: string; literals: string
   return { code, literals, comments };
 }
 
-export function checkRuleA9(ctx: AuditContext): RuleCheck {
-  const rule: RuleCheck = {
-    name: 'A9 不纳注入',
-    number: 9,
-    status: 'PASS',
-    details: [],
-    evidenceMode: 'git-diff',
-    ruleClass: '业务底线',
-  };
+export function scanA9(ctx: AuditContext): RuleScan {
+  let status: RuleStatus = 'PASS';
+  const details: string[] = [];
 
   const { diffFiles } = ctx;
 
@@ -267,8 +261,10 @@ export function checkRuleA9(ctx: AuditContext): RuleCheck {
     // 安全文档本职是描述风险和绕过路径，注入检测对它们是 false positive 源泉
     if (file.path === 'SECURITY.md' || file.path === 'docs/LIMITATIONS.md') continue;
     if (file.path.startsWith('.sofagent/')) continue;
-    // 跳过测试文件——测试用例合法包含注入向量作为 fixture
-    if (file.path.includes('.test.') || file.path.includes('__tests__/') || file.path.endsWith('.fixture')) continue;
+    // v1.4.8 fresh-eyes（finding-11）：测试文件不再静默跳过——测试用例合法包含
+    // 注入向量作为 fixture，但文件命名完全在被审计 Agent 控制下（真实 payload
+    // 可借 *.test.ts/__tests__/*.fixture 静默全绿）；命中照常收集，在下方分级
+    // 判定处拆出降级 WARN 人工确认。
     const addedLines = getAddedLines(file);
     for (const line of addedLines) {
       // 上下文感知扫描：
@@ -334,51 +330,70 @@ export function checkRuleA9(ctx: AuditContext): RuleCheck {
     }
   }
   if (forgedAuditMsgs.length > 0) {
-    if (rule.status === 'PASS') rule.status = 'WARN';
-    rule.details.push(
+    if (status === 'PASS') status = 'WARN';
+    details.push(
       `检测到 commit message 含伪造审计签名模式（"${forgedAuditMsgs[0]}"）：commit message 不可自证审计结果，以 hook 输出为准。`
     );
   }
 
   // v1.0.5: score-based 分级判定
-  const failHits = hits.filter((h) => h.score >= 0.8);
-  const warnHits = hits.filter((h) => h.score >= 0.3 && h.score < 0.8);
+  // v1.4.8 fresh-eyes（finding-11）：测试文件命中拆出主判定——不 FAIL，统一降级
+  // WARN 提示人工确认（见下方降级块），不再静默豁免
+  const isTestFilePath = (p: string) =>
+    p.includes('.test.') || p.includes('__tests__/') || p.endsWith('.fixture');
+  const testFileHits = hits.filter((h) => isTestFilePath(h.file));
+  const mainHits = hits.filter((h) => !isTestFilePath(h.file));
+  const failHits = mainHits.filter((h) => h.score >= 0.8);
+  const warnHits = mainHits.filter((h) => h.score >= 0.3 && h.score < 0.8);
+
+  // v1.4.8 fresh-eyes（finding-11）：测试文件豁免命中降级 WARN——非静默放行
+  if (testFileHits.length > 0) {
+    if (status === 'PASS') status = 'WARN';
+    details.push(
+      `测试文件豁免命中（不 FAIL 但需人工确认）: ` +
+      testFileHits.slice(0, 5).map((h) => `${h.file}: "${sanitizeDetailLine(h.line)}" (${h.pattern})`).join('; ') +
+      (testFileHits.length > 5 ? ` 等 ${testFileHits.length} 处` : '') +
+      `。测试文件命名在被审计 Agent 控制下，请确认以上命中均为合法 fixture 而非真实注入 payload 夹带。`
+    );
+  }
 
   if (failHits.length > 0) {
-    rule.status = 'FAIL';
-    rule.details.push(
+    status = 'FAIL';
+    details.push(
       `检测到 ${failHits.length} 处高置信度 prompt injection 模式: ` +
       failHits.map((h) => `${h.file}: "${sanitizeDetailLine(h.line)}" (${h.pattern}, score=${h.score.toFixed(1)})`).join('; ')
     );
   }
-  if (warnHits.length > 0 && rule.status === 'PASS') {
-    rule.status = 'WARN';
-    rule.details.push(
+  if (warnHits.length > 0 && status === 'PASS') {
+    status = 'WARN';
+    details.push(
       `检测到 ${warnHits.length} 处可疑注入模式（建议人工审查）: ` +
       warnHits.map((h) => `${h.file}: "${sanitizeDetailLine(h.line)}" (${h.pattern}, score=${h.score.toFixed(1)})`).join('; ')
     );
   } else if (warnHits.length > 0) {
     // 已有 FAIL，WARN 追加为详情
-    rule.details.push(
+    details.push(
       `另有 ${warnHits.length} 处可疑注入模式（建议人工审查）: ` +
       warnHits.map((h) => `${h.file}: "${sanitizeDetailLine(h.line)}" (${h.pattern}, score=${h.score.toFixed(1)})`).join('; ')
     );
   }
 
   // P1-A3: diff 代码注释中的中等置信度注入模式 → 追加 WARN（不阻断提交，仅提示）
-  if (diffCommentWarns.length > 0) {
-    if (rule.status === 'PASS') rule.status = 'WARN';
-    const uniqueWarns = Array.from(new Set(diffCommentWarns.map((w) => `${w.file}:${w.pattern}`)));
-    rule.details.push(
+  // （v1.4.8 finding-11：测试文件内的注释命中同属 fixture 豁免面，不在此重复报警）
+  const codeCommentWarns = diffCommentWarns.filter((w) => !isTestFilePath(w.file));
+  if (codeCommentWarns.length > 0) {
+    if (status === 'PASS') status = 'WARN';
+    const uniqueWarns = Array.from(new Set(codeCommentWarns.map((w) => `${w.file}:${w.pattern}`)));
+    details.push(
       `检测到 ${uniqueWarns.length} 处代码注释中的可疑注入模式（P1-A3 扩展扫描）: ` +
       uniqueWarns.slice(0, 5).map((key) => {
-        const w = diffCommentWarns.find((d) => `${d.file}:${d.pattern}` === key)!;
+        const w = codeCommentWarns.find((d) => `${d.file}:${d.pattern}` === key)!;
         return `${w.file}: 注释含 "${w.line}..." (${w.pattern})`;
       }).join('; ') + (uniqueWarns.length > 5 ? ` 等 ${uniqueWarns.length} 处` : '')
     );
   }
 
-  return rule;
+  return { status, details };
 }
 
 /** 找到最佳匹配模式名 */

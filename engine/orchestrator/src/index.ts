@@ -1,4 +1,4 @@
-// ── API 分级契约（v1.4.3 四）────────────────────────────
+// ── API 分级契约（v1.5.0 四）────────────────────────────
 // `/* @public */`：公开 API——semver 锁定，变更必须 bump 版本 + CHANGELOG 记录
 //                 （外部依赖方与跨平台适配器只许 import 这一层）
 // `/* @internal */`：内部 API——不承诺稳定性，破坏性变更无需 bump
@@ -7,11 +7,11 @@
 /**
  * @sofagent/orchestrator
  *
- * 编排引擎 — 多 Agent 协作 / 工作流调度 / prompt 模板
+ * 编排模块 — 多 Agent 协作 / 工作流调度 / prompt 模板
  */
 
 // Composer
-/* @public */ export { composeWithReactAgent, composeWithDeepAgents, compose } from './composer';
+/* @public */ export { composeWithReactAgent, compose } from './composer';
 /* @public */ export type { ComposeInput, ComposeResult, ComposeVariant } from './composer';
 
 // DAG Runner（编排执行器 · v1.1.8 新增）
@@ -35,12 +35,44 @@
   WorkflowSubmitError,
   validateMergeCriteria,
   validateApprover,
+  validateVisibility,
   WORKFLOW_SCHEMA,
 } from './workflow/container';
 /* @public */ export type { WorkflowSubmitInput, WorkflowContainerHandle } from './workflow/container';
 // DSH workflow seam 互转契约位（v1.3.6 交付 ①——真实互转待 DSH 正式版）
 /* @public */ export { createDshSeamConverter, DSH_SEAM_FIELD_MAPPINGS } from './workflow/dsh-seam';
 /* @public */ export type { DshSeamConverter, DshSeamFieldMapping } from './workflow/dsh-seam';
+
+// Workflow CRUD（对象化读写 + version/lifecycle 联动 · G14）
+/* @public */ export {
+  workflowCreate,
+  workflowUpdate,
+  workflowNodeAdd,
+  workflowDiffPreview,
+  workflowMergeBranch,
+  diffLines,
+} from './crud/workflow-store';
+/* @public */ export type { StoredWorkflow, CrudResult, WorkflowMergeBranchInput } from './crud/workflow-store';
+/* @public */ export {
+  gateOrThrow,
+  SchemaGateError,
+  validateCronSchedule,
+  validateWorkflowCrons,
+  workflowCreateSchema,
+  workflowUpdateSchema,
+  workflowNodeAddSchema,
+  workflowDiffPreviewSchema,
+} from './crud/schema-gate';
+/* @public */ export type {
+  WorkflowCreateInput,
+  WorkflowUpdateInput,
+  WorkflowNodeAddInput,
+  WorkflowDiffPreviewInput,
+} from './crud/schema-gate';
+
+// G2 能力缺口分析（商业平台悬赏数据源）
+/* @public */ export { analyzeWorkflowGaps, DEFAULT_THRESHOLDS } from './gap-analyzer';
+/* @public */ export type { WorkflowGap, GapKind, GapAnalysisResult, GapThresholds } from './gap-analyzer';
 
 // Ontology 运行时层（v1.3.6 交付 ②——Action 注册表 / Schema 校验 / 注入管线）
 /* @public */ export {
@@ -364,7 +396,7 @@
 /* @public */ export { DEFAULT_L5_CONFIG } from './loop-agent/driver';
 /* @public */ export type { ConvergenceState, L5ConvergenceConfig } from './loop-agent/driver';
 
-// v1.3.3 交付 T04：Refine Agent（质量循环——复用 loop-agent 引擎，换 L2 质量判据）
+// v1.3.3 交付 T04：Refine Agent（质量循环——复用 loop-agent，换 L2 质量判据）
 /* @public */ export { runRefineLoop, createRefineOnConvergedCallback } from './refine-agent/refine-driver';
 /* @public */ export type { RefineDriverOptions, RefineLoopResult, RefineTriggerConfig, OnboardConvergedContext } from './refine-agent/refine-driver';
 /* @public */ export { judgeQuality, qualityFeedbackText, QUALITY_TARGET_FIELDS } from './refine-agent/quality-judge';
@@ -393,8 +425,10 @@
 } from './refine-agent/quality-rule-set';
 
 // v1.3.3 交付 T05：进化闭环（Benchmark 驱动 Dream Cycle）
-/* @public */ export { runOptimizationLoop } from './refine-agent/optimization-loop';
-/* @public */ export type {
+// v1.4.8 条目 10：降 @internal（§一-1 裁定——GitHub 全网 code search 对本包
+// 命中全部落本仓，无仓外 adopter；9 条测试与代码保留，仅撤公开承诺）。
+/* @internal */ export { runOptimizationLoop } from './refine-agent/optimization-loop';
+/* @internal */ export type {
   OptimizationLoopOptions,
   OptimizationIteration,
   OptimizationLoopResult,
@@ -783,6 +817,46 @@
 } from './commons/rule-promote';
 /* @public */ export type { PromoteInput, PromoteResult } from './commons/rule-promote';
 
+// v1.4.5 第七章二/三：进化模块实证收口——采样数据桥 + L4 工具层自进化
+/* @public */ export {
+  readEvolutionSamples,
+  readLatestEvolutionSample,
+  correctionBackflowToRatings,
+  repeatFailuresToCases,
+  toolCandidatesFromSamples,
+  logPromotionsToSkillImpact,
+  resolveEvolutionSamplesDir,
+} from './evolution/evolution-samples';
+/* @public */ export type {
+  EvolutionSampleFile,
+  EvalCurvePoint,
+  CorrectionBackflow,
+  LowScoreFeedback,
+  RepeatFailure,
+  ToolUsageStat,
+  ToolCandidate,
+} from './evolution/evolution-samples';
+/* @public */ export {
+  nominateToolCandidate,
+  reviewToolCandidate,
+  registerApprovedTool,
+  getApprovedEvolvedTools,
+  listToolEvolutionLedger,
+  resolveToolEvolutionLedgerPath,
+  TOOL_STATUS_FLOW,
+} from './evolution/tool-evolution';
+/* @public */ export type {
+  ToolEvolutionEntry,
+  ToolCandidateStatus,
+  EvolvedToolRuntime,
+  NominateInput,
+  NominateResult,
+  ReviewInput,
+  ReviewResult,
+  RegisterInput,
+  RegisterResult,
+} from './evolution/tool-evolution';
+
 // v1.3.4 增量：编排层与执行层分离
 /* @public */ export {
   createExecutionBackend,
@@ -837,6 +911,25 @@
 } from './fde-session';
 /* @public */ export type { FDESessionContext, FDESessionMeta } from './fde-session';
 
+// v1.4.5 第八章：FDE 进场记忆目录工程化（10 文件结构 + session-stop 捕获 + 跨 session 恢复）
+/* @public */ export {
+  FDE_SESSION_TEN_FILES,
+  initFDEClientSession,
+  captureFDEClientSession,
+  restoreFDEClientSession,
+  isFDEClientInitialized,
+  listFDEClients,
+  fdeClientSessionsRoot,
+  fdeClientSessionDir,
+  parseFDEClientContext,
+} from './fde-session-mgr';
+/* @public */ export type {
+  FDEClientMeta,
+  FDEClientContext,
+  FDESessionState,
+  FDERestoreResult,
+} from './fde-session-mgr';
+
 // v1.3.5 交付 5 #4：FDE 节点注册表（yaml schema 解析——daemon 消费方经本出口 import）
 /* @public */ export {
   parseFDERegistry,
@@ -873,647 +966,30 @@
 } from './execution-backends/dsh-backend';
 /* @public */ export { createTrajectoryCollector } from './execution-backends/trajectory';
 /* @public */ export type { TrajectoryRecord, TrajectoryCollector } from './execution-backends/trajectory';
-
-// v1.3.6 交付⑥⑦：训练协议三约定 + 训练预算控制
+// ============================================================
+// v1.4.8 第 7 批 · 训练模块拆包：train 导出迁至独立包 @sofagent/train
+// ------------------------------------------------------------
+// 原 101 个 `export ... from './train/...'` 块（562 个 @public 符号）整体移除——
+// train 源码已迁至 engine/train/（包名 @sofagent/train）。
+//
+// ⚠️ 破坏性变更（迁移命令）：
+//   改前  import { createTrainJob } from '@sofagent/orchestrator';
+//   改后  import { createTrainJob } from '@sofagent/train';
+//   （子路径直取同源外迁：'@sofagent/orchestrator/train/<file>' → '@sofagent/train/<file>'）
+//   orchestrator 包 exports 已删除 './train' 子路径——旧路径立即 MODULE_NOT_FOUND，
+//   不设兼容层、不保留别名（用户已明确接受破坏性 API 变更）。
+//
+// 唯一例外（保留不破）：quantify-core 三个符号本是 FDE 侧 ROI 公式、
+// 被 train 反向引用构成依赖环——已搬至 fde/quantify-core.ts，此处改指该文件，
+// 符号集不变（仓外 `orch.computeQuantification(...)` 照常可用）。
+// ============================================================
 /* @public */ export {
-  TrainBudgetSchema,
-  TrainJobSchema,
-  validateTrainJob,
-  buildTrainSpawnArgs,
-  parseTrainEvent,
-  parseTrainEventStream,
-  createSignalController,
-} from './train/train-protocol';
+  computeQuantification,
+} from './fde/quantify-core';
 /* @public */ export type {
-  TrainBudget,
-  TrainJob,
-  TrainJobValidation,
-  TrainEvent,
-  TrainEventParseResult,
-  SignalAction,
-  SignalController,
-  SignalControllerOptions,
-} from './train/train-protocol';
-/* @public */ export {
-  checkBudget,
-  createTrainBudgetMonitor,
-  buildBudgetReport,
-  trainJobsPath,
-  loadTrainJobs,
-  saveTrainJobs,
-  upsertTrainJob,
-  findTrainJob,
-  emitBudgetExceededAudit,
-} from './train/train-budget';
-/* @public */ export type {
-  TrainUsage,
-  BudgetViolation,
-  BudgetCheckResult,
-  BudgetPause,
-  BudgetHumanDecision,
-  TrainBudgetMonitor,
-  TrainBudgetReport,
-  TrainJobState,
-} from './train/train-budget';
-
-// ============================================================
-// v1.4.1 块二：训练任务编排层（train-job 生命周期 · 引擎骨架）
-// ============================================================
-/* @public */ export {
-  TRAIN_JOB_STATUSES,
-  TRAIN_JOB_TRANSITIONS,
-  canTransition,
-  isTerminalStatus,
-  trainJobDir,
-  trainJobFilePaths,
-  generateTrainJobId,
-  loadTrainJobRecord,
-  saveTrainJobRecord,
-  listTrainJobRecords,
-  createTrainJob,
-  applyTrainJobTransition,
-  transitionTrainJob,
-  appendTrainEventLine,
-  readTrainEvents,
-  // v1.4.3 第一章：受守卫查询（MCP train_status/train_list 消费——企业隔离面）
-  getJobGuarded,
-  readTrainEventsGuarded,
-  listJobsGuarded,
-} from './train/train-job';
-/* @public */ export type {
-  TrainJobStatus,
-  TrainJobCheckpoint,
-  TrainJobRecord,
-  CreateTrainJobInput,
-  CreateTrainJobResult,
-  TrainJobTransitionPatch,
-} from './train/train-job';
-/* @public */ export {
-  createTrainScheduler,
-  getTrainJobRecord,
-  getTrainProgress,
-} from './train/train-scheduler';
-/* @public */ export type {
-  RegisterHeartbeat,
-  SpawnFn,
-  TrainSchedulerOptions,
-  SubmitTrainJobInput,
-  SubmitTrainJobResult,
-  TrainRunHandle,
-  TrainMonitorSnapshot,
-  CancelTrainJobResult,
-  ResumeTrainJobResult,
-  ResumeTrainJobOutcome,
-} from './train/train-scheduler';
-
-// ============================================================
-// v1.4.3 第一章：训练监控与 GPU 队列（gpu-queue · webhook 推送 · dashboard 落盘）
-// ============================================================
-/* @public */ export {
-  createGpuQueue,
-  estimateTrainVramMiB,
-} from './train/gpu-queue';
-/* @public */ export type {
-  GpuQueueEntry,
-  GpuRunningEntry,
-  GpuQueueSnapshot,
-  GpuSlotRelease,
-  GpuQueueOptions,
-  GpuQueue,
-} from './train/gpu-queue';
-/* @public */ export {
-  buildTrainEventMessage,
-  extractPayloadFromRecord,
-  pushTrainEvent,
-} from './train/train-webhook';
-/* @public */ export type {
-  TrainWebhookPlatform,
-  TrainEventType,
-  TrainWebhookTarget,
-  TrainEventPayload,
-  PushFn,
-} from './train/train-webhook';
-/* @public */ export {
-  trainStatusSinkPath,
-  trainHealthSinkPath,
-  buildTrainStatusBoard,
-  buildTrainHealthReport,
-  flushTrainDashboard,
-} from './train/dashboard-sink';
-/* @public */ export type {
-  TrainStatusEntry,
-  TrainStatusBoard,
-  FailureReasonEntry,
-  TrainHealthReport,
-} from './train/dashboard-sink';
-
-// ============================================================
-// v1.4.1 块七：训练中断回收 + 引擎崩溃恢复（process-guard · crash-recovery）
-// ============================================================
-/* @public */ export {
-  createProcessGuard,
-  snapshotGpuMemory,
-  killProcessGroup,
-  abnormalReclaim,
-  cleanupTmpFiles,
-  emitTrainAbnormalExit,
-  detectTrainOrphans,
-} from './train/process-guard';
-/* @public */ export type {
-  ProcessGuard,
-  ProcessGuardOptions,
-  KillFn,
-  ExecFn,
-  NowFn,
-  StalledProcess,
-  GpuMemorySnapshot,
-  ReclaimTarget,
-  ReclaimStep,
-  ReclaimResult,
-  ReclaimOptions,
-  ProcessInfo,
-  OrphanProcess,
-  OrphanDetectOptions,
-} from './train/process-guard';
-/* @public */ export {
-  runCrashRecoveryScan,
-  appendEngineCrashLog,
-  readEngineCrashLog,
-  engineCrashLogPath,
-  applyRecoveryDecision,
-  TRAIN_RECOVERY_DECISIONS,
-  checkpointManifestPath,
-  loadCheckpointManifest,
-  recordCheckpointEntry,
-} from './train/crash-recovery';
-/* @public */ export type {
-  ProbeFn,
-  CrashRecoveryFinding,
-  CrashRecoveryScanResult,
-  TrainRecoveryDecision,
-  RecoveryDecisionResult,
-  EngineCrashLogEntry,
-  CheckpointManifest,
-  CheckpointManifestEntry,
-} from './train/crash-recovery';
-
-// ============================================================
-// v1.4.1 块三：训练任务审计（train_job 事件 + HMAC 链 + 失败回滚）
-// ============================================================
-/* @public */ export {
-  STATUS_TO_EVENT,
-  sanitizeDeep,
-  computeDataSourceHash,
-  trainAuditPath,
-  emitTrainAudit,
-  readTrainAudit,
-  checkTrainAuditChain,
-  rollbackFailedTrainJob,
-  failTrainJobWithRollback,
-} from './train/train-audit';
-/* @public */ export type {
-  TrainAuditEventType,
-  TrainAuditEntry,
-  EmitTrainAuditInput,
-  TrainAuditChainStatus,
-  TrainAuditChainResult,
-  TrainRollbackResult,
-} from './train/train-audit';
-
-// ============================================================
-// v1.4.1 块五：训练可复现指纹（冻结 + 三态校验 + 复现差异报告 + 版本锁定）
-// ============================================================
-/* @public */ export {
-  EnvSnapshotSchema,
-  TrainFingerprintBodySchema,
-  TrainFingerprintSchema,
-  computeDatasetHash,
-  resolveDatasetVersion,
-  trainFingerprintPath,
-  freezeTrainFingerprint,
-  loadTrainFingerprint,
-  verifyTrainFingerprint,
-  reproduceCheck,
-  assertDatasetVersionLocked,
-  buildDatasetLockEntry,
-} from './train/train-fingerprint';
-/* @public */ export type {
-  EnvSnapshot,
-  TrainFingerprintBody,
-  TrainFingerprint,
-  FreezeTrainFingerprintInput,
-  TrainFingerprintVerifyStatus,
-  TrainFingerprintVerifyResult,
-  ReproduceContext,
-  FingerprintDiff,
-  ReproduceCheckResult,
-  DatasetVersionLockResult,
-} from './train/train-fingerprint';
-
-// ============================================================
-// v1.4.1 块六：训练产物完整性（逐文件签名 manifest + 加载前校验闸门）
-// ============================================================
-/* @public */ export {
-  ArtifactFileEntrySchema,
-  ArtifactManifestBodySchema,
-  ArtifactManifestSchema,
-  hashArtifactFile,
-  artifactManifestPath,
-  signArtifacts,
-  loadArtifactManifest,
-  ArtifactSigningError,
-  ArtifactSigningWriteError,
-} from './train/artifact-signing';
-/* @public */ export type {
-  ArtifactFileEntry,
-  ArtifactManifestBody,
-  ArtifactManifest,
-} from './train/artifact-signing';
-/* @public */ export {
-  verifyArtifacts,
-  verifyManifestIntegrity,
-} from './train/artifact-verify';
-/* @public */ export type {
-  ManifestIntegrity,
-  ArtifactFileCheck,
-  ArtifactVerifyReport,
-} from './train/artifact-verify';
-
-// ============================================================
-// 训练产物 → 模型注册自动衔接（训练闭环最后一步）
-// ============================================================
-/* @public */ export {
-  registerTrainArtifact,
-} from './train/artifact-register';
-/* @public */ export type {
-  RegisterTrainArtifactInput,
-  ArtifactRegisterResult,
-  ArtifactRegisterAction,
-  MountSuggestion,
-} from './train/artifact-register';
-
-// ============================================================
-// 多基座对比训练（同数据多基座并行 → ROI 排序——选型数据支撑）
-// ============================================================
-/* @public */ export {
-  submitCompareJobs,
-  buildCompareReport,
-} from './train/train-compare';
-/* @public */ export type {
-  CompareBaseSpec,
-  TrainCompareInput,
-  CompareBaseResult,
-  RoiRankEntry,
-  TrainCompareReport,
-  TrainCompareDeps,
-  BuildCompareReportInput,
-} from './train/train-compare';
-
-// ============================================================
-// v1.4.1 块一：训练环境准备（GPU 检测双分支 + 就绪报告）
-// ============================================================
-/* @public */ export {
-  parseCudaVersion,
-  parseGpuQueryCsv,
-  parseMetalInfo,
-  detectCudaGpu,
-  detectMetalGpu,
-  defaultMlxInstallDir,
-  prepareTrainEnv,
-  DEFAULT_CUDA_FRAMEWORK,
-  DEFAULT_MLX_FRAMEWORK,
-} from './train/train-env';
-/* @public */ export type {
-  ExecResult,
-  ExecFn as TrainEnvExecFn,
-  TrainEnvDeps,
-  GpuInfo,
-  TrainEnvReport,
-} from './train/train-env';
-
-// ============================================================
-// v1.4.1 块四：训练隔离边界（enterpriseId 全链路守卫）
-// ============================================================
-/* @public */ export {
-  checkEnterpriseAccess,
-  assertEnterpriseAccess,
-  isSafePathSegment,
-  assertSafePathSegment,
-  isPathInside,
-  resolveEnterpriseDir,
-  EnterpriseAccessDeniedError,
-} from './train/isolation-guard';
-/* @public */ export type {
-  EnterpriseAccessErrorCode,
-  EnterpriseAccessError,
-  EnterpriseAccessDecision,
-  GuardedRead,
-} from './train/isolation-guard';
-
-// ============================================================
-// v1.4.1 块四：数据主权清理（覆写清理）
-// ============================================================
-/* @public */ export {
-  wipeFile,
-  wipeDirectoryContents,
-  cleanupEnterpriseTrainData,
-} from './train/cleanup';
-/* @public */ export type {
-  FileCleanupResult,
-  SkippedItem,
-  DirObfuscation,
-  CleanupReport,
-  CleanupOptions,
-} from './train/cleanup';
-
-// ============================================================
-// v1.4.1 块八：训练安全基线（路径白名单 + 注入过滤 + 凭据脱敏 + 自检）
-// ============================================================
-/* @public */ export {
-  validateTrainPath,
-  TrainPathSchema,
-  containsShellMetachars,
-  sanitizeHyperparamsForSpawn,
-  isCredentialKey,
-  maskCredentials,
-  runSandboxSelfCheck,
-} from './train/security-baseline';
-/* @public */ export type {
-  TrainPathRejectionCode,
-  TrainPathValidation,
-  SanitizedValue,
-  HyperparamsSanitizeResult,
-} from './train/security-baseline';
-
-// ============================================================
-// v1.4.2 章一+章二：数据管道与版本管理（异构接入 → 训练集 → dataset_version）
-// ============================================================
-/* @public */ export {
-  DEFAULT_EMPTY_MARKERS,
-  parseCsv,
-  ingestCsv,
-  ingestExcel,
-  ingestJson,
-  ingestText,
-  ingestFile,
-  inferCellType,
-  normalizeValue,
-  unzipEntries,
-  parseSharedStrings,
-  parseSheetXml,
-  excelColumnToIndex,
-} from './train/data-ingest';
-/* @public */ export type {
-  CellValue,
-  IngestRecord,
-  IngestOptions,
-  IngestResult,
-} from './train/data-ingest';
-/* @public */ export {
-  isReadonlySql,
-  inferColumns,
-  parseDbFlavor,
-  makeDefaultQueryFn,
-  pullFromDb,
-  pullFromApi,
-  extractItems,
-  getPath,
-  defaultFetchFn,
-} from './train/db-source';
-/* @public */ export type {
-  DbQueryResult,
-  QueryFn,
-  ApiFetchResult,
-  FetchFn,
-  DbFlavor,
-  DbIngestResult,
-  PullFromDbInput,
-  PullFromApiInput,
-} from './train/db-source';
-/* @public */ export {
-  inferColumnMapping,
-  sanitizeCell,
-  defaultSampleSanitize,
-  buildDataset,
-  buildAndPersistDataset,
-  datasetDir,
-  generateDatasetId,
-} from './train/dataset-builder';
-/* @public */ export type {
-  DatasetAlgorithm,
-  SftSample,
-  DpoSample,
-  RlSample,
-  DatasetSample,
-  DatasetLine,
-  ColumnMapping,
-  BuildDatasetOptions,
-  BuildDatasetResult,
-  BuildAndPersistInput,
-  BuildAndPersistResult,
-  SampleSanitizeFn,
-} from './train/dataset-builder';
-/* @public */ export {
-  datasetVersionsPath,
-  recordDatasetVersion,
-  readDatasetVersions,
-  listDatasetVersions,
-  getDatasetVersion,
-  diffDatasetVersions,
-} from './train/dataset-version';
-/* @public */ export type {
-  DatasetVersionRecord,
-  RecordDatasetVersionInput,
-  DatasetVersionDiff,
-} from './train/dataset-version';
-/* @public */ export {
-  requiredFieldsOf,
-  computeLabelDistribution,
-  validateDataset,
-} from './train/dataset-validator';
-/* @public */ export type {
-  DatasetValidatorOptions,
-  DatasetViolationCode,
-  DatasetViolation,
-  DatasetWarning,
-  DatasetValidationResult,
-} from './train/dataset-validator';
-
-// ============================================================
-// v1.4.2 章三：训练中 eval 闭环（复用 Benchmark · 阈值外部化）
-// ============================================================
-/* @public */ export {
-  DEFAULT_EVAL_THRESHOLDS,
-  computeScoreStats,
-  decideFromScores,
-  runTrainEval,
-  compareEvalReports,
-} from './train/train-eval-loop';
-/* @public */ export type {
-  EvalThresholds,
-  EvalDecision,
-  TrainEvalReport,
-  TrainEvalLoopDeps,
-  RunTrainEvalInput,
-  RunTrainEvalResult,
-  EvalScoreStats,
-  EvalComparison,
-} from './train/train-eval-loop';
-
-// ============================================================
-// v1.4.2 章四：训练环境管理（train env init / train doctor / 版本清单 / 模型下载）
-// ============================================================
-/* @public */ export {
-  makeDefaultExecFn,
-} from './train/train-env';
-/* @public */ export {
-  TRAIN_ENV_MANIFEST_FILE,
-  trainEnvManifestPath,
-  trainEnvInit,
-  trainDoctor,
-  DEFAULT_BASE_MODEL_CANDIDATES,
-} from './train/env-manager';
-/* @public */ export type {
-  TrainEnvManifest,
-  EnvCheckStep,
-  TrainEnvInitResult,
-  EnvManagerDeps,
-  TrainDoctorReport,
-  ModelCacheEntry,
-} from './train/env-manager';
-/* @public */ export {
-  // v1.4.3 第八章：训练环境反作弊基线（reward hacking 四形态双防线）
-  DEFAULT_NETWORK_ALLOWLIST,
-  DEFAULT_ANTICHEAT_CONFIG,
-  loadAnticheatConfig,
-  stripDatasetGitOnMount,
-  buildGitDisabledEnv,
-  createTrainNetworkGate,
-  checkAnticheatBaseline,
-} from './train/env-manager';
-/* @public */ export type {
-  AnticheatConfig,
-  DatasetMountSource,
-  AnticheatCheckResult,
-} from './train/env-manager';
-
-// ============================================================
-// v1.4.3 第四章：训练需求推导 + 模板库（train analyze / templates / MoE 防护 / RL 配方）
-// ============================================================
-/* @public */ export {
-  analyzeTrainNeed,
-  deriveTrainScenario,
-  findInterviewNode,
-  pickDefaultTemplate,
-  saveTrainAnalyzeReport,
-  trainAnalyzeReportPath,
-} from './train/train-analyze';
-/* @public */ export type {
-  TrainGoalDerivation,
-  TrainAnalyzeResult,
-  TrainAnalyzeOptions,
-} from './train/train-analyze';
-/* @public */ export {
-  TRAIN_SCENARIO_TEMPLATES,
-  findTrainTemplate,
-  listTrainTemplates,
-  instantiateTrainTemplate,
-  validateMoeTargetModules,
-  MOE_REQUIRED_EXPERT_MODULES,
-} from './train/train-templates';
-/* @public */ export type {
-  TrainScenario,
-  TrainMethod,
-  TrainScenarioTemplate,
-  InstantiateTrainTemplateInput,
-  QloraTemplateInstance,
-  PlainTemplateInstance,
-  TrainTemplateInstance,
-  MoeValidationResult,
-  MoeValidationError,
-  MoeValidationOk,
-} from './train/train-templates';
-/* @public */ export {
-  instantiateRlTemplate,
-  findRlTemplate,
-  RL_TEMPLATES,
-  SCALE_ADVANTAGE_NORMALIZATION,
-  SCALE_CISPO_CLIP_EPS,
-  SCALE_SKIP_ZERO_VARIANCE,
-  SCALE_WARMUP_RATIO,
-} from './train/rl-templates';
-/* @public */ export type {
-  RlTemplate,
-  RlRecipeId,
-  RlTemplateInstance,
-  RlTemplateInstantiateInput,
-} from './train/rl-templates';
-/* @public */ export {
-  buildQloraTemplate,
-  DENSE_TARGET_MODULES,
-  MOE_TARGET_MODULES,
-} from './train/qlora-template';
-/* @public */ export type {
-  QloraTemplateInput,
-  QloraOumiConfig,
-} from './train/qlora-template';
-
-// ============================================================
-// v1.4.3 第二章：训练失败诊断（七类分类 + 上下文 + 处方）
-// ============================================================
-/* @public */ export {
-  diagnoseTrainFailure,
-  classifyTrainFailure,
-  saveTrainDiagnoseReport,
-  trainDiagnoseReportPath,
-  FAILURE_CATEGORIES,
-  FAILURE_PRESCRIPTIONS,
-} from './train/train-diagnose';
-/* @public */ export type {
-  TrainFailureCategory,
-  FailureCategoryDef,
-  FailurePrescription,
-  DiagnoseContext,
-  TrainDiagnoseReport,
-} from './train/train-diagnose';
-
-// ============================================================
-// v1.4.3 第三章：训练沙箱（进程级隔离——扩展 v1.3.7 沙箱）
-// ============================================================
-/* @public */ export {
-  createTrainSandbox,
-  createTrainPathGuard,
-  trainSandboxOutputDir,
-} from './train/train-sandbox';
-/* @public */ export type {
-  TrainSandboxOptions,
-  TrainPathGuard,
-  PathAccess,
-  TrainSandbox,
-  TrainSandboxProfile,
-} from './train/train-sandbox';
-/* @public */ export {
-  DEFAULT_CHUNK_BYTES,
-  makeDefaultFetchRange,
-  defaultFreeSpace,
-  modelDir,
-  modelFilePath,
-  modelManifestPath,
-  partPaths,
-  readPartMeta,
-  preflightDiskSpace,
-  downloadModel,
-} from './train/model-downloader';
-/* @public */ export type {
-  RangeResponse,
-  FetchRangeFn,
-  FreeSpaceFn,
-  ModelManifest,
-  PartMeta,
-  DiskPreflightResult,
-  DownloadModelInput,
-  DownloadModelResult,
-} from './train/model-downloader';
+  QuantificationMetrics,
+  QuantifyInput,
+} from './fde/quantify-core';
 
 // ============================================================
 // v1.3.6 交付⑨：验收条件定义与执行（机器可判定验收 · 软约束先行）
@@ -1565,6 +1041,32 @@
   CeilingCheckResult,
 } from './gateway/permission-ceiling';
 
+// ── permission 三模块（v1.3.7 判定链：risk-classifier → scenario-router → policy-engine）──
+// v1.5.0 TASK-26: 顶层再导出接通——此前仅 permission/index.ts 桶导出，顶层零出口，
+// 包外（MCP 权限守卫等）无法消费，三模块成「建好未接线」孤岛。
+/* @public */ export {
+  createPolicyEngine,
+  createScenarioRouter,
+  classifyRisk,
+  riskToDefaultAction,
+  BUILTIN_SCENARIOS,
+} from './permission';
+/* @public */ export type {
+  PermissionRequest,
+  PolicyAction,
+  DecisionLogEntry,
+  ElevationGrant,
+  TeamPolicy,
+  CommonsPolicy,
+  Scenario,
+  ScenarioMatchRequest,
+  ScenarioMatchResult,
+  TaskType,
+  DataDomain,
+  ActionType,
+  RiskLevel,
+} from './permission';
+
 // ============================================================
 // v1.3.9（二）：meta-harness 多 harness 统一编排
 // ============================================================
@@ -1608,42 +1110,32 @@
 } from './worklog';
 
 // ============================================================
-// v1.4.2 章五+章六：训练 dry-run（失败前预防）+ 训练报告（客户可读交付物）
+// v1.4.5 第七章四：技能进化提案审计与溯源（skill-evolution · WikiSkill 收编）
 // ============================================================
 /* @public */ export {
-  estimateVram,
-  runDryrun,
-} from './train/train-dryrun';
-/* @public */ export type {
-  VramEstimateInput,
-  VramEstimate,
-  DryrunCheck,
-  DryrunResult,
-  DryrunInput,
-} from './train/train-dryrun';
+  skillEvolutionDir,
+  skillImpactLedgerPath,
+  appendSkillImpactEntry,
+  readSkillImpactLedger,
+  historicalBestScore,
+  readRejectedProposals,
+} from './skill-evolution/skill-impact-ledger';
+/* @public */ export type { SkillImpactEntry, ProposalVerdict } from './skill-evolution/skill-impact-ledger';
 /* @public */ export {
-  sigmoid,
-  fitSigmoid,
-  extrapolate,
-  suggestNextPilotCompute,
-} from './train/scale-curve';
-/* @public */ export type {
-  ScaleCurvePoint,
-  SigmoidParams,
-  FitQuality,
-  FitResult,
-  Extrapolation,
-} from './train/scale-curve';
+  runEvalGate,
+  evalRecordsForProposal,
+} from './skill-evolution/eval-gate';
+/* @public */ export type { EvalGateInput, EvalGateResult } from './skill-evolution/eval-gate';
 /* @public */ export {
-  computeQuantification,
-  generateTrainReport,
-  trainReportsDir,
-  trainReportPaths,
-} from './train/train-report';
-/* @public */ export type {
-  QuantificationMetrics,
-  QuantifyInput,
-  TrainReportInput,
-  TrainReportResult,
-  TrainReportJson,
-} from './train/train-report';
+  isolationViolationsPath,
+  isEvolutionKnowledgePath,
+  guardKnowledgeAccess,
+  readIsolationViolations,
+} from './skill-evolution/isolation-guard';
+/* @public */ export type { ContextRole, IsolationViolation } from './skill-evolution/isolation-guard';
+/* @public */ export {
+  SOLVES_FIELD,
+  parseSolvesField,
+  ensureSolvesField,
+} from './skill-evolution/solves-frontmatter';
+/* @public */ export type { FrontmatterSolves } from './skill-evolution/solves-frontmatter';

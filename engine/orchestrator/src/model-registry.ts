@@ -15,12 +15,15 @@
 // 人审语义（对齐 v1.3.5 promote_ab）：
 //   - 灰度（percent < 100）：可逆运维操作，直接生效
 //   - 晋升（percent = 100）与退役/恢复：🔴 强制人审，humanConfirmed ≠ true 挂起
+//   - 回滚（模型级 rollbackModel）：🔴 强制人审——回滚翻转**活动模型**，与晋升同强度
+//   - 回滚（版本级 rollbackWeightsVersion）：免人审——只回拨同一模型的 manifest.current 指针，
+//     权重文件未动、可由版本清单本身回滚；与模型级**不是对齐关系**，是既定差异
 // ============================================================
 
 import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { atomicWriteSync } from '@sofagent/core';
-import { checkWeightsDir, type WeightsManifest } from './weights-manifest';
+import { checkWeightsDir, hashDir, type WeightsManifest } from './weights-manifest';
 
 // ============================================================
 // 类型定义
@@ -101,6 +104,8 @@ export interface ModelRegistryEvent {
   percent?: number;
   /** 变更前活动模型（switch/promote/rollback 时有值——回滚依据） */
   previousModel?: string;
+  /** 是否经人工确认（true=人工确认执行 / false=无确认——v1.4.7 接管链审计可追溯） */
+  humanConfirmed?: boolean;
   /** 操作备注 */
   comment?: string;
 }
@@ -316,9 +321,14 @@ export function switchModel(
     return { ok: false, awaitingHuman: false, message: `模型「${modelName}」已退役`, issues: ['退役模型不参与路由——先 restore 恢复'] };
   }
   if (entry.source === 'local-path') {
+    // 前置判空：v1.4.1 扩展位时代的旧条目可能缺 localWeights.dir——
+    // 直接落 checkWeightsDir('') 会报误导性的「缺 manifest.json」，先给准确提示
+    if (typeof entry.localWeights?.dir !== 'string' || entry.localWeights.dir.trim() === '') {
+      return { ok: false, awaitingHuman: false, message: `模型「${modelName}」注册条目缺 localWeights.dir（v1.4.4 前旧条目）——请重新注册补全权重目录信息`, issues: ['条目缺 localWeights.dir——重新注册即修复'] };
+    }
     // 本地权重模型：切换前重校验权重目录（当前版本在场 + 哈希一致）——
     // 校验通过即可挂载（加载由 vLLM/Ollama/openai-compatible 本地端点承接）
-    const check = checkWeightsDir(entry.localWeights?.dir ?? '', { verifyHash: true });
+    const check = checkWeightsDir(entry.localWeights.dir, { verifyHash: true });
     if (!check.ok) {
       return { ok: false, awaitingHuman: false, message: `本地权重校验失败：${check.issues.join('；')}`, issues: check.issues };
     }
@@ -342,11 +352,16 @@ export function switchModel(
     };
   }
 
-  registry.active[lane] = modelName;
+  // v1.4.7 模型接管链堵断（方案 A）：灰度（percent<100）只写 canaryPercent 不动
+  // registry.active——active 切换仅发生在 percent=100 晋升路径（人审门控保持）。
+  // 历史漏洞：门控只在 pct===100 触发，percent=99 绕开后无条件写 active——
+  // 两次调用（99 灰度 + rollback）即可零人审完成模型接管。灰度归灰度，active
+  // 不被灰度污染；灰度路由消费 canaryPercent 决策。
   if (pct < 100) {
     entry.status = 'canary';
     entry.canaryPercent = pct;
   } else {
+    registry.active[lane] = modelName;
     entry.status = 'active';
     entry.canaryPercent = undefined;
     // 被替换的原活动模型降回 registered（退役除外）
@@ -363,6 +378,7 @@ export function switchModel(
     model: modelName,
     lane,
     percent: pct,
+    humanConfirmed: options.humanConfirmed === true,
     ...(previousModel && previousModel !== modelName ? { previousModel } : {}),
     ...(options.comment ? { comment: options.comment } : {}),
   };
@@ -374,7 +390,7 @@ export function switchModel(
     awaitingHuman: false,
     message: pct === 100
       ? `「${modelName}」已晋升为 ${lane} 全量活动模型${previousModel && previousModel !== modelName ? `（替换 ${previousModel}）` : ''}`
-      : `「${modelName}」进入 ${lane} 灰度（${pct}% 流量）`,
+      : `「${modelName}」进入 ${lane} 灰度（${pct}% 流量，活动模型不变）`,
     event,
     issues: [],
   };
@@ -382,7 +398,11 @@ export function switchModel(
 
 /**
  * 回滚——把档位活动模型恢复为上一个（从事件历史找最近一次 switch/promote 的 previousModel）。
- * 回滚本身是止损操作，直接生效（不要求人审——对齐「异常 → 一键回滚」语义）。
+ * 🔴 v1.4.7 模型接管链堵断：回滚改为强制人审（human_confirmed=true 才执行）——
+ * 与 snapshot_restore 同强度。历史语义「止损直接生效不要求人审」是接管链的一环
+ * （percent=99 写 active + rollback 翻转 = 两次调用零人审完成模型接管）；
+ * 实勘全仓无 daemon 内部自动回滚调用点（唯一生产调用方是 MCP model_switch），
+ * 故一刀切全人审，无内部白名单旁路。止损紧急度由人审响应速度承担，不由校验降级承担。
  */
 export function rollbackModel(lane: 'executor' | 'pipeline', options: ModelRegistryOpOptions): ModelRegistryOpResult {
   const registry = loadRegistry(options.dataDir);
@@ -409,6 +429,16 @@ export function rollbackModel(lane: 'executor' | 'pipeline', options: ModelRegis
     return { ok: false, awaitingHuman: false, message: `回滚目标「${target}」不存在或已退役`, issues: [] };
   }
 
+  // 🔴 强制人审——回滚翻转会改变活动模型，与晋升同强度（human_confirmed=true 才执行）
+  if (options.humanConfirmed !== true) {
+    return {
+      ok: true,
+      awaitingHuman: true,
+      message: `回滚 ${lane}（${current} → ${target}）需人工确认（human_confirmed=true 才执行）——确认止损目标无误？`,
+      issues: [],
+    };
+  }
+
   const now = new Date().toISOString();
   registry.active[lane] = target;
   targetEntry.status = 'active';
@@ -425,6 +455,7 @@ export function rollbackModel(lane: 'executor' | 'pipeline', options: ModelRegis
     model: target,
     lane,
     previousModel: current,
+    humanConfirmed: options.humanConfirmed === true,
     ...(options.comment ? { comment: options.comment } : {}),
   };
   registry.events.push(event);
@@ -443,8 +474,18 @@ export function rollbackModel(lane: 'executor' | 'pipeline', options: ModelRegis
  * 权重版本级回滚——local-path 模型切回上一权重版本（manifest.current 指针回拨）。
  *
  * 与 rollbackModel（模型级）的分工：模型级回滚换模型条目，版本级回滚换同一模型
- * 的权重版本（新训 v2 不如 v1 时用）。止损语义对齐 rollbackModel：直接生效不要求人审。
+ * 的权重版本（新训 v2 不如 v1 时用）。
+ *
+ * 🔴 人审语义：版本级**免人审**（直接生效）——这是版本级与模型级的**既定差异，不是对齐关系**。
+ * 版本级只回拨 manifest.current 指针、权重文件未动、可由版本清单本身回滚 ⇒ 止损语义下无须人工确认；
+ * 模型级 rollbackModel 因翻转**活动模型**而与晋升同强度强制人审（humanConfirmed === true 才执行）。
+ * 两侧差异已列入本文件头部「人审语义」清单（缺项正是本条被误读的成因）。
+ *
  * git snapshot 兜底由上层调用方决定（版本清单本身是回滚依据，文件未动）。
+ *
+ * 供应链红线：回滚目标版本哈希强制校验——checkWeightsDir 只验 current 版本，
+ * 回滚恰好要指向非 current 的历史版本，故对目标版本目录单独 hashDir 直验
+ * （注册/切换/回滚三条版本切换路径全部验哈希，无一旁路）。
  */
 export function rollbackWeightsVersion(
   modelName: string,
@@ -460,7 +501,7 @@ export function rollbackWeightsVersion(
   }
 
   const dir = entry.localWeights.dir;
-  const check = checkWeightsDir(dir, { verifyHash: false });
+  const check = checkWeightsDir(dir, { verifyHash: true });
   if (!check.ok || !check.manifest) {
     return { ok: false, awaitingHuman: false, message: `权重清单读取失败：${check.issues.join('；')}`, issues: check.issues };
   }
@@ -482,6 +523,17 @@ export function rollbackWeightsVersion(
   }
   if (target === manifest.current) {
     return { ok: false, awaitingHuman: false, message: `目标版本「${target}」即当前版本（无需回滚）`, issues: [] };
+  }
+
+  // 回滚目标版本哈希强制校验（供应链红线——目标目录被篡改即拒绝，绝不静默指向坏权重）
+  const targetEntry = manifest.versions.find((v) => v.id === target);
+  const targetDir = require('path').join(dir, target);
+  if (!targetEntry || !require('fs').existsSync(targetDir)) {
+    return { ok: false, awaitingHuman: false, message: `目标版本「${target}」目录缺失：${targetDir}`, issues: [`版本 ${target} 目录不在场——无法回滚`] };
+  }
+  const actualHash = hashDir(targetDir);
+  if (actualHash !== targetEntry.sha256) {
+    return { ok: false, awaitingHuman: false, message: `回滚目标版本「${target}」完整性校验失败：manifest sha256=${targetEntry.sha256.slice(0, 12)}…，实际=${actualHash.slice(0, 12)}…——权重可能被篡改或损坏，拒绝回滚`, issues: [`版本 ${target} 完整性校验失败——供应链红线（哈希不匹配）`] };
   }
 
   const now = new Date().toISOString();

@@ -1,6 +1,6 @@
 {
   "name": "@sofagent/daemon",
-  "version": "1.4.3",
+  "version": "1.5.0",
   "engines": {
     "node": ">=18"
   },
@@ -13,6 +13,7 @@
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "npm run clean && tsc",
+    "prepublishOnly": "npm run build && find dist -name '*.js.map' -delete && find dist -name '*.d.ts.map' -delete",
     "postbuild": "node -e \"const fs=require('fs');for(const b of ['dist/cli.js']){try{fs.chmodSync(require('path').join(__dirname,b),0o755)}catch(e){}}\"",
     "test": "vitest run",
     "check": "tsc --noEmit"
@@ -26,12 +27,17 @@
   "license": "MIT",
   "author": "KongFangXun",
   "dependencies": {
-    "@sofagent/audit": "1.4.3",
-    "@sofagent/core": "1.4.3",
-    "@sofagent/ontology": "1.4.3",
-    "@sofagent/orchestrator": "1.4.3",
-    "@sofagent/skillopt": "1.4.3",
-    "js-yaml": "^5.3.0"
+    "@sofagent/audit": "1.5.0",
+    "@sofagent/core": "1.5.0",
+    "@sofagent/ontology": "1.5.0",
+    "@sofagent/orchestrator": "1.5.0",
+    "@sofagent/train": "1.5.0",
+    "@sofagent/evolve": "1.5.0",
+    "js-yaml": "^5.4.2"
+  },
+  "//optionalDependencies": "v1.4.5 T6 (R4)：inspectors/eval-failures.ts:120 惰性 require('@sofagent/think')（生成反思建议，不可用时跳过该检查），此前未声明——对齐 root package.json F-18 optionalDependencies 先例。daemon src 属另一工程师修改面，此处仅动依赖声明。",
+  "optionalDependencies": {
+    "@sofagent/think": "1.5.0"
   },
   "exports": {
     ".": {

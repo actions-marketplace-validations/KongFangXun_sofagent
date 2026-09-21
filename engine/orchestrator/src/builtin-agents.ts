@@ -1,13 +1,13 @@
 // ============================================================
-// builtin-agents.ts · 预装 Agent 定义（v1.4.3）
+// builtin-agents.ts · 预装 Agent 定义（v1.5.0）
 //
 // 每个 Agent 的 systemPrompt 来自 SKILL/agents/<name>/ 下的
 // Agency Agents 格式 .md 文件。createReactAgent 启动时读取文件、
 // 剥离 frontmatter、注入为 system prompt。
 //
 // 如果文件找不到（如 npm 全局安装路径不同），回退到硬编码精简版。
-// v1.4.3：迁移至 @sofagent/orchestrator
-// v1.4.3 P0-R2: npm 全局安装后 __dirname 不再是仓库内相对位置，
+// v1.5.0：迁移至 @sofagent/orchestrator
+// v1.5.0 P0-R2: npm 全局安装后 __dirname 不再是仓库内相对位置，
 //   包相对路径（多层上级目录拼 SKILL）会失效。新增 SOFAGENT_REPO_ROOT
 //   环境变量作为最高优先级解析：git clone 安装场景下显式指定仓库根，
 //   即可让 npm 全局安装的 orchestrator 也能加载 SKILL/agents 的 md。
@@ -90,11 +90,19 @@ function loadAgentMd(skillName: string, fallback: string): string {
   }
 
   // 路径 2: 包相对路径/SKILL/agents/<skillName>/SKILL.md
-  const pkgPath = join(__dirname, '..', '..', '..', '..', 'SKILL', 'agents', skillName, 'SKILL.md');
+  // 本文件编译后位于 <repo>/engine/orchestrator/dist/，向上三级 = <repo>
+  // （此前写四级会上溯到仓库根的父目录，恒不可达且静默回退精简版）
+  const pkgPath = join(__dirname, '..', '..', '..', 'SKILL', 'agents', skillName, 'SKILL.md');
   if (existsSync(pkgPath)) {
     return parseSkillMd(readFileSync(pkgPath, 'utf-8'));
   }
 
+  // v1.4.7 批次 I：三条路径全部不可达（npm 全局安装且未设 SOFAGENT_REPO_ROOT 的
+  // 安装态大概率如此）——回退精简版显性化，不再静默
+  console.warn(
+    `[builtin-agents] SKILL/agents 不可达（安装态精简版回退）: ${skillName}——` +
+      `已试 ${repoRoot() ?? '(未设 SOFAGENT_REPO_ROOT)'}、${join(process.cwd(), 'SKILL', 'agents')}、${pkgPath}`,
+  );
   return fallback;
 }
 
@@ -131,13 +139,13 @@ function loadAgentMdFile(name: string, fallback: string): string {
   }
 
   // 路径 3: 包相对路径/FORGE/agents/<name>.md（v1.1.4 新增）
-  const pkgLoopPath = join(__dirname, '..', '..', '..', '..', 'FORGE', 'agents', `${name}.md`);
+  const pkgLoopPath = join(__dirname, '..', '..', '..', 'FORGE', 'agents', `${name}.md`);
   if (existsSync(pkgLoopPath)) {
     return parseSkillMd(readFileSync(pkgLoopPath, 'utf-8'));
   }
 
   // 路径 4: 包相对路径/agents/<name>.md
-  const pkgPath = join(__dirname, '..', '..', '..', '..', 'agents', `${name}.md`);
+  const pkgPath = join(__dirname, '..', '..', '..', 'agents', `${name}.md`);
   if (existsSync(pkgPath)) {
     return parseSkillMd(readFileSync(pkgPath, 'utf-8'));
   }

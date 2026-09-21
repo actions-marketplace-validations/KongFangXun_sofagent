@@ -1,8 +1,8 @@
-# sofagent cordis-plugin-sofagent-fde bundle patch——sofagent 品牌插件，注册为 DSH profile layer
+# sofagent cordis-plugin-sofagent-fde bundle patch v1.5.0——注册为 DSH profile layer
 - insert:
     - id: sofagent-fde
       name: 'cordis-plugin-sofagent-fde'
       inject: [settings, dynamicCordisRunner]
       config:
-        seam: "fde_* tools"
-        description: "FDE 进场方法论桥接——本体数据视图生成（fde_* 六 tool 为规划中形态，见 sofagent ROADMAP）（sofagent 品牌 · #16B8F3）"
+        seam: "non-seam:tool-set"    # 语义：非宿主事件接入（tool 集）——本体 / FDE / 公地三域工具按需调用（v1.4.9 P2 合并原 -ontology 与 -commons 面）
+        description: "FDE 进场与能力流通——把企业业务梳理成 AI 能力，并让这些能力在企业内被发布、发现、调用、评价、退役——桥接 @sofagent/orchestrator publishCapability / @sofagent/ontology generateOntologyView / @sofagent/core restoreSnapshot"

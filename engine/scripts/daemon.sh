@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# sofagent daemon.sh · daemon 主进程 · v1.4.3
+# sofagent daemon.sh · daemon 主进程 · v1.5.0
 # ============================================================
 # 命令行接口：start / stop / status / --foreground
 # 主循环每 30 秒：检测平台进程 + 文件 hash 变化 → 更新 daemon.json
@@ -13,7 +13,7 @@
 # ============================================================
 
 set -euo pipefail
-VERSION="1.4.3"
+VERSION="1.5.0"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd || echo "$PWD")"
@@ -166,10 +166,13 @@ _main_loop() {
     set_json_field "last_check" "$now"
 
     # 5. 最小可信验证：跑 verify-evidence TS 版，结果写入 daemon.json
+    # v1.4.8 F2: 去 2>/dev/null 吞错——此前 CLI 未注册 --verify-evidence，报错被
+    # 吞成恒 unverified 存活 14+ 版本。现在 CLI 已接线（audit index.ts），错误
+    # 显式落 daemon.log 一行 WARN（score 保持 unknown，不中断巡检）。
     local evidence_score="unknown"
     local AUDIT_DIST="${SCRIPT_DIR}/../audit/dist/index.js"
     if [ -f "$AUDIT_DIST" ]; then
-      evidence_score=$(node "$AUDIT_DIST" --verify-evidence 2>/dev/null && echo "verified" || echo "unverified")
+      evidence_score=$(node "$AUDIT_DIST" --verify-evidence 2>>"$DAEMON_LOG" && echo "verified" || echo "unverified")
     fi
     set_json_field "last_evidence_score" "$evidence_score"
 
@@ -200,10 +203,10 @@ _main_loop() {
       _write_notice_if_stale "Ingest 触发——请运行 knowledge-maintain 提取最新 task/logs 中的知识"
     fi
 
-    # 7. SkillOpt 自进化调度（v1.0.4 → P0-7 管道接通）
-    # 读 eval.md → 阈值检测 → 24h 防抖 → 调 skillopt-run
-    _trigger_skillopt() {
-      # TODO-v1.3.0: eval.md 已在 v1.2.1 删除，SkillOpt 评分数据源待重新设计
+    # 7. Evolve 自进化调度（v1.0.4 → P0-7 管道接通）
+    # 读 eval.md → 阈值检测 → 24h 防抖 → 调 evolve-run
+    _trigger_evolve() {
+      # TODO-v1.3.0: eval.md 已在 v1.2.1 删除，Evolve 评分数据源待重新设计
       # 读取 eval.md，检查累积评分条目数是否到阈值
       local scoring_file="${REPO_ROOT}/SKILL/harness/data/eval.md"
       local threshold=20  # 累积 20 条评分后触发
@@ -217,7 +220,7 @@ _main_loop() {
       fi
 
       # 检查上次触发时间（24h 内不重复触发）
-      local last_trigger="${SOFAGENT_DATA}/.skillopt-last-run"
+      local last_trigger="${SOFAGENT_DATA}/.evolve-last-run"
       if [ -f "$last_trigger" ]; then
         local last_time
         last_time=$(cat "$last_trigger" 2>/dev/null || echo 0)
@@ -229,20 +232,21 @@ _main_loop() {
         fi
       fi
 
-      # 检测 skillopt-sleep 是否可用
-      if ! command -v skillopt-sleep &>/dev/null; then
-        # v1.2.1：不再追加到 daemon-notice.md，改写 daemon.log（健康报告由 health-reporter.ts 生成 JSON）
-        daemon_log "SkillOpt: skillopt-sleep 未安装（需 pip install skillopt，v0.2.0+ 已含 sleep CLI）。eval.md 已积累 ${score_count} 条，触发条件已满足但引擎不可用。"
-        return
-      fi
-
-      # 真正调用——通过 npx @sofagent/audit skillopt-run
-      # v1.2.1：不再追加到 daemon-notice.md，改写 daemon.log
-      daemon_log "SkillOpt: eval.md 累积 ${score_count} 条，触发自进化"
-      npx @sofagent/audit skillopt-run --input "${REPO_ROOT}/SKILL/SKILL.md" --output "${SOFAGENT_DATA}/skill-candidate.md" --scoring "$scoring_file" 2>>"$DAEMON_LOG"
-      date +%s > "$last_trigger"
+      # ── 旧 CLI 触发路径：**已废弃**（v1.4.9 G-11）——处置 = 显式明示废弃，不给死 CLI 编名字 ──
+      # 取证（本版实测）：
+      #   · 旧探活名 `evolve-sleep`：`command -v` 无命中，全仓无此可执行；
+      #   · 旧调用 `npx @sofagent/audit evolve-run …`：**死子命令**——实测「未知子命令: evolve-run」，
+      #     `sofagent-audit --help` 已把它列入 v1.5.0 移除项（`evolve-run → sofagent-evolve`）；
+      #   · 真实面：外部兼容层二进制 = `skillopt-sleep`（PyPI skillopt 0.2.0），自进化入口 =
+      #     `@sofagent/evolve` 的 bin（`sofagent-evolve` → dist/cli.js，native gate 内置）。
+      # 为什么是「明示废弃」而不是「静默 return」：旧版把两个都对不上真实面的名字写成
+      #   「可选面未安装」，于是「路径已死」被伪装成「条件未满足」——正是 G-11 的缺陷形态。
+      # 能力未丢：daemon 侧自进化由 `evolve-trigger.ts` inspector 承载
+      #   （调用 @sofagent/evolve 的 autoTriggerAll，走 native gate）；本 bash 段是 v1.2 前遗留形态。
+      daemon_log "Evolve: 旧 CLI 触发路径已废弃（v1.4.9 G-11）——探活名 evolve-sleep 无此可执行、调用名 '@sofagent/audit evolve-run' 无此子命令；自进化改由 evolve-trigger inspector / native gate 承载。eval.md 已积累 ${score_count} 条，触发条件已满足，但本路径不再动作。"
+      return
     }
-    _trigger_skillopt
+    _trigger_evolve
 
     sleep 30
   done

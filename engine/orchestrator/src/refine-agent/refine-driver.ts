@@ -2,16 +2,16 @@
 // refine-agent/refine-driver.ts · Refine 循环驱动（v1.3.7 交付 T04）
 // ============================================================
 //
-// Refine Agent = "从能用到好用"——复用 loop-agent 引擎，换 L2 判据。
+// Refine Agent = "从能用到好用"——复用 loop-agent，换 L2 判据。
 //
 // 与 Onboard 的差异（协议设计 §7.1）：
-//   |          | Onboard Agent（v1.4.3）       | Refine Agent（本版）          |
+//   |          | Onboard Agent（v1.5.0）       | Refine Agent（本版）          |
 //   |----------|-------------------------------|-------------------------------|
 //   | 目标     | 从「不能用」到「能用」        | 从「能用」到「好用」          |
 //   | 判据     | Ontology 本体数据（对错）     | 质量规则集（好坏）            |
 //   | FORGE    | release-gate-loop（发版门禁） | fresh-eyes-loop（新鲜眼审查） |
 //   | 触发     | activate 后立即               | Onboard 收敛 PASS 后          |
-//   | L1/L3/L4 | 自建                          | **复用 loop-agent 引擎**      |
+//   | L1/L3/L4 | 自建                          | **复用 loop-agent**      |
 //
 // 复用策略：
 //   - L1 judge：直接 import loop-agent/judge.ts 的 judgeRunResult
@@ -22,6 +22,12 @@
 //
 // 这意味着 Refine 不重写循环骨架——它复用 runOnboardLoop，
 // 只是把 l2Judge 换成 qualityJudge，把 fixer 换成 qualityFixer。
+//
+// ── 定位边界（v1.4.8 条目 10）──
+// 本域 = Refine L2 质量判据循环：判据 = 质量规则集（好坏，替代 Ontology 对错），
+// 状态机复用 loop-agent/driver.ts 的循环骨架（同形，仅替换 l2Judge/fixer）。
+// 与 loop/（对错门禁）、loop-agent/（工程级崩溃判定）的判据不同——三者各自独立，
+// 不合并（复用骨架属正确复用，非合并）。
 // ============================================================
 
 import type { OnboardRunOutcome, OnboardDriverOptions, OnboardLoopResult } from '../loop-agent/driver';

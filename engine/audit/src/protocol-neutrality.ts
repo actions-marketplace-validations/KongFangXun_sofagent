@@ -1,5 +1,5 @@
 // ============================================================
-// protocol-neutrality.ts · 协议中立审计声明（v1.4.3 §3.3）
+// protocol-neutrality.ts · 协议中立审计声明（v1.5.0 §3.3）
 //
 // 目标：审计层只走 MCP 等开放协议 + git diff/JSONL/Markdown 开放格式，
 // 不绑定单一平台。
@@ -93,7 +93,7 @@ export function assertProtocolNeutrality(
 }
 
 /**
- * 扫描审计引擎代码目录，验证协议中立性。
+ * 扫描审计模块代码目录，验证协议中立性。
  *
  * 检查：
  *   1. 源码中无平台专属 SDK 导入
@@ -101,7 +101,7 @@ export function assertProtocolNeutrality(
  *
  * 注意：此函数只扫描 `.ts`/`.js` 源码文件，不扫描测试文件和 node_modules。
  *
- * @param auditSrcDir 审计引擎源码目录（如 engine/audit/src/）
+ * @param auditSrcDir 审计模块源码目录（如 engine/audit/src/）
  * @returns 检查结果
  */
 export function verifyProtocolNeutrality(auditSrcDir: string): ProtocolNeutralityResult {

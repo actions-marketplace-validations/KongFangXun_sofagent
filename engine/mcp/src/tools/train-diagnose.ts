@@ -1,5 +1,5 @@
 // ============================================================
-// train-diagnose.ts · MCP tool：train_diagnose（v1.4.3 第二章）
+// train-diagnose.ts · MCP tool：train_diagnose（v1.5.0 第二章）
 // ============================================================
 //
 // 训练失败诊断——七类分类（OOM/数据格式/超参发散/框架/环境/重复坍塌/
@@ -68,7 +68,7 @@ export async function trainDiagnoseTool(args: TrainDiagnoseArgs): Promise<TrainD
   }
 
   try {
-    const orch = await import('@sofagent/orchestrator');
+    const orch = await import('@sofagent/train');
     const dataDir = getDataDir();
     const report = orch.diagnoseTrainFailure(dataDir, enterprise_id, train_job_id);
 

@@ -229,7 +229,7 @@ function testChunkEmpty() {
   console.log('  ✓ testChunkEmpty');
 }
 
-// ─── a-verify 分片逻辑测试 ───────────────────────────────────
+// ─── c-verify（原 a-verify）分片逻辑测试 ──────────────────────
 
 /**
  * 模拟 runAVerifySharded 的分批构造逻辑（不实际 spawn worker）。
@@ -273,9 +273,9 @@ function testAVerifyShardBatchConstruction() {
     assert.ok(outputFileName.includes(`batch-${batchNum}`),
       `输出文件名应包含 batch-${batchNum}`);
     assert.ok(inputFileName.includes('verify'),
-      `a-verify 输入文件名应含 verify`);
+      `c-verify 输入文件名应含 verify`);
     assert.ok(outputFileName.includes('verified'),
-      `a-verify 输出文件名应含 verified`);
+      `c-verify 输出文件名应含 verified`);
 
     // 分片内容只包含本批 finding
     const batchContent = batch.map(f => f.content).join('\n\n---\n\n');
@@ -294,7 +294,7 @@ function testAVerifyShardBatchConstruction() {
   }
 
   // 验证合并：模拟合并回填 result.md
-  const mergedHeader = '# result.md · a-verify 分片合并（已回填 verify 列）';
+  const mergedHeader = '# result.md · c-verify 分片合并（已回填 verify 列）';
   const mergedMeta = `> 共 ${batches.length} 批，${findings.length} 条 finding`;
   const fakeBatchResults = batches.map((_, i) => `## 分片 ${i + 1} 验证结果`);
   const mergedResult = [mergedHeader, '', mergedMeta, '', ...fakeBatchResults].join('\n');
@@ -310,7 +310,7 @@ function testAVerifyShardBatchConstruction() {
 }
 
 /**
- * 验证 a-verify 分片 fallback：result.md 无 finding 标记 → 单 session。
+ * 验证 c-verify 分片 fallback：result.md 无 finding 标记 → 单 session。
  */
 function testAVerifyShardFallback() {
   const resultText = '# result.md\n\n## 修复结果\n\n一些没有 finding 标记的文本\n';
@@ -325,7 +325,7 @@ function testAVerifyShardFallback() {
 }
 
 /**
- * 验证 a-verify 分片的单批失败不中断（容错）。
+ * 验证 c-verify 分片的单批失败不中断（容错）。
  *
  * 模拟 3 批，第 2 批失败，验证最终仍合并所有结果（失败的批写错误信息）。
  */
@@ -346,7 +346,7 @@ function testAVerifyShardBatchFailure() {
     if (batchNum === 2) {
       batchResults.push(
         `## 分片 ${batchNum} 验证失败\n\n` +
-        `错误: worker a-verify 退出码 1\n\n` +
+        `错误: worker c-verify 退出码 1\n\n` +
         `涉及 finding: ${batches[i].map(f => f.id).join(', ')}\n`
       );
     } else {
@@ -356,7 +356,7 @@ function testAVerifyShardBatchFailure() {
 
   // 合并
   const mergedResult = [
-    '# result.md · a-verify 分片合并',
+    '# result.md · c-verify 分片合并',
     '',
     `> 共 ${batches.length} 批，${findings.length} 条 finding`,
     '',
@@ -365,7 +365,7 @@ function testAVerifyShardBatchFailure() {
 
   // 失败的批被保留，不中断
   assert.ok(mergedResult.includes('分片 2 验证失败'), '合并结果应包含失败分片信息');
-  assert.ok(mergedResult.includes('worker a-verify 退出码 1'), '应保留错误信息');
+  assert.ok(mergedResult.includes('worker c-verify 退出码 1'), '应保留错误信息');
   assert.ok(mergedResult.includes('分片 1 验证结果'), '成功批 1 应在合并结果中');
   assert.ok(mergedResult.includes('分片 3 验证结果'), '成功批 3 应在合并结果中');
 
@@ -373,7 +373,7 @@ function testAVerifyShardBatchFailure() {
 }
 
 /**
- * 验证 a-verify 分片大小恰好整除（无尾批）。
+ * 验证 c-verify 分片大小恰好整除（无尾批）。
  */
 function testAVerifyShardExactDivision() {
   const BATCH_SIZE = 5;
@@ -446,7 +446,7 @@ function testParseStopConditionFallbackForFreeFormHeadings() {
     // 复刻 driver 里 parseStopCondition 的 fallback 逻辑（splitFindings 切 0 条时的回退路径）。
     // 注意：driver 没 export 这些函数（main 是无条件触发的，import 会跑 main），
     // 测试必须内联实现 —— 与文件头 splitFindings 同理：driver 改了 fallback 这里也要同步。
-    const resultMd = `# result.md · a-verify 分片合并（已回填 verify 列）
+    const resultMd = `# result.md · c-verify 分片合并（已回填 verify 列）
 
 ## 📊 发现统计
 
@@ -782,10 +782,170 @@ function testBackendResolutionAllStepsDsh() {
   // （内联复刻——driver 未导出该函数，与 splitFindings 测试同模式）
   const resolve = () => 'dsh';
   assert.strictEqual(resolve('a-check'), 'dsh', 'a-check 缺省 dsh');
-  assert.strictEqual(resolve('a-verify'), 'dsh', 'a-verify 缺省 dsh');
+  assert.strictEqual(resolve('a-verify'), 'dsh', 'a-verify 缺省 dsh（历史步骤名——现名 c-verify）');
+  assert.strictEqual(resolve('c-verify'), 'dsh', 'c-verify 缺省 dsh（单盲四角色）');
+  assert.strictEqual(resolve('d-review'), 'dsh', 'd-review 缺省 dsh（单盲四角色）');
   assert.strictEqual(resolve('a-consolidate'), 'dsh', 'a-consolidate 缺省 dsh');
   assert.strictEqual(resolve('b-fix'), 'dsh', 'b-fix 缺省 dsh（v1.3.9 起不变）');
   console.log('  ✓ testBackendResolutionAllStepsDsh');
+}
+
+// ─── 单盲四角色流水线（A审→B修→C验→D复核）测试 ──────────────
+// driver 未导出，buildPerspectiveSteps / applyDReviewReopens 内联复刻
+// （与 splitFindings / resolveFreshEyesBackend 测试同模式——driver 变了这里同步）。
+
+/** 内联复刻 driver 的 buildPerspectiveSteps 生成逻辑（b-check 开关口） */
+function buildStepsForTest(enableBCheck) {
+  const PERSPECTIVES = Array.from({ length: 12 }, (_, i) => ({ id: i + 1, label: `视角${i + 1}` }));
+  const steps = {};
+  for (const p of PERSPECTIVES) {
+    steps[`a-check-p${p.id}`] = { role: 'A', outputs: [`check-a-p${p.id}.md`] };
+    if (enableBCheck) {
+      steps[`b-check-p${p.id}`] = { role: 'B', outputs: [`check-b-p${p.id}.md`] };
+    }
+  }
+  return steps;
+}
+
+/** 内联复刻 driver 的 applyDReviewReopens 解析逻辑（REOPEN_COUNT 尾行 > 正文标记 > 0） */
+function parseReopenCountForTest(text) {
+  const tailMatches = [...String(text).matchAll(/^REOPEN_COUNT:\s*(\d+)\s*$/gm)];
+  if (tailMatches.length > 0) {
+    return parseInt(tailMatches[tailMatches.length - 1][1], 10);
+  }
+  const bodyMarks = String(text).match(/\|\s*finding-[A-Z0-9-]+\s*\|[^|]*\|\s*REOPEN\b/gi)
+    || String(text).match(/裁决[：:]\s*REOPEN\b/gi)
+    || [];
+  return Math.min(bodyMarks.length, 20);
+}
+
+function testSingleBlindStepsDefault() {
+  // 默认（无 FORGE_ENABLE_B_CHECK）：仅 A 侧 12 个 check 步骤，无 b-check-*
+  const steps = buildStepsForTest(false);
+  const keys = Object.keys(steps);
+  assert.strictEqual(keys.length, 12, `默认应生成 12 个步骤（实际 ${keys.length}）`);
+  assert.ok(keys.every(k => k.startsWith('a-check-p')), '默认全部为 a-check-p*');
+  assert.ok(!keys.some(k => k.startsWith('b-check-p')), '默认不应有 b-check-p*');
+  console.log('  ✓ testSingleBlindStepsDefault');
+}
+
+function testLegacyBCheckEscapeHatch() {
+  // FORGE_ENABLE_B_CHECK=1：恢复 24 视角双盲
+  const steps = buildStepsForTest(true);
+  const keys = Object.keys(steps);
+  assert.strictEqual(keys.length, 24, `legacy 应生成 24 个步骤（实际 ${keys.length}）`);
+  const aCount = keys.filter(k => k.startsWith('a-check-p')).length;
+  const bCount = keys.filter(k => k.startsWith('b-check-p')).length;
+  assert.strictEqual(aCount, 12, 'legacy A 侧 12 个');
+  assert.strictEqual(bCount, 12, 'legacy B 侧 12 个');
+  console.log('  ✓ testLegacyBCheckEscapeHatch');
+}
+
+function testConsolidateInputsTruncated() {
+  // a-consolidate inputs 默认只含 A 侧 12 份；legacy 24 份 A/B 交错
+  const inputsDefault = Object.values(buildStepsForTest(false)).flatMap(s => s.outputs);
+  assert.strictEqual(inputsDefault.length, 12, `默认 inputs 应 12 份（实际 ${inputsDefault.length}）`);
+  assert.ok(inputsDefault.every(f => f.startsWith('check-a-')), '默认 inputs 全 A 侧');
+  const inputsLegacy = Object.values(buildStepsForTest(true)).flatMap(s => s.outputs);
+  assert.strictEqual(inputsLegacy.length, 24, `legacy inputs 应 24 份（实际 ${inputsLegacy.length}）`);
+  assert.ok(inputsLegacy[0].startsWith('check-a-') && inputsLegacy[1].startsWith('check-b-'), 'legacy A/B 交错');
+  console.log('  ✓ testConsolidateInputsTruncated');
+}
+
+function testReopenParseTailLine() {
+  // 尾部精确行解析：多行时取最后一次（防正文引用干扰）
+  assert.strictEqual(parseReopenCountForTest('## 汇总\n\nREOPEN_COUNT: 2\n'), 2, '尾行 2 应命中');
+  assert.strictEqual(parseReopenCountForTest('正文提到 REOPEN_COUNT: 5 引用\n\nREOPEN_COUNT: 0\n'), 0, '取最后一次出现');
+  assert.strictEqual(parseReopenCountForTest('REOPEN_COUNT: 0'), 0, '全 CONFIRM 为 0');
+  console.log('  ✓ testReopenParseTailLine');
+}
+
+function testReopenParseBodyFallback() {
+  // 尾行缺失 → 正文表格行计数兜底
+  const body = [
+    '## D 复核裁决',
+    '| finding-P0-01 | 修复未到位 | REOPEN |',
+    '| finding-P0-02 | 夸大问题 | DOWNGRADE |',
+    '| finding-P1-03 | 修复确实到位 | CONFIRM |',
+  ].join('\n');
+  assert.strictEqual(parseReopenCountForTest(body), 1, '正文 1 条 REOPEN 应计数（DOWNGRADE/CONFIRM 不算）');
+  console.log('  ✓ testReopenParseBodyFallback');
+}
+
+function testReopenParseNoSignal() {
+  // 无尾行无标记 → 0（不误伤）
+  assert.strictEqual(parseReopenCountForTest('# D 复核裁决\n\n全部 CONFIRM，无打回。'), 0, '无信号应为 0');
+  assert.strictEqual(parseReopenCountForTest(''), 0, '空文本应为 0');
+  console.log('  ✓ testReopenParseNoSignal');
+}
+
+// ─── 三防线加固（版本指纹门禁 / 主仓 dirty 隔离 / fallback 去重）───
+// 同内联复刻模式：driver 未导出，纯逻辑等价复刻（driver 变了这里同步）。
+
+/** 内联复刻 fallback 去重逻辑：文件路径 + 描述规范化前缀匹配（≥20 字符公共前缀） */
+function dedupForTest(items) {
+  const MIN_PREFIX_LEN = 20;
+  const seenByFile = new Map();
+  const deduped = [];
+  for (const it of items) {
+    const normDesc = (it.desc || '').replace(/[\s\p{P}\p{S}]+/gu, '');
+    let group = seenByFile.get(it.filePath);
+    if (!group) { group = []; seenByFile.set(it.filePath, group); }
+    const hit = group.find((prev) =>
+      Math.min(prev.normDesc.length, normDesc.length) >= MIN_PREFIX_LEN
+      && (normDesc.startsWith(prev.normDesc) || prev.normDesc.startsWith(normDesc)));
+    if (hit) {
+      const first = hit.item;
+      if (!first.dupSources) first.dupSources = [first.source];
+      first.dupSources.push(it.source);
+      continue;
+    }
+    group.push({ normDesc, item: it });
+    deduped.push(it);
+  }
+  return deduped;
+}
+
+function testFingerprintGuardSkipInWorkerMode() {
+  // worker 模式（无 FORGE_DRIVER_MODE 环境变量）不校验——指纹门禁只约束
+  // driver 主进程。等价复刻 assertDriverCodeFingerprint 的守卫分支。
+  const savedMode = process.env.FORGE_DRIVER_MODE;
+  delete process.env.FORGE_DRIVER_MODE;
+  try {
+    // 等价复刻：守卫条件为真即安全通过（无 process.exit 发生）
+    const shouldSkip = process.env.FORGE_DRIVER_MODE !== 'driver';
+    assert.strictEqual(shouldSkip, true, 'worker 模式应跳过校验');
+  } finally {
+    if (savedMode !== undefined) process.env.FORGE_DRIVER_MODE = savedMode;
+  }
+  console.log('  ✓ testFingerprintGuardSkipInWorkerMode');
+}
+
+function testFallbackDedupMergesCrossPerspective() {
+  // A/B 双盲同题（同文件 + 描述前 40 字符规范化后相同）→ 合并 1 条，
+  // dupSources 记录两个来源
+  const items = [
+    { title: '审计句无边界', filePath: 'docs/WIKI.md', desc: 'L93/L122/L129 三处头条句「审计是强制性的」均无边界状语！', source: 'A-企业 IT' },
+    { title: '审计强制表述无状语', filePath: 'docs/WIKI.md', desc: 'L93/L122/L129 三处头条句「审计是强制性的」均无边界状语；L136 已有披露。', source: 'B-企业 IT' },
+  ];
+  const out = dedupForTest(items);
+  assert.strictEqual(out.length, 1, `同题应合并为 1 条（实际 ${out.length}）`);
+  assert.deepStrictEqual(out[0].dupSources, ['A-企业 IT', 'B-企业 IT'], 'dupSources 应含双来源');
+  console.log('  ✓ testFallbackDedupMergesCrossPerspective');
+}
+
+function testFallbackDedupKeepsDistinctFiles() {
+  // 描述相同但文件不同 → 两条独立保留（不能误合并跨文件问题）
+  const items = [
+    { title: '版本头漂移', filePath: 'SECURITY.md', desc: '文档头版本号停在 v1.4.5 未更新', source: 'A-数字侦探' },
+    { title: '版本头漂移', filePath: 'CONTRIBUTING.md', desc: '文档头版本号停在 v1.4.5 未更新', source: 'B-数字侦探' },
+    // 同文件不同问题 → 保留（描述指纹不同）
+    { title: '版本头漂移', filePath: 'SECURITY.md', desc: 'L52 加密卷措辞是建议不是必须', source: 'B-企业 IT' },
+  ];
+  const out = dedupForTest(items);
+  assert.strictEqual(out.length, 3, `不同文件/不同问题不应误合并（实际 ${out.length}）`);
+  assert.ok(!out.some(it => it.dupSources), '不应出现误合并的 dupSources');
+  console.log('  ✓ testFallbackDedupKeepsDistinctFiles');
 }
 
 function testRuntimeUsageWiring() {
@@ -925,7 +1085,7 @@ function testExtractAgentTextPassthroughForms() {
 }
 
 // ─── 运行测试 ────────────────────────────────────────────────
-console.log('\n🧪 fresh-eyes-driver splitFindings / chunk / a-verify 分片单元测试\n');
+console.log('\n🧪 fresh-eyes-driver splitFindings / chunk / c-verify 分片单元测试\n');
 
 let passCount = 0;
 let failCount = 0;
@@ -938,7 +1098,7 @@ const tests = [
   testChunk,
   testChunkExactDivision,
   testChunkEmpty,
-  // a-verify 分片逻辑测试
+  // c-verify（原 a-verify）分片逻辑测试
   testAVerifyShardBatchConstruction,
   testAVerifyShardFallback,
   testAVerifyShardBatchFailure,
@@ -958,6 +1118,17 @@ const tests = [
   testDshSubscriberFallbackPoll,
   testRunWithEffectsRollback,
   testBackendResolutionAllStepsDsh,
+  // 单盲四角色流水线（A审→B修→C验→D复核）
+  testSingleBlindStepsDefault,
+  testLegacyBCheckEscapeHatch,
+  testConsolidateInputsTruncated,
+  testReopenParseTailLine,
+  testReopenParseBodyFallback,
+  testReopenParseNoSignal,
+  // 三防线加固（版本指纹门禁 / 主仓 dirty 隔离 / fallback 去重）
+  testFingerprintGuardSkipInWorkerMode,
+  testFallbackDedupMergesCrossPerspective,
+  testFallbackDedupKeepsDistinctFiles,
   testRuntimeUsageWiring,
   testGuardReleaseDrill,
   testExtractAgentTextRejectsFragment,

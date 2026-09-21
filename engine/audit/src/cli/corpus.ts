@@ -1,5 +1,5 @@
 // ============================================================
-// corpus.ts · v1.4.4 第一章 · CLI 子命令 `sofagent-audit corpus export`
+// corpus.ts · v1.5.0 第一章 · CLI 子命令 `sofagent-audit corpus export`
 //
 // 双入口的 CLI 面（MCP 面 = corpus_export tool）。调用 audit 包导出三件：
 //   1. 规则语料（rule-schema + exporter——JSON/YAML 双格式 + HMAC）
@@ -35,7 +35,12 @@ export function parseCorpusArgs(argv: string[]): CorpusArgs {
     if (a === '--scope' && argv[i + 1]) {
       i++;
       const v = argv[i] as string;
-      if (v === 'default' || v === 'extended' || v === 'all') args.scope = v;
+      if (v === 'default' || v === 'extended' || v === 'all') {
+        args.scope = v;
+      } else {
+        console.error(`❌ --scope 非法值：${v}（可选 default | extended | all）——不静默回落，防打错字扩大导出面`);
+        process.exit(1);
+      }
     } else if (a === '--out' && argv[i + 1]) {
       i++;
       args.outDir = argv[i] as string;

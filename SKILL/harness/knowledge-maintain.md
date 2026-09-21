@@ -12,17 +12,17 @@ frontmatter 必填字段：
 ---
 title: "页面标题"
 category: "entities|concepts|comparisons|summaries"
-created: "2026-07-11"
-updated: "2026-07-11"
-sources: ["task/logs 2026-07-11", "think.md"]
-accessible-to: ["AP-审批", "AP-执行"]  # 可选：哪些业务流节点可访问
-relations:                              # 可选（v1.0.1 Ontology）：实体关联
+created: "YYYY-MM-DD"
+updated: "YYYY-MM-DD"
+sources: ["task/logs YYYY-MM-DD", "think.md"]
+accessible-to: ["AP-审批", "AP-执行"]  # 可选：哪些工作流节点可访问
+relations:                              # 可选：实体关联
   has_many: ["Payment-2026-001"]
   belongs_to: "采购/华南区"
 ---
 ```
 
-正文结构：定义 → 关键属性 → 关联实体 → 来源标注
+正文结构：定义 → 关键属性 → 关联实体 → 适用边界（什么数据/场景下成立） → 来源标注
 
 ## 双向链接
 
@@ -49,7 +49,7 @@ relations:                              # 可选（v1.0.1 Ontology）：实体�
 
 每次操作追加一行：
 ```markdown
-| 2026-07-11 14:30 | Ingest | entities/供应商-示例 | 新建，来源 task/logs |
+| YYYY-MM-DD HH:MM | Ingest | entities/供应商-示例 | 新建，来源 task/logs |
 ```
 
 ## Lint 检查（loop-evaluate 顺带执行）
@@ -69,3 +69,4 @@ relations:                              # 可选（v1.0.1 Ontology）：实体�
 - **不覆盖人工标注**——页面中人工写的 `> 备注：` 不覆盖，只追加 AI 提取的内容。
 - **矛盾不合并**——标注矛盾留给人决定，AI 不自动选一边。
 - **死链标 TODO**——目标页面不存在时标 `[[页面名|TODO]]`，不创建空页面填充。
+- **沉淀带适用边界**——记录知识时必须写清它在什么数据/场景下成立（如「仅适用于华南区供应商口径」）；不带边界的旧知识套到新数据上，会从经验变成污染源。

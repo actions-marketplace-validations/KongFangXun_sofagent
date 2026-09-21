@@ -1,9 +1,8 @@
 # FDE 交付物激活链 — 从静态交付到自运转企业 Agent
 
-> 项目：sofagent · 2026-08-01 战略讨论
-> 作者：孔放勋
-> 状态：Phase 1-4（ACTIVATE→ORCHESTRATE→EXECUTE→SUSTAIN）全部已实现
-> 灵感来源：用户提出"FDE Harness 读自己的交付物，自动生成企业 sub-agent"
+> v1.5.0 · 2026-09-19（UTC）· ✅ 已发版 · 孔放勋
+>
+> 状态：Phase 1-4（ACTIVATE→ORCHESTRATE→EXECUTE→SUSTAIN）全部已实现。灵感来源：用户提出「FDE Harness 读自己的交付物，自动生成企业 sub-agent」。
 
 ---
 
@@ -28,7 +27,7 @@ FDE 诊断完成后，交付了一堆**静态文件**：
   └──────────────────────────────────────────────────┘
 
 理想终态：
-  企业的业务流自动运行——每个 🔄 节点是一个 sub-agent，
+  企业的工作流自动运行——每个 🔄 节点是一个 sub-agent，
   每个 ⚡ 节点是一个辅助 Agent，节点间按 workflow.yml 的依赖自动编排
 ```
 
@@ -101,7 +100,7 @@ FDE 诊断完成后，以下文件就绪：
 │   │   ├── concepts/
 │   │   │   └── ...
 │   │   └── enterprise-profile.md   # 企业画像
-│   └── workflow.yml                 # FDE §5 输出的业务流定义
+│   └── workflow.yml                 # FDE §5 输出的工作流定义
 ├── skills/                           # FDE §7 交付的节点 Skill
 │   ├── 客户管理/
 │   │   └── SKILL.md
@@ -117,7 +116,7 @@ FDE 诊断完成后，以下文件就绪：
 ### workflow.yml 示例（FDE §5 产出）
 
 ```yaml
-name: 制造企业核心业务流
+name: 制造企业核心工作流
 description: 从接单到回款的完整流程
 nodes:
   - id: customer-intake
@@ -191,7 +190,7 @@ sofagent-orchestrator activate
 
 ### activate 内部流程
 
-新增 `engine/orchestrator/src/activate.ts`：
+核心实现 `engine/orchestrator/src/activate.ts`。核心签名与产出：
 
 ```typescript
 export interface ActivateResult {
@@ -202,60 +201,11 @@ export interface ActivateResult {
 }
 
 export async function activateWorkflow(opts: {
-  dataDir: string;       // .sofagent/data/
-  dryRun: boolean;
-  nodeFilter?: string[];
-}): Promise<ActivateResult> {
-  // Step 1: 读 workflow.yml
-  const workflow = parseWorkflowYaml(join(dataDir, 'workflow.yml'));
-
-  // Step 2: 遍历每个节点，读其 SKILL.md + entity
-  const agents: EnterpriseAgentConfig[] = [];
-  for (const node of workflow.nodes) {
-    if (node.type === '👤') {
-      skipped.push({ name: node.id, reason: '节点标记为暂不动' });
-      continue;
-    }
-
-    const skillContent = readFileSync(join(dataDir, node.skill_ref), 'utf-8');
-    const entityContent = readFileSync(join(dataDir, node.entity_ref), 'utf-8');
-
-    // Step 3: 从 SKILL.md 提取 system prompt + actions
-    const { systemPrompt, actions } = parseSkillMd(skillContent);
-
-    // Step 4: 从 entity 提取 knowledge-domain
-    const knowledgeDomain = parseEntityKnowledgeDomain(entityContent);
-
-    // Step 5: 组装企业 SubAgent 定义
-    agents.push({
-      name: node.id,                        // customer-intake
-      displayName: node.name,               // 客户接单
-      type: node.type === '🔄' ? 'auto' : 'assist',
-      systemPrompt: buildConstrainedPrompt({
-        base: systemPrompt,
-        knowledgeDomain,
-        actions: node.actions ?? actions,
-      }),
-      tools: resolveTools(node.actions ?? actions),
-      modelName: null,                      // 默认用主 Agent 模型
-      hitl: node.hitl ?? false,
-      hitlConfig: node.hitl_config,
-    });
-  }
-
-  // Step 6: 写入 .sofagent/subagents/<node-id>.yml（registry.ts 已支持读）
-  if (!opts.dryRun) {
-    for (const agent of agents) {
-      writeAgentYml(join(dataDir, 'subagents', `${agent.name}.yml`), agent);
-    }
-  }
-
-  // Step 7: 生成 LangGraph 拓扑描述（给 Phase 2 用）
-  const graph = buildTopology(workflow, agents);
-
-  return { registeredAgents: agents.map(a => a.name), workflowGraph: graph, skippedNodes: skipped, hitlNodes: agents.filter(a => a.hitl).map(a => a.name) };
-}
+  dataDir: string; dryRun: boolean; nodeFilter?: string[];
+}): Promise<ActivateResult>
 ```
+
+内部七步（逐步幂等，dryRun 只预览不落盘）：①读 workflow.yml → ②遍历节点（👤 暂不动跳过并记录 reason）→ ③读 SKILL.md 提取 system prompt + actions → ④读 entity 提取 knowledge-domain → ⑤`buildConstrainedPrompt` 组装企业 SubAgent 定义（type 按 🔄/⚡ 映射 auto/assist，携带 hitl/hitlConfig）→ ⑥非 dryRun 时写 `.sofagent/subagents/<node-id>.yml`（registry.ts `loadDefinition()` 已支持读）→ ⑦`buildTopology` 生成 LangGraph 拓扑描述（供 Phase 2）。
 
 ### 企业 SubAgent YML 格式（写入 `.sofagent/subagents/`）
 
@@ -377,7 +327,7 @@ const compiled = graph.compile({
 ### 运行方式
 
 ```bash
-# 启动企业业务流
+# 启动企业工作流
 sofagent-orchestrator run-enterprise
 
 # 或通过 MCP
@@ -396,7 +346,7 @@ sofagent-orchestrator run-enterprise
   - 每个 🔄 节点：自动执行，结果写入 State + entity
   - 每个 ⚡ 节点：执行到此处暂停 → 向用户展示方案 → 等待确认 → 继续
   - 每个节点执行后：自动触发审计（@sofagent-audit）
-  - 审计 FAIL：暂停整个业务流，通知用户
+  - 审计 FAIL：暂停整个工作流，通知用户
   - 异常：写入 exceptions 队列，根据节点配置决定重试 or 跳过
 ```
 
@@ -415,7 +365,7 @@ async function executeNode(node, state) {
   if (diff.length > 0) {
     const auditResult = await runAuditRules(diff);
     if (auditResult.exitCode === 2) {  // FAIL
-      // 暂停业务流，通知用户
+      // 暂停工作流，通知用户
       state.exceptions.push({ node: node.id, audit: auditResult });
       return { ...state, nodeStatus: { ...state.nodeStatus, [node.id]: 'audit-failed' } };
     }
@@ -439,21 +389,21 @@ async function executeNode(node, state) {
 |------|------|
 | FDE sustain 模式 | 已有：读 audit 报告趋势 → 生成优化建议 |
 | think.md 回溯 | 已有：每次任务自动写反思 |
-| skillopt 优化 | 已有：分析 Skill → 生成优化候选 |
+| evolve 优化 | 已有：分析 Skill → 生成优化候选 |
 | A/B 测试 | 已有：orchestrator-compare 跑 A/B 对比 |
 
 ### 激活链补全的闭环
 
 ```
-企业业务流运行
+企业工作流运行
   → 每个节点执行 → 自动审计 → think.md 回溯
   → FDE sustain 读 think.md 趋势 → 发现"某节点反复出错"
-  → skillopt 优化该节点 Skill → A/B 测试验证
+  → evolve 优化该节点 Skill → A/B 测试验证
   → 通过 → 更新 .sofagent/subagents/<node>.yml
   → 下次 activate 时自动加载优化后的 Skill
 ```
 
-**这就是自运转**：企业业务流不仅跑起来了，还能自己优化自己。
+**这就是自运转**：企业工作流不仅跑起来了，还能自己优化自己。
 
 ---
 
@@ -541,7 +491,7 @@ async function executeNode(node, state) {
 | 数据流 | State 实时传递 + entity 持久化双写 |
 | 节点执行器 | dag-runner 能跑企业 Agent |
 | HITL 中断 | ⚡ 节点执行前暂停，等待用户确认 |
-| 审计集成 | 每个节点执行后自动审计，FAIL 时暂停业务流 |
+| 审计集成 | 每个节点执行后自动审计，FAIL 时暂停工作流 |
 | MCP tool | `activate_workflow` 可从任意 MCP 平台调用 |
 | 纯 CLI | `sofagent-orchestrator activate && sofagent-orchestrator run-enterprise` 可跑通 |
 | npm test | 全绿 |
@@ -554,7 +504,7 @@ async function executeNode(node, state) {
 | 开发线 | 衔接 |
 |--------|------|
 | **Skill × MCP 集成（S1-S5）** | FDE Skill 有 MCP 工具调用能力；激活链的 `activate_workflow` 是新增 MCP tool |
-| **Skill 分包** | skills/04-deliver.md 应含 activate 引导——交付后不是结束，activate 才是 |
+| **Skill 分包** | `SKILL/skills/04-deliver.md` 应含 activate 引导——交付后不是结束，activate 才是 |
 | **运行时审计** | LangGraph middleware wrapToolCall（通用拦截）与激活链"每个节点执行后审计"（企业专属）互补 |
 | **沙箱** | 激活链生成的企业 Agent 最终也需要沙箱隔离 |
 
@@ -562,16 +512,16 @@ async function executeNode(node, state) {
 
 ## 企业 SubAgent = 引擎公民，不是独立脚本
 
-> **激活链注册的企业 SubAgent 自动继承约束层四种能力**——因为注册后与内置 4 个 SubAgent（@sofagent-fde / @sofagent-audit / engineer / reviewer）**跑在同一个运行时**：同一条四层加载链、同一个审计 hook、同一个 data/ 状态层。不是"给企业 Agent 装引擎"，是企业 Agent 本来就在引擎里。这就是"轨道从早期就铺好了"的真正含义。
+> **激活链注册的企业 SubAgent 自动继承约束层五种能力**——因为注册后与内置 4 个 SubAgent（@sofagent-fde / @sofagent-audit / engineer / reviewer）**跑在同一个运行时**：同一条四层加载链、同一个审计 hook、同一个 data/ 状态层。不是"给企业 Agent 装约束层"，是企业 Agent 本来就在约束层里。这就是"轨道从早期就铺好了"的真正含义。五能力 = 注入·审计·回溯·沉淀·进化（v1.4.4 新增沉淀）。
 
 ```mermaid
 flowchart TD
     DELIV[FDE 交付物<br/>ontology + workflow.yml + skills/] --> ACT[激活链 ACTIVATE<br/>v1.2.5+ 注册]
     ACT --> SA[企业 SubAgent<br/>与内置 Agent 同运行时<br/>同加载链 · 同审计 · 同 data/]
     SA --> CB[约束层<br/>四层加载链自动生效]
-    SA --> AU[审计引擎<br/>每步 24 条规则]
-    SA --> RE[回溯引擎<br/>快照一键回滚]
-    SA --> EV[进化引擎<br/>反思 + 知识 + 优化]
+    SA --> AU[审计模块<br/>每步 24 条规则]
+    SA --> RE[回溯能力<br/>快照一键回滚]
+    SA --> EV[进化模块<br/>反思 + 知识 + 优化]
 
     EV --> LOOP1[执行]
     LOOP1 --> LOOP2[审计 git diff 硬证据]
@@ -585,21 +535,21 @@ flowchart TD
 | 引擎 | 企业 SubAgent 怎么继承 | 触发点 |
 |------|----------------------|--------|
 | 🧭 **约束层** | `buildConstrainedSystemPrompt()` 注册即生效，走 SKILL.md → fde.md → think.md → knowledge/ 四层加载链 | 启动时自动 |
-| 🔍 **审计引擎** | EXECUTE 阶段 `on_step: true`，每步执行后自动跑 24 条规则 | 每步执行后 |
-| 🔄 **回溯引擎** | 审计后自动 git snapshot，违规一键回滚 | 审计完成后自动 |
-| 🧬 **进化引擎** | think.md 反思 + Dream Cycle 吃 task/logs + skillopt 优化企业 Skill | daemon 定时/事件 |
+| 🔍 **审计模块** | EXECUTE 阶段 `on_step: true`，每步执行后自动跑 24 条规则 | 每步执行后 |
+| 🔄 **回溯能力** | 审计后自动 git snapshot，违规一键回滚 | 审计完成后自动 |
+| 🧬 **进化模块** | think.md 反思 + Dream Cycle 吃 task/logs + evolve 优化企业 Skill | daemon 定时/事件 |
 
 ### 自我进化的两层边界
 
 | 进化层级 | 机制 | 状态 | 企业 SubAgent 能得到吗 |
 |---------|------|:--:|----------------------|
-| **行为级进化** | think.md 反思（不犯同样错）+ Dream Cycle 知识回灌（越跑越懂企业）+ skillopt Skill 优化（失败 3 次自动改） | ✅ 已交付/轻量态 | **能，自动获得**——沉淀机制随使用迭代（轻量态，效果待验证） |
+| **行为级进化** | think.md 反思（不犯同样错）+ Dream Cycle 知识回灌（越跑越懂企业）+ evolve Skill 优化（失败 3 次自动改） | ✅ 已交付/轻量态 | **能，自动获得**——沉淀机制随使用迭代（轻量态，效果待验证） |
 | **模型级进化** | QLoRA 后训练小模型（workflow 数据训练进权重） | ⚠️ v3.x-v4.x 远期 | 远期蓝图，当前不具备 |
 
-> 🔒 **进化不碰宪法**：进化引擎优化的是 Skill / 知识 / 反思，**不碰加载链第 1 层 SKILL.md 宪法**（4 底线 + 7 铁律，`❌ 不可修改`）。企业 SubAgent 的沉淀机制会随使用迭代，但不会"越用越不守规矩"——**自主性只给到能力层，宪法层永远不可改**。这是"受控自主"的设计哲学。
+> 🔒 **进化不碰宪法**：进化模块优化的是 Skill / 知识 / 反思，**不碰加载链第 1 层 SKILL.md 宪法**（4 底线 + 9 铁律，`❌ 不可修改`）。企业 SubAgent 的沉淀机制会随使用迭代，但不会"越用越不守规矩"——**自主性只给到能力层，宪法层永远不可改**。这是"受控自主"的设计哲学。
 
 ---
 
 ## 一句话总结
 
-> **FDE 诊断产出的是"图纸"（ontology + workflow + skills）。激活链是"施工队"——读图纸、砌墙（注册 Agent）、接水管（数据流）、通电（编排）、验收（审计）。施工完了，企业的业务流就自己跑起来了。**
+> **FDE 诊断产出的是"图纸"（ontology + workflow + skills）。激活链是"施工队"——读图纸、砌墙（注册 Agent）、接水管（数据流）、通电（编排）、验收（审计）。施工完了，企业的工作流就自己跑起来了。**

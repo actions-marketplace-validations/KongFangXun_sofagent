@@ -1,12 +1,12 @@
 // ============================================================
-// train-report.ts · MCP tool：train_report（v1.4.3 章六）
+// train-report.ts · MCP tool：train_report（v1.5.0 章六）
 // ============================================================
 //
 // 训练报告生成——客户可读交付物的 MCP 面：数据概况 + 训练配置 +
 // eval 对比 + 产物清单 + 量化四字段（GUIDE §4.3），归档
 // data/dashboard/train-reports/。
 // 委托 @sofagent/orchestrator 的 train-report.generateTrainReport
-// （复用章三 TrainEvalReport / 章二 dataset_version / v1.4.3 train job）。
+// （复用章三 TrainEvalReport / 章二 dataset_version / v1.5.0 train job）。
 // ============================================================
 
 import { getDataDir } from '@sofagent/core';
@@ -63,10 +63,13 @@ export async function trainReportTool(args: TrainReportArgs): Promise<TrainRepor
   }
 
   try {
+    // v1.4.8 第 7 批（train 拆包）：generateTrainReport 随 train 迁至 @sofagent/train；
+    // computeQuantification 是 FDE 侧 ROI 公式（fde/quantify-core），仍在 orchestrator 根 barrel。
     const orch = await import('@sofagent/orchestrator');
+    const train = await import('@sofagent/train');
     const dataDir = getDataDir();
 
-    const result = orch.generateTrainReport({
+    const result = train.generateTrainReport({
       dataDir,
       enterpriseId: enterprise_id,
       trainJobId: train_job_id,

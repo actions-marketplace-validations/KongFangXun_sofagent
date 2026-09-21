@@ -89,7 +89,7 @@ for drv in "${DRIVER_MODULES[@]}"; do
   # 会在到达 dry-run 逻辑之前就 SyntaxError 崩溃
   DRY_OUT=$(node "$drv" --target v0.0.0 --dry-run 2>&1)
   DRY_RC=$?
-  if [ "$DRY_RC" -eq 0 ] || echo "$DRY_OUT" | grep -q "dry-run\|启动\|target\|步骤"; then
+  if [ "$DRY_RC" -eq 0 ] || grep -q "dry-run\|启动\|target\|步骤" <<< "$DRY_OUT"; then
     PASS=$((PASS + 1))
   else
     echo -e "  ${RED}✗ dry-run 启动失败: ${drv}${NC}"
@@ -123,6 +123,7 @@ if [ "$LOAD_ONLY" = false ]; then
 
   TEST_FILES=(
     "FORGE/src/driver-base.test.mjs"
+    "FORGE/src/driver-watch.test.mjs"
     "FORGE/src/fresh-eyes-driver.test.mjs"
     "FORGE/src/release-gate-driver.test.mjs"
     "FORGE/src/preflight-check.test.mjs"

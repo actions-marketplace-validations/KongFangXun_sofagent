@@ -1,5 +1,5 @@
 // ============================================================
-// audit/cli/agent-shield.ts · AgentShield 五类配置面扫描 CLI（v1.4.3）
+// audit/cli/agent-shield.ts · AgentShield 五类配置面扫描 CLI（v1.5.0）
 // ============================================================
 //
 // 用法：
@@ -21,7 +21,7 @@
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { createAgentShield, DEFAULT_KNOWN_AGENTS } from '../agent-shield';
+import { createAgentShield, DEFAULT_KNOWN_AGENTS, computeShieldStats } from '../agent-shield';
 import type { ShieldFinding, ShieldScanResult } from '../agent-shield';
 
 /** agent-shield 子命令参数 */
@@ -90,7 +90,15 @@ export function discoverAgentConfigs(repoDir: string): string[] {
     join(repoDir, 'CLAUDE.md'), // Claude Code 仓库级
     join(homedir(), '.claude', 'CLAUDE.md'), // Claude Code 用户级
     join(homedir(), '.codex', 'fde.md'), // Codex 工作规则
-    join(homedir(), '.sofagent', 'skills', 'sofagent', 'SKILL.md'), // 已安装 SKILL
+    // v1.4.5 T16: install.sh 实际部署路径补齐——此前只查复数 skills/ 目录，
+    // install.sh:779 实际写 $SOFAGENT_HOME/skill/（单数）+ 平台 symlink
+    // （.{platform}/skills/sofagent → 单数源目录）。旧候选表对默认安装
+    // 完全扫不到 SKILL（agent-config 面对标准安装形同虚设）。
+    join(homedir(), '.sofagent', 'skill', 'SKILL.md'), // install.sh 单数源（默认安装）
+    join(homedir(), '.sofagent', 'skills', 'sofagent', 'SKILL.md'), // 兼容旧版复数目录
+    join(homedir(), '.workbuddy', 'skills', 'sofagent', 'SKILL.md'), // workbuddy 平台 symlink
+    join(homedir(), '.openclaw', 'skills', 'sofagent', 'SKILL.md'), // openclaw 平台 symlink
+    join(homedir(), '.cursor', 'skills', 'sofagent', 'SKILL.md'), // cursor 平台 symlink
   ];
   return candidates.filter(existsSync);
 }
@@ -134,6 +142,10 @@ export function runAgentShieldCli(args: AgentShieldArgs): number {
     repoDir: args.repoDir,
   });
   for (const c of mcpConfigs) result.findings.push(...shield.scanMcpConfig(c));
+  // v1.4.6 finding-11: stats 已在 scanAll 内部先行计算，不含上面追加的 MCP
+  // findings——用同一口径重算，保证 stats.total = findings.length、category
+  // 统计含 mcp-risk 项。
+  result.stats = computeShieldStats(result.findings);
 
   if (args.json) {
     console.log(JSON.stringify({

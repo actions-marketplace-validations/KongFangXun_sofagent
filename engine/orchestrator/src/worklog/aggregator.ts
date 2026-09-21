@@ -1,7 +1,7 @@
 // ============================================================
 // aggregator.ts · AI 工作明细数据层（worklog）
-// v1.4.3（三）：业务视角的「AI 节点这周干了什么」——零新数据，
-// 聚合既有三源 + 可选注入。本版只做数据罗列层（Web 工作明细页归 v1.4.3）
+// v1.5.0（三）：业务视角的「AI 节点这周干了什么」——零新数据，
+// 聚合既有三源 + 可选注入。本版只做数据罗列层（Web 工作明细页归 v1.5.0）
 //
 // 数据源口径盘点（2026-08-20 实测，开发日志同步标注）：
 // ① audit history.jsonl——审计级：timestamp/exitCode/ruleResults，无 duration
@@ -11,7 +11,7 @@
 // ③ LLM trace llm-calls.jsonl——模型调用级：ts/agentId/taskId/tokenInput/
 //    tokenOutput/durationMs（HMAC 链）
 //    → 消费面：模型调用耗时、token、成本估算
-// ④ failure-ledger.jsonl（skillopt）——错题复发率
+// ④ failure-ledger.jsonl（evolve）——错题复发率
 // ⑤ ab-test latest.json——AB 胜负（曲线历史有限，latest + 旧 ab-history.jsonl 兼容读）
 //
 // 节点耗时口径（如实标注，两种）：
@@ -25,7 +25,7 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import type { AuditHistoryEntry } from '@sofagent/audit';
 import type { LlmCallRecord } from '@sofagent/core';
-import { getDataDir } from '@sofagent/core';
+import { getDataDir, listLlmCallTraceFiles } from '@sofagent/core';
 
 // ── 类型定义 ──────────────────────────────────────────────
 
@@ -201,7 +201,8 @@ export class WorklogAggregator {
   }
 
   private readLlmTrace(): LlmCallRecord[] {
-    return readJsonl<LlmCallRecord>(join(this.dataDir, 'audit', 'runtime', 'llm-calls.jsonl'));
+    // repo-hash 段隔离后聚合读侧走枚举（旧平铺 + 各段全量）
+    return listLlmCallTraceFiles(this.dataDir).flatMap((f) => readJsonl<LlmCallRecord>(f));
   }
 
   private readAbLatest(): { winner: string; consecutiveWins: number; margin: number } | null {
@@ -433,16 +434,16 @@ export class WorklogAggregator {
     let repeatedPatterns = 0;
     let totalPatterns = 0;
     try {
-      // 动态 require 避免包间循环依赖（orchestrator 不依赖 skillopt）
+      // 动态 require 避免包间循环依赖（orchestrator 不依赖 evolve）
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const skillopt = require('@sofagent/skillopt') as {
+      const evolve = require('@sofagent/evolve') as {
         getFailurePatterns?: () => Array<{ occurrenceCount?: number }>;
       };
-      const patterns = skillopt.getFailurePatterns?.() ?? [];
+      const patterns = evolve.getFailurePatterns?.() ?? [];
       totalPatterns = patterns.length;
       repeatedPatterns = patterns.filter((p) => (p.occurrenceCount ?? 0) >= 3).length;
     } catch {
-      // skillopt 不可用（数据目录缺失等）——复发率 null，不臆造
+      // evolve 不可用（数据目录缺失等）——复发率 null，不臆造
     }
 
     // 三、AB 胜负曲线（latest.json）

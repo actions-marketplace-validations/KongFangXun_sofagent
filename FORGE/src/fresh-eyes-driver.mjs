@@ -31,14 +31,15 @@ import { createRequire } from 'module';
 import {
   readFileSync, writeFileSync, mkdirSync, existsSync,
   appendFileSync, readdirSync, renameSync, statSync,
-  openSync, closeSync, unlinkSync,
+  unlinkSync,
 } from 'fs';
+import { createHash } from 'crypto';
 import { join, resolve, dirname, relative, sep, basename } from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
 
 // v1.2.7 功能⑤：继承 driver-base 公共编排层
-import { createForgeDriverBase, runPreflight, formatPreflightReport, resolveMaxConcurrency, createConcurrencyDegrader, checkDriverLiveness } from './driver-base.mjs';
+import { createForgeDriverBase, runPreflight, formatPreflightReport, resolveMaxConcurrency, createConcurrencyDegrader, checkDriverLiveness, spawnDetachedDriverGeneric, runWatcherShared } from './driver-base.mjs';
 
 // 可见性：核心层 + 适配器（agent 无关 + 渐进适配）
 import { createVisibility, EVENTS } from './visibility.mjs';
@@ -143,6 +144,24 @@ function syncWorktreeToMain(runDir) {
     return out;
   }
 
+  // 🔴 主仓 dirty 隔离（并行 session 污染事故实锤）：sync 只看 HEAD 不看工作区，
+  // 主仓若有未收编改动（并行 session 残留），worktree merge 会因「本地改动将被
+  // 覆盖」冲突 → 回退 reset --hard → 把 worktree 里 b-fix 修复连带洗掉。防线：
+  // 主仓工作区 dirty 非空时跳过本轮 re-sync（保持上轮 HEAD，审查照常进行），
+  // 留 warning 给用户收编后下轮自动追平——审查基线略滞后优于修复被静默洗掉。
+  try {
+    const mainDirty = git('status --porcelain', REPO_ROOT)
+      .split('\n')
+      .filter((l) => l.trim() && !l.startsWith('??'));
+    if (mainDirty.length > 0) {
+      lastSyncedHead = mainHead; // 视为已对齐：下轮 HEAD 再前进时才重试 sync
+      out.mode = 'skip';
+      out.reason = `主仓工作区有 ${mainDirty.length} 个未收编文件（${mainDirty.slice(0, 3).map((l) => l.slice(3)).join(', ')}${mainDirty.length > 3 ? '…' : ''}），跳过 re-sync 防止 merge 冲突回退洗掉 b-fix 修复；请收编后下轮自动追平`;
+      console.error(`[worktree-sync] ⚠️ ${out.reason}`);
+      return out;
+    }
+  } catch { /* status 查询失败不阻断——沿用原 sync 逻辑 */ }
+
   // worktree 目录健全性：损坏（被外部清理/磁盘问题）直接重建
   try {
     git('rev-parse --git-dir', worktreeDir);
@@ -172,11 +191,28 @@ function syncWorktreeToMain(runDir) {
   //   到分支，commit 过的历史 reset 不掉，仅 HEAD 指针移动，旧 commit reflog 可达）；
   // ② 审查真相源是 runDir/round-*/ 下的 findings/result/summary 产物（不在 worktree 内）；
   // ③ 下一轮重审时 b-fix 修复若真重要会以新 finding 形态再现（重复率熔断兜底防空转）。
+  // 🔴 dirty 保险丝（run-2026-09-07 round-2→3 实锤）：worker 沙箱 git add 被拦时
+  // （commonjs 仓 .git 主 dir 不在 workspace 内），修复会以 dirty 形态滞留工作区，
+  // 此处 reset --hard 会静默洗掉整轮修复。防线：reset 前先快照 dirty diff 到
+  // roundDir/dirty-snapshot-<N>.patch 并给新 HEAD 打 apply 提示——patch 落盘即
+  // 真相源，永不静默丢失。
   try {
+    const dirty = git('status --porcelain', worktreeDir);
+    const dirtyFiles = dirty.split('\n').filter((l) => l.trim() && !l.startsWith('??'));
+    if (dirtyFiles.length > 0) {
+      const snapPath = join(runDir, `dirty-snapshot-${Date.now()}.patch`);
+      // 直接整树 diff（不加 pathspec）——沙箱 shell 引号转义在 git execSync
+      // 链路上不可靠，整树一次拿最稳；untracked 本就不在 diff 内，无需排除。
+      const diffOut = git('diff HEAD', worktreeDir);
+      if (diffOut.trim()) writeFileSync(snapPath, diffOut, 'utf-8');
+      console.error(`[worktree-sync] ⚠️ reset 前 worktree 有 ${dirtyFiles.length} 个 dirty 文件（疑似沙箱 git add 被拦的滞留修复），diff 已快照至 ${basename(snapPath)}`);
+      out.dirtySnapshot = basename(snapPath);
+      out.dirtyFiles = dirtyFiles.map((l) => l.slice(3));
+    }
     git(`reset --hard ${mainHead}`, worktreeDir);
     lastSyncedHead = mainHead;
     out.synced = true; out.mode = 'reset';
-    out.reason = `merge 冲突已回退 reset --hard ${mainHead.slice(0, 8)}（b-fix 已 commit 的历史保留在分支）`;
+    out.reason = `merge 冲突已回退 reset --hard ${mainHead.slice(0, 8)}（b-fix 已 commit 的历史保留在分支${out.dirtySnapshot ? `；dirty diff 已快照 ${out.dirtySnapshot}` : ''}）`;
     return out;
   } catch (err) {
     out.mode = 'fail'; out.reason = `merge/reset 均失败: ${err.message}`;
@@ -213,6 +249,60 @@ function resyncRebuildWorktree(runDir, targetHead) {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
 const REPO_ROOT  = resolve(__dirname, '../..');
+
+// ─── 版本指纹门禁（run 中途改 driver 代码事故防御）────────────
+// 事故形态：driver 主进程常驻数小时，worker 子进程每次 spawn 用 __filename
+// 从磁盘重读源码——运行中 commit 改动 driver 会让主进程内存步骤表与子进程
+// 磁盘步骤表错位（派发旧步骤名 → 子进程「未知步骤」exit 1 全灭，verify
+// 分片整轮报废）。防线：driver 模式启动时记指纹，spawn 前比对，不一致
+// fail-closed 立即退出（patch 已跑的轮次产物在 runDir 不丢，重启即可续跑）。
+const DRIVER_START_FINGERPRINT = createHash('sha256')
+  .update(readFileSync(__filename, 'utf-8'))
+  .digest('hex')
+  .slice(0, 16);
+
+// ─── 冻结窗口锁（提交时防线，与 exit 86 运行时防线两层兜底不互削）───
+// 问题：run 进行中任何 session 收编改动 driver 源码 → 主进程内存步骤表与
+// 磁盘代码错位 → 派发旧步骤名 worker 全灭。exit 86 指纹门禁是错位**发生后**
+// 的 fail-closed 兜底；本锁是错位**发生前**的提交时阻断（commit-msg hook
+// 消费）——SOP 条款只约束执行 session 自己，约束不到收编方，所以要上机制。
+// 锁内容：runId + 启动指纹 + PID + 启动时间。锁写失败不阻断 run（86 仍兜底）；
+// PID 已死（锁滞留）时 hook 侧 WARN 放行，不误伤历史残留。
+const RUN_LOCK_PATH = join(os.homedir(), '.sofagent', 'internal', 'fresh-eyes-run.lock');
+function acquireRunLock(runId) {
+  try {
+    mkdirSync(dirname(RUN_LOCK_PATH), { recursive: true });
+    writeFileSync(RUN_LOCK_PATH, JSON.stringify({
+      runId,
+      fingerprint: DRIVER_START_FINGERPRINT,
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+    }, null, 2) + '\n');
+    return true;
+  } catch { return false; } // 锁失败不阻断 run——运行时 86 门禁仍是兜底
+}
+function releaseRunLock() {
+  try { unlinkSync(RUN_LOCK_PATH); } catch { /* 无锁或已清——正常 */ }
+}
+
+function assertDriverCodeFingerprint(context) {
+  // worker 子进程不做校验（它就是被主进程校验的对象）；dry-run 无长驻风险也跳过
+  if (process.env.FORGE_DRIVER_MODE !== 'driver') return;
+  const current = createHash('sha256')
+    .update(readFileSync(__filename, 'utf-8'))
+    .digest('hex')
+    .slice(0, 16);
+  if (current !== DRIVER_START_FINGERPRINT) {
+    console.error('');
+    console.error('🔴 [版本指纹门禁] driver 源码在运行期间被修改——主进程内存代码与磁盘代码已错位！');
+    console.error(`   启动指纹 ${DRIVER_START_FINGERPRINT} ≠ 磁盘指纹 ${current}（校验点: ${context}）`);
+    console.error('   继续跑会产生「未知步骤」类全灭故障。请：');
+    console.error('   ① 停止本 run（已完成的轮次产物在 runDir 内不丢）');
+    console.error('   ② 用新代码重启 driver（--resume 可续跑断点）');
+    console.error('   ③ 需要改 driver 行为时，先停 run 再改再重启');
+    process.exit(86); // 专用退出码：代码指纹错位（watcher 可识别此码自动提示）
+  }
+}
 
 // CJS interop — dist 产物是 CommonJS，.mjs 里用 createRequire 导入
 const require = createRequire(import.meta.url);
@@ -251,7 +341,7 @@ const MODEL_CONFIGS = resolveConfigs(AGENTS_DIR);
 const TOOL_SOFT_LIMIT  = 35;   // stateModifier：超此值注入"立即写报告"HumanMessage
 const TOOL_HARD_LIMIT  = 45;   // stream loop：超此值进入"写报告窗口"
 // 审查类步骤（a-check/b-check）探索深度高（12 视角 × 2-3 文件），需要时间切换到报告模式
-// 修复/验证类步骤（b-fix/a-verify）是有限任务，5 步够用
+// 修复/验证类步骤（b-fix/c-verify）是有限任务，5 步够用
 // v1.2.7 run-07 教训（2026-08-05）：GLM-5.2 和 Qwen3.8-max 在写报告窗口内
 // 都继续调工具（HumanMessage 对有 tools 可用的模型无物理约束力）。
 // 窗口给了 15 步反而浪费 15 次工具调用的消息累积 → OOM 风险。
@@ -311,7 +401,7 @@ const base = createForgeDriverBase({
 //   工具预算充裕，报告质量大幅提升。
 //
 // STEPS 动态生成：A 侧 12 个 perspective worker + B 侧 12 个 perspective worker
-// + a-consolidate 合并 24 份报告 + b-fix/b-audit/a-verify 不变。
+// + a-consolidate 合并报告 + b-fix/b-audit/c-verify 不变（单盲默认 12 份）。
 
 /**
  * v1.2.9 功能①：fresh-eyes 审查的 12 个视角定义。
@@ -423,6 +513,11 @@ function resolveRoundScope(roundNum, worktreeDir, isLikelyCleanStop) {
  */
 function buildPerspectiveSteps() {
   const steps = {};
+  // 单盲改造：B 侧双盲 check 默认不生成——A 审（12 视角）→ B 修（b-fix）
+  // → C 验（c-verify）→ D 复核（d-review）四角色流水线取代 A/B 双盲。
+  // FORGE_ENABLE_B_CHECK=1 为 legacy 逃生门：恢复 24 视角双盲（含 B 侧报告
+  // 合并、成本翻倍），仅用于回归对照或四角色链故障时降级回旧链。
+  const enableBCheck = process.env.FORGE_ENABLE_B_CHECK === '1';
   for (const p of PERSPECTIVES) {
     steps[`a-check-p${p.id}`] = {
       role: 'A',
@@ -438,16 +533,18 @@ function buildPerspectiveSteps() {
       toolSoftLimit: PERSPECTIVE_TOOL_SOFT,
       toolHardLimit: PERSPECTIVE_TOOL_HARD,
     };
-    steps[`b-check-p${p.id}`] = {
-      role: 'B',
-      prompt: `b-check-perspective-${p.id}.md`,
-      outputs: [`check-b-p${p.id}.md`],
-      inputs: [],
-      perspective: p.label,
-      recursionLimit: 130,
-      toolSoftLimit: PERSPECTIVE_TOOL_SOFT,
-      toolHardLimit: PERSPECTIVE_TOOL_HARD,
-    };
+    if (enableBCheck) {
+      steps[`b-check-p${p.id}`] = {
+        role: 'B',
+        prompt: `b-check-perspective-${p.id}.md`,
+        outputs: [`check-b-p${p.id}.md`],
+        inputs: [],
+        perspective: p.label,
+        recursionLimit: 130,
+        toolSoftLimit: PERSPECTIVE_TOOL_SOFT,
+        toolHardLimit: PERSPECTIVE_TOOL_HARD,
+      };
+    }
   }
   return steps;
 }
@@ -455,7 +552,7 @@ function buildPerspectiveSteps() {
 const STEPS = {
   // v1.2.9 功能①：A/B 各 12 个 perspective worker（短任务化）
   ...buildPerspectiveSteps(),
-  // a-consolidate 合并 24 份 perspective 报告（A 侧 12 + B 侧 12）
+  // a-consolidate 合并 perspective 报告（单盲默认 A 侧 12 份；legacy 双盲 24 份）
   // maxTokens：步骤级输出 token 上限覆盖。未定义时回退到 MODEL_CONFIGS[role].maxTokens。
   // a-consolidate 需合并 A/B 两份完整 12 视角报告为单份 findings，输出超长，
   // 单独调高到 32000，避免顶格 16000 被截断生成不了合法 result.md（整轮降级根因）。
@@ -465,14 +562,15 @@ const STEPS = {
   // 单独提高预算：check worker 已有 12/15 覆盖（不受影响），不重蹈 run-06 全局 60/80 覆辙。
   // v1.4.4 优化四：增量模式下 a-consolidate 只收裁剪视角的报告——inputs
   // 由静态 24 份改为动态构造（本轮 activePerspectives）。全量模式行为不变。
+  // 单盲改造：inputs 动态取 buildPerspectiveSteps 实际生成的视角步骤（默认仅
+  // A 侧 12 份；FORGE_ENABLE_B_CHECK=1 时恢复 A+B 24 份）。
   'a-consolidate': {
     role: 'A',
     prompt: 'a-consolidate.md',
     outputs: ['findings.md', 'result.md'],
-    // 动态 inputs：模块加载时按全部 12 视角注入路径清单（runWorker 只拼路径
-    // 字符串，worker 端 sf_read 不存在的文件会跳过）；增量轮实际产物只有
-    // 裁剪视角的 2N 份，a-consolidate prompt 模板已声明「不存在的报告忽略」。
-    inputs: PERSPECTIVES.flatMap(p => [`check-a-p${p.id}.md`, `check-b-p${p.id}.md`]),
+    // 动态 inputs：与 buildPerspectiveSteps 的开关口径一致（b-check 默认不生成
+    // → inputs 不含 check-b-pN，worker 端 sf_read 不会尝试读不存在的文件）。
+    inputs: Object.values(buildPerspectiveSteps()).flatMap(s => s.outputs),
     maxTokens: 32000,
     toolSoftLimit: 60,
     toolHardLimit: 80,
@@ -480,7 +578,12 @@ const STEPS = {
   'b-fix':         { role: 'B', prompt: 'b-fix.md',         outputs: ['summary.md'],             inputs: ['result.md','findings.md'] },
   // v1.2.8 功能⑥：b-audit 步骤——b-fix 改完代码后 driver 自动跑 sofagent-audit
   'b-audit':       { role: null, prompt: null,              outputs: ['audit-result.md'],        inputs: [], driverFn: 'runAuditGate' },
-  'a-verify':      { role: 'A', prompt: 'a-verify.md',      outputs: ['result.md'],              inputs: ['findings.md','result.md','summary.md'] },
+  // 单盲改造：c-verify 取代 a-verify——A 兼任发现者+验证者是「原告兼法官」，
+  // C 为独立验收者（零上下文、与 A 无信息通路），每条亲手实测不采信自报。
+  'c-verify':      { role: 'C', prompt: 'c-verify.md',      outputs: ['result.md'],              inputs: ['findings.md','result.md','summary.md'] },
+  // 单盲改造新增：d-review——对抗性复核者 D，只处理 P0/P1，
+  // 产出 CONFIRM/DOWNGRADE/REOPEN 裁决 + 尾部 REOPEN_COUNT: N 机器可读行。
+  'd-review':      { role: 'D', prompt: 'd-review.md',      outputs: ['d-review.md'],            inputs: ['findings.md','result.md','summary.md'] },
 };
 
 /**
@@ -1334,18 +1437,20 @@ ${incrementalFiles.map(f => `- ${f}`).join('\n')}`;
   //   v1.2.5 run-01 教训：原 200 让 worker 有空间调 1119 次工具陷入死循环，
   //   但现在 L1/L2 熔断(200)会先介入，不会回到死循环。
   //   run-07 教训：50/60 步不够 v1.2.6 大范围审查取证，调到 200/200/500 给足冗余。
-  // - 文本处理类（a-consolidate/a-verify）：主要做合并/格式化，给 100 够了
+  // - 文本处理类（a-consolidate/c-verify）：主要做合并/格式化，给 100 够了
   // - b-fix：分片后每批 5 条 finding × 5 工具调用 = 25 步，给 150 是 6 倍余量
   //   太高会导致消息累积 OOM（exit 137）
-  // - a-verify：分片后每批 5 条 × 2 操作 = 10 步，给 150 是 15 倍余量
+  // - c-verify：分片后每批 5 条 × 2 操作 = 10 步，给 300 是 30 倍余量（独立验收者逐条实测更耗步）
   // v1.2.9 功能①：短任务化后 STEP_RECURSION_LIMITS 按新 step key 生成。
   // 每个 perspective worker 用 recursionLimit=30（单视角短任务）。
   // STEPS 中已定义 recursionLimit 字段的 perspective worker 直接从 stepDef 读取。
-  // 这里只为非 perspective 步骤（a-consolidate/b-fix/a-verify）保留显式覆盖。
+  // 这里只为非 perspective 步骤（a-consolidate/b-fix/c-verify/d-review）保留显式覆盖。
   const STEP_RECURSION_LIMITS = {
     'a-consolidate': 100,
     'b-fix': 300,
-    'a-verify': 300,
+    'c-verify': 300,
+    // d-review：对抗复核 P0/P1，每条读证据文件 1-2 次，80 步（=40 轮）足够
+    'd-review': 80,
   };
   // perspective worker（a-check-p1 ~ b-check-p12）的 recursionLimit 从 stepDef.recursionLimit 读取
   const recursionLimit = STEP_RECURSION_LIMITS[step] ?? stepDef.recursionLimit ?? 50;
@@ -1432,7 +1537,7 @@ ${incrementalFiles.map(f => `- ${f}`).join('\n')}`;
 
     const { createExecutionBackend } = await import('../../engine/orchestrator/dist/execution-backend.js');
     // v1.3.9（五）：按场景切后端——同 driver 两后端并存，后端选择显式：
-    //   审查类 step（a-check/b-check/a-consolidate/a-verify，对应 SOP 阶段一「审上版本」
+    //   审查类 step（a-check/b-check/a-consolidate/c-verify，对应 SOP 阶段一「审上版本」
     //   的审查场景）→ createReactAgent 保留；
     //   执行类 step（b-fix 修复执行，对应阶段四「审本版本」的执行场景）→ DSH；
     //   FORGE_FRESH_EYES_BACKEND / SOFAGENT_EXECUTION_BACKEND 环境变量可整体覆盖。
@@ -1533,6 +1638,20 @@ ${incrementalFiles.map(f => `- ${f}`).join('\n')}`;
   if (stepDef.outputs.length === 1) {
     const actualOutput = customOutputName || stepDef.outputs[0];
     const outPath = join(roundDir, actualOutput);
+    // v1.4.6 骨架占位门控（run-2026-09-07 实锤）：收敛指令要求「先写报告骨架再回填」，
+    // 部分 perspective worker 写完骨架即提前收工——61~201B 骨架经本通道静默落盘
+    // （completion 仅 689~1692 tokens），下游 a-consolidate 把占位当有效发现合并，
+    // 该视角的发现凭空丢失。门控镜像收敛要求第 4 条（≥500 字符且含 ## 标题）：
+    // 不过门 → 打 [empty-response] 标记抛错，spawnWorker 既有重试通道重启 worker
+    // （最多 2 次，三次仍不过才降级占位）。硬熔断的部分报告已带标记头且宽限窗口
+    // 机制已尽力抢救，不重复拦截（拦截会浪费整轮预算重跑）。
+    if (stepDef.perspective && !hardBreakFlag &&
+        !(text.length >= REPORT_MIN_CHARS && /^#{1,3}\s/m.test(text))) {
+      console.error(`[empty-response] [worker:${step}] 产物 ${text.length} 字符未达报告门控（≥${REPORT_MIN_CHARS} 字符且含 ## 标题）——疑似骨架未回填，触发重试`);
+      const err = new Error(`[worker:${step}] 报告产物未达质量门控（${text.length} 字符，疑似只写骨架未回填终稿）`);
+      err.isEmptyResponseError = true;
+      throw err;
+    }
     writeFileSync(outPath, text, 'utf-8');
     console.log(`[worker:${step}] 产物已写入 ${outPath}`);
   } else {
@@ -2279,26 +2398,27 @@ async function runBFixSharded(roundDir, target, round) {
 }
 
 /**
- * a-verify 分片执行：把 result.md 按 finding 切片，每批 BATCH_SIZE 条，
+ * c-verify 分片执行：把 result.md 按 finding 切片，每批 BATCH_SIZE 条，
  * 每批启动一个独立 worker（全新 agent session，零历史消息）。
+ * 单盲改造：原 a-verify（A 兼任验证）升级为 c-verify（独立验收者 C）。
  *
  * 与 runBFixSharded 平行，区别：
  *   - 每批输入文件名：result-verify-batch-N.md
  *   - 每批输出文件名：result-verified-batch-N.md
- *   - 最后合并覆盖回 result.md（a-verify 产物就是回填 verify 列的 result.md，
+ *   - 最后合并覆盖回 result.md（c-verify 产物就是回填 verify 列的 result.md，
  *     driver 的 parseStopCondition 读它判停止条件）
  *
  * @param {string} roundDir - round 目录绝对路径
  * @param {string} target   - 验证目标版本号
  * @param {number} round    - 轮次号
  */
-async function runAVerifySharded(roundDir, target, round) {
+async function runCVerifySharded(roundDir, target, round) {
   const resultPath = join(roundDir, 'result.md');
   const resultText = readFileSync(resultPath, 'utf-8');
 
   const findings = splitFindings(resultText);
   const BATCH_SIZE = computeBatchSize(findings.length);  // #7 动态 batch
-  console.log(`  [a-verify 分片] 共 ${findings.length} 条 finding，动态 batch=${BATCH_SIZE}`);
+  console.log(`  [c-verify 分片] 共 ${findings.length} 条 finding，动态 batch=${BATCH_SIZE}`);
 
   // 防回归：切出 0 条 finding 但 result.md 中 P0+P1 计数 > 0 时报警
   // Anti-regression: warn when 0 findings are parsed but P0/P1 markers exist
@@ -2328,7 +2448,7 @@ async function runAVerifySharded(roundDir, target, round) {
   }
 
   if (findings.length === 0) {
-    console.log(`  [a-verify 分片] 0 条 finding，跳过验证`);
+    console.log(`  [c-verify 分片] 0 条 finding，跳过验证`);
     writeFileSync(join(roundDir, 'verify.md'), '# verify.md · 本轮无 finding，跳过验证\n', 'utf-8');
     return;
   }
@@ -2339,18 +2459,18 @@ async function runAVerifySharded(roundDir, target, round) {
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i];
     const batchNum = i + 1;
-    console.log(`\n  [a-verify 分片 ${batchNum}/${batches.length}] 验证 finding: ${batch.map(f => f.id).join(', ')}`);
+    console.log(`\n  [c-verify 分片 ${batchNum}/${batches.length}] 验证 finding: ${batch.map(f => f.id).join(', ')}`);
 
     // 构造分片输入
     const batchResultPath = join(roundDir, `result-verify-batch-${batchNum}.md`);
     const batchHeader =
-      `# result-verify-batch-${batchNum}.md · A 验证（分片 ${batchNum}/${batches.length}）\n\n` +
+      `# result-verify-batch-${batchNum}.md · C 验证（分片 ${batchNum}/${batches.length}）\n\n` +
       `> 以下是本批 ${batch.length} 条的验证指令。\n\n---\n\n`;
     const batchContent = batch.map(f => f.content).join('\n\n---\n\n');
     writeFileSync(batchResultPath, batchHeader + batchContent, 'utf-8');
 
     try {
-      await spawnWorker('a-verify', roundDir, target, round, {
+      await spawnWorker('c-verify', roundDir, target, round, {
         customInputs: { 'result.md': `result-verify-batch-${batchNum}.md` },
         customOutput: `result-verified-batch-${batchNum}.md`,
       });
@@ -2359,7 +2479,7 @@ async function runAVerifySharded(roundDir, target, round) {
         batchResults.push(readFileSync(verifiedPath, 'utf-8'));
       }
     } catch (batchErr) {
-      console.warn(`\n  ⚠️  [a-verify 分片 ${batchNum}] 失败: ${batchErr.message}`);
+      console.warn(`\n  ⚠️  [c-verify 分片 ${batchNum}] 失败: ${batchErr.message}`);
       batchResults.push(
         `## 分片 ${batchNum} 验证失败\n\n` +
         `错误: ${batchErr.message}\n\n` +
@@ -2371,15 +2491,88 @@ async function runAVerifySharded(roundDir, target, round) {
 
   // 合并回填到 result.md
   const mergedResult = [
-    '# result.md · a-verify 分片合并（已回填 verify 列）',
+    '# result.md · c-verify 分片合并（已回填 verify 列）',
     '',
     `> 共 ${batches.length} 批，${findings.length} 条 finding`,
     '',
     ...batchResults,
   ].join('\n');
   writeFileSync(join(roundDir, 'result.md'), mergedResult, 'utf-8');
-  console.log(`\n  [a-verify 分片] 全部完成，已合并回填 result.md`);
+  console.log(`\n  [c-verify 分片] 全部完成，已合并回填 result.md`);
 }
+
+/**
+ * 解析 d-review.md 的 REOPEN 裁决并回注 findings.md（单盲改造新增）。
+ *
+ * 机器可读约定：d-review worker 在报告尾部输出精确行 `REOPEN_COUNT: N`。
+ * 解析协议（fail-closed 序：显式行 > 正文标记 > 无法消费）：
+ *   ① 尾部 REOPEN_COUNT: N 行存在 → 以 N 为准
+ *   ② 行缺失但正文含 REOPEN 裁决标记（| finding-xx | REOPEN | 表格行或
+ *      「REOPEN」独立判定词）→ 按正文标记计数（防 worker 忘写尾行丢裁决）
+ *   ③ 两者都无 → 返回 0（视为全 CONFIRM/DOWNGRADE，不误伤）
+ *
+ * 回注动作（REOPEN>0 时）：
+ *   - 把 D 的 REOPEN 项（finding 编号 + D 的理由）追加到 findings.md 顶部
+ *     「## D 复核打回（REOPEN）」小节，供下一轮 b-fix 消费
+ *   - driver 主循环见 needsReopenLoop 后重走 b-fix → c-verify → d-review
+ *     内循环，消耗修复批额度（上限 2，REOPEN_BATCH_MAX 控制）
+ *
+ * @param {string} roundDir - round 目录绝对路径
+ * @returns {number} REOPEN 条数（0 = 无打回）
+ */
+function applyDReviewReopens(roundDir) {
+  const reviewPath = join(roundDir, 'd-review.md');
+  if (!existsSync(reviewPath)) return 0;
+  const text = readFileSync(reviewPath, 'utf-8');
+
+  // ① 尾部精确行（取最后一次出现——防正文引用干扰）
+  const tailMatches = [...text.matchAll(/^REOPEN_COUNT:\s*(\d+)\s*$/gm)];
+  let count;
+  if (tailMatches.length > 0) {
+    count = parseInt(tailMatches[tailMatches.length - 1][1], 10);
+  } else {
+    // ② 正文 REOPEN 裁决标记：表格行（| finding-xx | REOPEN |）或
+    //    「裁决：REOPEN」形态。计数上限 20 防格式爆炸。
+    const bodyMarks = text.match(/\|\s*finding-[A-Z0-9-]+\s*\|[^|]*\|\s*REOPEN\b/gi)
+      || text.match(/裁决[：:]\s*REOPEN\b/gi)
+      || [];
+    count = Math.min(bodyMarks.length, 20);
+  }
+  if (!Number.isFinite(count) || count <= 0) return 0;
+
+  // 提取 REOPEN 段落（d-review.md 中裁决为 REOPEN 的 finding 块，
+  // 从 ### finding 标题到下一个 ### 之间）供回注
+  const reopenBlocks = [];
+  const sections = text.split(/\n(?=###\s)/);
+  for (const sec of sections) {
+    if (/\|\s*REOPEN\b|裁决[：:]\s*REOPEN/i.test(sec) && /finding/i.test(sec)) {
+      reopenBlocks.push(sec.trim());
+    }
+  }
+
+  // 回注 findings.md 顶部（存在才回注；不存在说明上游已崩，交主循环降级路径）
+  const findingsPath = join(roundDir, 'findings.md');
+  if (existsSync(findingsPath)) {
+    const orig = readFileSync(findingsPath, 'utf-8');
+    const inject = [
+      '## D 复核打回（REOPEN）',
+      '',
+      `> ⚠️ d-review 对抗复核打回 ${count} 条 P0/P1——b-fix 须按下方裁决重修：`,
+      '',
+      ...(reopenBlocks.length > 0
+        ? reopenBlocks.map(b => `${b}\n`)
+        : ['（D 未输出结构化 REOPEN 块——读 d-review.md 原文定位 REOPEN 项）\n']),
+      '---',
+      '',
+    ].join('\n');
+    writeFileSync(findingsPath, inject + orig, 'utf-8');
+    console.log(`     [d-review] REOPEN ${count} 条已回注 findings.md 顶部`);
+  }
+  return count;
+}
+
+/** REOPEN 回环修复批上限（单盲改造：REOPEN 打回消耗额度，默认 2 与外层修复批一致） */
+const REOPEN_BATCH_MAX = parseInt(process.env.FORGE_REOPEN_BATCH_MAX || '2', 10);
 
 /**
  * 起一个 worker 子进程（真·零上下文：独立 node 进程）。
@@ -2419,6 +2612,13 @@ const STALL_OVERRIDE = {
 };
 
 function spawnWorker(step, roundDir, target, round, options = {}) {
+  // 🔴 版本指纹门禁（run 中途改 driver 代码事故实锤）：worker 子进程每次 spawn
+  // 都从磁盘重读 driver 源码——若主进程启动后磁盘代码被换（并行 session commit /
+  // 热修复），主进程内存步骤表与子进程磁盘步骤表错位，派发旧步骤名会命中子进程
+  // 「未知步骤」全灭。防线：spawn 前比对磁盘 sha256 与启动指纹，不一致立即
+  // fatal（fail-closed），绝不让半旧半新的混血 loop 继续烧轮次。
+  assertDriverCodeFingerprint(step);
+
   /** 单次执行 worker 子进程 */
   function runOnce() {
     return new Promise((resolveP, rejectP) => {
@@ -2707,6 +2907,30 @@ function extractFindingsFromCheck(text, source) {
     });
   }
 
+  // ── 路径 C：单行括号格式（[视角] 路径:行号 · 描述 · 优先级(P1)）──
+  // 部分模型在 B 侧摘要中输出此格式；与 A（# 标题）/ B（| 表格）不重叠
+  for (const line of lines) {
+    const bracketMatch = line.match(/^\[([^\]]+)\]\s*(.+)$/);
+    if (!bracketMatch) continue;
+    const tail = bracketMatch[2].trim();
+    if (tail.startsWith('(')) continue; // markdown 链接 [标题](路径)，非 finding 行
+    const prioMatch = tail.match(/·\s*(?:优先级\s*[（(]\s*)?(P[0-3])\s*[）)]?\s*$/);
+    if (!prioMatch) continue;
+    const prio = prioMatch[1];
+    if (prio !== 'P0' && prio !== 'P1') continue;
+    const desc = tail.slice(0, prioMatch.index).replace(/·\s*$/, '').trim();
+    // 从描述中提取文件引用（含可选 :行号）作为修复目标
+    const fileRefs = desc.match(/[A-Za-z0-9_./-]+\.(?:ts|tsx|js|mjs|cjs|md|sh|json|ya?ml|html|css)(?::\d+)?/g);
+    const filePath = fileRefs ? fileRefs[0] : '(文件待确认)';
+    items.push({
+      title: desc.replace(fileRefs ? fileRefs[0] : '', '').replace(/^[\s:：·-]+/, '').slice(0, 80) || bracketMatch[1].trim(),
+      filePath,
+      desc: desc.slice(0, 200),
+      source: `${source}·${bracketMatch[1].trim()}`,
+      prio,
+    });
+  }
+
   return items;
 }
 
@@ -2771,7 +2995,8 @@ function writeFallbackFindings(roundDir) {
   const parts = ['# Fallback Findings（a-consolidate 失败降级·摘要模式）', '',
     '> ⚠️ a-consolidate 失败，以下为各 perspective 报告的 P0/P1 摘要（非完整报告）。', ''];
 
-  // v1.2.9 功能①：读全部 24 份 perspective 报告
+  // v1.2.9 功能①读全部 perspective 报告；单盲改造后默认只读 A 侧 12 份
+  // （legacy 双盲 FORGE_ENABLE_B_CHECK=1 时仍读 B 侧——文件存在即收，天然兼容旧 run 数据）。
   for (const p of PERSPECTIVES) {
     const checkA = join(roundDir, `check-a-p${p.id}.md`);
     const checkB = join(roundDir, `check-b-p${p.id}.md`);
@@ -2802,14 +3027,48 @@ function writeFallbackFindings(roundDir) {
     }
   }
 
+  // 🔴 fallback 去重器（降级链 findings 逐轮放大事故实锤）：降级提取不认识
+  // 「多视角报同一问题」——A/B 双盲同题各报一次、相近措辞各算一条，findings
+  // 8→16→20 逐轮滚雪球，b-fix 每轮修重复项。防线：按「文件路径 + 描述指纹」
+  // 去重——描述去空白/标点后做前缀匹配（视角间对同一问题的表述在文件锚点相同
+  // 时高度重合，常见形态是同题 + 一方多带补充尾巴；固定截断 slice(0,40) 对
+  // 短于 40 字符的描述不生效），一方是另一方前缀且公共部分 ≥20 字符即合并：
+  // 保留首条，来源追加标注，修复批工作量按去重后条数计。
+  const MIN_PREFIX_LEN = 20; // 公共前缀下限：防短指纹（如「版本号未更新」）过合并
+  const seenByFile = new Map(); // filePath → [{ normDesc, item }]
+  const deduped = [];
+  for (const it of extracted) {
+    const normDesc = (it.desc || '').replace(/[\s\p{P}\p{S}]+/gu, '');
+    let group = seenByFile.get(it.filePath);
+    if (!group) { group = []; seenByFile.set(it.filePath, group); }
+    const hit = group.find((prev) =>
+      Math.min(prev.normDesc.length, normDesc.length) >= MIN_PREFIX_LEN
+      && (normDesc.startsWith(prev.normDesc) || prev.normDesc.startsWith(normDesc)));
+    if (hit) {
+      const first = hit.item;
+      if (!first.dupSources) first.dupSources = [first.source];
+      first.dupSources.push(it.source);
+      continue;
+    }
+    group.push({ normDesc, item: it });
+    deduped.push(it);
+  }
+  if (deduped.length < extracted.length) {
+    console.log(`     [fallback 去重] ${extracted.length} → ${deduped.length} 条（合并 ${extracted.length - deduped.length} 条跨视角同题）`);
+  }
+  const finalExtracted = deduped;
+
   let resultContent;
-  if (extracted.length > 0) {
-    const findingBlocks = extracted.map((it, i) => {
+  if (finalExtracted.length > 0) {
+    const findingBlocks = finalExtracted.map((it, i) => {
       const seq = String(i + 1).padStart(2, '0');
+      const dupNote = it.dupSources
+        ? `（跨视角同题合并：${it.dupSources.join(' / ')}）`
+        : '';
       return [
         `### finding-${seq}: ${it.title}`,
         '',
-        `**来源**: ${it.source}（fallback 从 check 报告提取，请 b-fix 核实后再改）`,
+        `**来源**: ${it.source}（fallback 从 check 报告提取，请 b-fix 核实后再改）${dupNote}`,
         '',
         `**优先级**: ${it.prio}`,
         '',
@@ -2825,36 +3084,37 @@ function writeFallbackFindings(roundDir) {
     resultContent = [
       '# 修复结果（降级生成——a-consolidate 产物解析失败，由 check 报告提取）',
       '',
-      `> ⚠️ 降级生成——a-consolidate 失败。以下 ${extracted.length} 条 finding 由各 check 报告提取，优先级基于原文标记。`,
+      `> ⚠️ 降级生成——a-consolidate 失败。以下 ${finalExtracted.length} 条 finding 由各 check 报告提取（已跨视角去重），优先级基于原文标记。`,
       '',
       ...findingBlocks,
       '',
     ].join('\n');
   } else {
-    const p0 = (findingsText.match(/\bP0\b/g) || []).length;
-    const p1 = (findingsText.match(/\bP1\b/g) || []).length;
+    // 防御：禁止用全文正则统计 P0/P1 出现次数——"未发现 P0""无 P0 问题"这类
+    // 否定句同样命中，会产出虚构计数误导后续判停。提取失败时如实报 0 条，
+    // 原始摘要已落盘 findings.md，可人工查阅。
     resultContent = [
       '# 修复结果（降级生成——a-consolidate 失败）',
       '',
       `| # | 发现 | 优先级 | 状态 |`,
       `|---|------|--------|------|`,
-      `| fallback | a-consolidate 失败，findings 由各 perspective 报告摘要拼接 | P0×${p0} P1×${p1} | SKIP |`,
+      `| fallback | a-consolidate 失败，且各 check 报告未提取到 P0/P1 finding（原始摘要见 findings.md） | P0×0 P1×0 | SKIP |`,
       '',
     ].join('\n');
   }
   writeFileSync(join(roundDir, 'result.md'), resultContent, 'utf-8');
 
   // v1.3.0 run-23 修复：写独立降级标记文件 degraded.flag。
-  // 降级标记不能只存在 result.md——a-verify 步骤会覆盖 result.md（回填 verify 列），
+  // 降级标记不能只存在 result.md——c-verify 步骤会覆盖 result.md（回填 verify 列），
   // 把"降级生成"文本抹掉 → parseStopCondition 读到干净 result.md → 降级轮被误判
-  // isClean=true（run-23 R1 实测）。flag 与 result.md 解耦，a-verify 覆盖不影响。
+  // isClean=true（run-23 R1 实测）。flag 与 result.md 解耦，c-verify 覆盖不影响。
   // parseStopCondition 优先查 flag；文本标记匹配保留做旧 run 数据兼容。
   const degradedFlag = join(roundDir, 'degraded.flag');
   writeFileSync(degradedFlag,
-    `fallback-rebuild\nreason: a-consolidate 产物解析失败，由 check 报告降级重建\ntime: ${new Date().toISOString()}\nfindings: ${extracted.length}\n`,
+    `fallback-rebuild\nreason: a-consolidate 产物解析失败，由 check 报告降级重建\ntime: ${new Date().toISOString()}\nfindings: ${finalExtracted.length}\n`,
     'utf-8');
 
-  console.log(`     降级 findings.md 已写入（check 提取 ${extracted.length} 条可修 finding，degraded.flag 已标记）`);
+  console.log(`     降级 findings.md 已写入（check 提取 ${finalExtracted.length} 条可修 finding（去重后），degraded.flag 已标记）`);
 }
 
 /**
@@ -2949,7 +3209,7 @@ function parseStopCondition(roundDir) {
   // 占位文件内容特征：包含"崩溃""降级占位""worker 异常终止""a-consolidate 失败"等标记。
   //
   // v1.3.0 run-23 修复：优先查独立降级标记文件 degraded.flag——文本标记存在 result.md
-  // 里会被 a-verify 覆盖抹掉（run-23 R1 实测降级轮被误判 isClean=true）。flag 与
+  // 里会被 c-verify 覆盖抹掉（run-23 R1 实测降级轮被误判 isClean=true）。flag 与
   // result.md 解耦，任何下游覆盖都不影响。文本标记匹配保留做旧 run 数据兼容（取或）。
   let isDegraded = false;
   // v1.3.9 P1-2：降级分类——区分「基建/聚合层失败」vs「worker 质量信号」。
@@ -2992,7 +3252,8 @@ function parseStopCondition(roundDir) {
   // 不含 P0/P1 标记也不含降级标记词 → 数标记得到 0/0/0 → isClean=true → 假阳性。
   // 补充检查：check 产物太短说明审查不完整，强制不干净。
   // v1.2.9 功能①：短任务化后 check 产物从 check-a.md/check-b.md 变为
-  // check-a-p1~12.md / check-b-p1~12.md（24 份）。检查每份的最小字节数。
+  // check-a-p1~12.md / check-b-p1~12.md。单盲改造后默认仅 A 侧 12 份落盘
+  // （existsSync 判定天然兼容——B 侧不存在不计入总数，不误判降级）。
   //
   // v1.3.1 run-03 教训：原逻辑"任一 checkFile < 200 → isDegraded=true"是
   // 一票否决——1 份短产物连累 23 份正常产物，整轮被误判降级。实测 run-03
@@ -3126,9 +3387,12 @@ function appendLedger(dateStr, runId, rounds, counts, stopReason, runDir) {
  */
 function summarizeRoundCost(runDir, roundNum) {
   const usagePath = join(runDir, 'usage.jsonl');
+  // 单盲改造：C（验收）/D（复核）角色纳入成本摘要（legacy run 无 C/D 记录时恒 0）
   const summary = {
     A: { model: '', tokens: 0, cost: 0 },
     B: { model: '', tokens: 0, cost: 0 },
+    C: { model: '', tokens: 0, cost: 0 },
+    D: { model: '', tokens: 0, cost: 0 },
   };
 
   if (!existsSync(usagePath)) return summary;
@@ -3158,9 +3422,12 @@ function summarizeRoundCost(runDir, roundNum) {
  */
 function appendUsageSummary(runDir, rounds) {
   const usagePath = join(runDir, 'usage.jsonl');
+  // 单盲改造：C/D 角色纳入总用量（legacy run 无 C/D 记录时恒 0）
   const byRole = {
     A: { model: '', prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cost_cny: 0 },
     B: { model: '', prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cost_cny: 0 },
+    C: { model: '', prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cost_cny: 0 },
+    D: { model: '', prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cost_cny: 0 },
   };
 
   if (existsSync(usagePath)) {
@@ -3447,10 +3714,15 @@ async function runRound(roundNum, runDir, target, dryRun, opts = {}) {
           written++;
         }
         if (written >= 8) {
-          console.log(`  [草稿预筛] 已写入 ${written}/12 个视角切片，B 侧双盲复核不可省——只跑 B 的 12 个 check worker`);
-          const bOnlyWorkers = PERSPECTIVES.map(p => [`b-check-p${p.id}`, roundDir, target]);
-          await spawnParallel(bOnlyWorkers, roundNum);
-          // 跳过 A 侧 check（草稿已代 A 侧），直接进 a-consolidate 后半轮
+          // 单盲改造：草稿已代 A 侧 check，单盲链无 B 侧双盲可省——
+          // 直接进后半轮。legacy 双盲（FORGE_ENABLE_B_CHECK=1）仍补跑 B 侧 12 个。
+          if (process.env.FORGE_ENABLE_B_CHECK === '1') {
+            console.log(`  [草稿预筛] 已写入 ${written}/12 个视角切片，legacy 双盲开启——补跑 B 侧 12 个 check worker`);
+            const bOnlyWorkers = PERSPECTIVES.map(p => [`b-check-p${p.id}`, roundDir, target]);
+            await spawnParallel(bOnlyWorkers, roundNum);
+          } else {
+            console.log(`  [草稿预筛] 已写入 ${written}/12 个视角切片（单盲链，无 B 侧双盲），直接进后半轮`);
+          }
           return await runRoundTail(roundNum, roundDir, target, runDir);
         }
         console.warn(`  ⚠️ [草稿预筛] 切片不足（${written}/12，需 ≥8），回退全量流程`);
@@ -3463,11 +3735,14 @@ async function runRound(roundNum, runDir, target, dryRun, opts = {}) {
   if (dryRun) {
     console.log('  [dry-run] 将执行以下步骤：');
     console.log(`    ① a-check × 12 视角 (A 独立审查·短任务化)  → check-a-p1~12.md`);
-    console.log(`    ② b-check × 12 视角 (B 独立审查·短任务化)  → check-b-p1~12.md   [与①并行]`);
-    console.log('    ③ a-consolidate (A 合并 24 份报告)         → findings.md + result.md');
+    if (process.env.FORGE_ENABLE_B_CHECK === '1') {
+      console.log(`    ② b-check × 12 视角 (B 独立审查·legacy 双盲逃生门)  → check-b-p1~12.md   [与①并行]`);
+    }
+    console.log(`    ③ a-consolidate (A 合并 ${process.env.FORGE_ENABLE_B_CHECK === '1' ? 24 : 12} 份报告)     → findings.md + result.md`);
     console.log('    ④ b-fix     (B 修复)                      → summary.md');
     console.log('    ④½ b-audit  (dogfooding)                  → audit-result.md [v1.2.8]');
-    console.log('    ⑤ a-verify  (A 验证·分片)                → result.md 回填 verify');
+    console.log('    ⑤ c-verify  (C 验证·分片·独立验收者)      → result.md 回填 verify');
+    console.log('    ⑥ d-review  (D 复核·对抗裁决 P0/P1)       → d-review.md + REOPEN_COUNT');
     const counts = parseStopCondition(roundDir);
     return { roundDir, counts, isClean: true };
   }
@@ -3483,7 +3758,11 @@ async function runRound(roundNum, runDir, target, dryRun, opts = {}) {
   //   省 B 侧约一半 token。视角独立性保留：B 仍以自己的视角身份评判，
   //   A 报错的地方 B 可推翻，A 漏报的地方 B 兜底补充（prompt 明示）。
   //   复核指令经 FORGE_B_REVIEW_MODE 环境变量注入 worker（prompt 构造处拼接）。
-  console.log('\n  [步骤 ①②] A 全量审查 + B 复核模式（24 perspective worker，并发=' + MAX_CONCURRENCY + '，来源=' + CONCURRENCY_RESOLVED.source + '）...');
+  // TDZ 修复：enableBCheck 原声明在本函数下方（原 L3776），首次使用却在此处
+  // ——const 暂时性死区，Round 1 启动即 ReferenceError 致命退出（20260912-01）。
+  // 注意：步骤①②日志（引用 allPerspectiveWorkers）也一并下移到声明之后——
+  // 它同时引用了尚未声明的 allPerspectiveWorkers，先修一个还会炸下一个。
+  const enableBCheck = process.env.FORGE_ENABLE_B_CHECK === '1';
 
   // v1.2.9 功能②：worker 级断点——跳过已完成的 perspective worker（resume 模式）
   const resumeCompletedWorkers = resumeStateForRound?.completedWorkers || [];
@@ -3494,13 +3773,15 @@ async function runRound(roundNum, runDir, target, dryRun, opts = {}) {
   if (roundScope.mode === 'incremental') {
     console.log(`\n  [增量模式] 上轮 b-fix 改动 ${roundScope.incrementalFiles.length} 个文件，裁剪视角 ${roundScope.perspectives.length}/12：${roundScope.perspectives.map(p => p.label).join('、')}`);
   } else {
-    console.log(`\n  [全量模式] 12 视角 × A/B（round-1 / 确认轮 / 增量边界不可用）`);
+    console.log(`\n  [全量模式] 12 视角（单盲 A 侧${enableBCheck ? ' + B 双盲 legacy' : ''}：round-1 / 确认轮 / 增量边界不可用）`);
   }
   const activePerspectives = roundScope.perspectives;
+  // enableBCheck 声明已上移至首次使用前（TDZ 修复，20260912-01）——此处不再重复声明
   const allPerspectiveWorkers = activePerspectives.flatMap(p => [
     [`a-check-p${p.id}`, roundDir, target],
-    [`b-check-p${p.id}`, roundDir, target],
+    ...(enableBCheck ? [[`b-check-p${p.id}`, roundDir, target]] : []),
   ]);
+  console.log('\n  [步骤 ①②] A 全量审查（单盲 ' + (enableBCheck ? '+ B 双盲（legacy）' : '12 视角') + '，' + allPerspectiveWorkers.length + ' perspective worker，并发=' + MAX_CONCURRENCY + '，来源=' + CONCURRENCY_RESOLVED.source + '）...');
   // 过滤掉已完成的 worker（resume 模式跳过）
   const pendingWorkers = allPerspectiveWorkers.filter(
     ([step]) => !resumeCompletedWorkers.includes(step)
@@ -3552,6 +3833,21 @@ async function runRound(roundNum, runDir, target, dryRun, opts = {}) {
     }
 
     // 降级：perspective worker 崩溃时写部分报告占位，让后续步骤能继续。
+    // 🔴 系统性失败熔断（run-01 2026-09-07 实锤）：DSH API 漂移让 24 个
+    // perspective worker 全崩（"events is not iterable"），逐个降级占位后
+    // 循环照常推进——2 小时 token 全烧在必废 worker 上。系统性故障 ≠ 个别
+    // worker 抖动：失败率 ≥ 2/3 且 ≥ 5 个（阈值双门）= 环境级问题，占位降级
+    // 失去意义（合并步骤拿不到任何真报告），立即中止 run 交人工修环境。
+    const totalWorkers = batchWorkers.length;
+    const failCount = checkFailures.length;
+    if (totalWorkers >= 5 && failCount >= Math.ceil(totalWorkers * 2 / 3)) {
+      const sampleReason = checkFailures[0]?.reason?.message || String(checkFailures[0]?.reason || 'unknown');
+      throw new Error(
+        `[systemic-failure] ${failCount}/${totalWorkers} perspective worker 失败（≥2/3 且 ≥5）——` +
+        `疑似环境级故障（API 漂移/网络/后端崩溃），中止 run 修环境后再跑。` +
+        `首个失败样本: ${sampleReason}`
+      );
+    }
     for (const f of checkFailures) {
       console.warn(`\n  ⚠️  ${f.step} 失败: ${f.reason?.message || f.reason}`);
       const outFile = f.step.startsWith('a-check')
@@ -3580,7 +3876,7 @@ async function runRound(roundNum, runDir, target, dryRun, opts = {}) {
     // 双盲的本质要求是「信息隔离」（B 不看 A 的结论），不是「时间串行」——
     // 本段 A/B 同批并行、各写各的 check-a-pN/check-b-pN，互不可见对方产物，
     // 双盲语义完整保留；关键路径从 A 串 + B 串 = 24 worker 压到最长 worker。
-    console.log(`\n  [批次 A+B] ${pendingWorkers.length} 个 perspective worker（A/B 双盲并行，并发=${MAX_CONCURRENCY}）...`);
+    console.log(`\n  [批次 check] ${pendingWorkers.length} 个 perspective worker（单盲 A 侧${enableBCheck ? ' + B legacy 双盲' : ''}并行，并发=${MAX_CONCURRENCY}）...`);
     await runCheckBatch(pendingWorkers);
   }
 
@@ -3589,7 +3885,7 @@ async function runRound(roundNum, runDir, target, dryRun, opts = {}) {
 }
 
 /**
- * 轮后半段：a-consolidate → b-fix → b-audit → a-verify → 停止判定 + 成本摘要。
+ * 轮后半段：a-consolidate → b-fix → b-audit → c-verify → d-review → 停止判定 + 成本摘要。
  * v1.4.4 优化五：从 runRound 抽出——常规路径与草稿预筛路径共用。
  */
 async function runRoundTail(roundNum, roundDir, target, runDir) {
@@ -3607,7 +3903,7 @@ async function runRoundTail(roundNum, roundDir, target, runDir) {
 
   // 步骤 ④ B 修复（分片执行）
   // 如果 b-fix 整体崩溃（模型错误/API 超时/未预期异常），降级写一个最小 summary.md，
-  // 让循环能继续走到 a-verify。findings/result 保留不丢——是审查成果。
+  // 让循环能继续走到 c-verify。findings/result 保留不丢——是审查成果。
   console.log('\n  [步骤 ④] B 按 result.md 修复（分片模式）...');
   try {
     await runBFixSharded(roundDir, target, roundNum);
@@ -3646,14 +3942,40 @@ async function runRoundTail(roundNum, roundDir, target, runDir) {
     console.warn(`     降级：跳过审计，循环继续`);
   }
 
-  // 步骤 ⑤ A 验证（分片执行）
-  // 如果 a-verify 崩溃，降级跳过验证——parseStopCondition 仍能从 findings/result 判停止。
-  console.log('\n  [步骤 ⑤] A 验证修复（分片模式）...');
+  // 步骤 ⑤ C 验证（分片执行）——单盲改造：独立验收者 C 取代 A 兼任验证
+  // 如果 c-verify 崩溃，降级跳过验证——parseStopCondition 仍能从 findings/result 判停止。
+  console.log('\n  [步骤 ⑤] C 验证修复（分片模式）...');
   try {
-    await runAVerifySharded(roundDir, target, roundNum);
+    await runCVerifySharded(roundDir, target, roundNum);
   } catch (verifyErr) {
-    console.warn(`\n  ⚠️  a-verify 失败: ${verifyErr.message}`);
+    console.warn(`\n  ⚠️  c-verify 失败: ${verifyErr.message}`);
     console.warn(`     降级：跳过验证，result.md verify 列不回填`);
+  }
+
+  // 步骤 ⑥ D 复核（单盲改造新增）——对抗性复核 P0/P1 裁决。
+  // d-review 读 findings/result/summary，对每条 P0/P1 给出
+  // CONFIRM（维持）/ DOWNGRADE（降级）/ REOPEN（打回重修）裁决，
+  // 尾部输出 REOPEN_COUNT: N 机器可读行。
+  // REOPEN 处理协议：REOPEN>0 → 把 D 的 REOPEN 项回注 findings.md，
+  // 主循环重走 b-fix → c-verify → d-review 内循环（消耗修复批额度，
+  // 上限 REOPEN_BATCH_MAX——与外层「连续 2 轮无 P0/P1」停止条件解耦：
+  // REOPEN 回环算修复批不算新轮次）。额度耗尽仍有 REOPEN → 如实记
+  // NOT-CLEAN 交人工分诊。d-review 崩溃 → 降级跳过复核（c-verify 的
+  // verify 列已回填，停止判定仍可进行；丢的是对抗复核这道保险）。
+  console.log('\n  [步骤 ⑥] D 复核（对抗性裁决 P0/P1）...');
+  let needsReopenLoop = false;
+  try {
+    await spawnWorker('d-review', roundDir, target, roundNum);
+    const reopenCount = applyDReviewReopens(roundDir);
+    if (reopenCount > 0) {
+      console.warn(`\n  ⚠️  [d-review] REOPEN_COUNT=${reopenCount}，打回重修（消耗修复批额度）`);
+      needsReopenLoop = true;
+    } else {
+      console.log(`     ✅ D 复核完成：无 REOPEN 项（CONFIRM/DOWNGRADE 裁决已记 d-review.md）`);
+    }
+  } catch (reviewErr) {
+    console.warn(`\n  ⚠️  d-review 失败: ${reviewErr.message}`);
+    console.warn(`     降级：跳过对抗复核，循环继续（丢失 P0/P1 复核保险）`);
   }
 
   // 判定停止条件
@@ -3670,7 +3992,7 @@ async function runRoundTail(roundNum, roundDir, target, runDir) {
     `合计: ¥${(costSummary.A.cost + costSummary.B.cost).toFixed(4)}`
   );
 
-  return { roundDir, counts, isClean: counts.isClean };
+  return { roundDir, counts, isClean: counts.isClean, needsReopenLoop };
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3691,147 +4013,36 @@ async function detectReporters() {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  v1.3.9 进程守护：daemon 自脱离 + watcher 主管（Harness 理念）
+//  v1.4.6 进程守护 v2：watcher 四件套收编 driver-base 共享（三缺口修复：
+//  respawn 封顶 / 快速死亡环检测 / watcher 心跳）——本文件只留薄适配层。
 // ═══════════════════════════════════════════════════════════
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/**
- * detached spawn 本 driver（脱离父进程树）。
- *
- * WorkBuddy run_in_background 的进程挂在 Electron 进程树下，主 session turn
- * 结束时会被整体清理（run-01 两次静默死亡根因：无 .ips、无 stopReason、
- * 心跳戛然而止 = 进程树 SIGKILL）。detached:true 让子进程成为孤儿进程
- * （由 launchd 收养），彻底脱离 WorkBuddy 生命周期。
- *
- * 日志重定向：stdio 直接绑打开的文件 fd（非 'ignore'，否则 console 输出全丢）。
- *
- * @param {string[]} args    传给本 driver 的 CLI 参数（不含脚本路径）
- * @param {string}   logPath 日志文件绝对路径
- * @param {Object}   env     附加环境变量（如 SOFAGENT_DAEMON_CHILD）
- * @returns {number} 子进程 pid
- */
+/** fresh-eyes 的 daemon 拉起（spawn 本 driver detached）——共享版转发 */
 function spawnDetachedDriver(args, logPath, env = {}) {
-  mkdirSync(dirname(logPath), { recursive: true });
-  const logFd = openSync(logPath, 'a');
-  try {
-    const child = spawn(process.execPath, [fileURLToPath(import.meta.url), ...args], {
-      detached: true,
-      stdio: ['ignore', logFd, logFd],
-      env: { ...process.env, ...env },
-    });
-    child.unref();
-    return child.pid;
-  } finally {
-    closeSync(logFd); // 父进程关闭自己的 fd 副本（子进程持有继承副本）
-  }
+  return spawnDetachedDriverGeneric(fileURLToPath(import.meta.url), args, logPath, env);
 }
 
-/**
- * 死因审计——Harness「审计」能力落地。
- *
- * driver 死后把可得的死因证据落盘 runDir/death-audit.jsonl（append）：
- *  - pidfile 残留（driver.pid 没被 SIGTERM handler 删除 = 非优雅退出）
- *  - latest.json stopReason（SIGTERM 优雅终止会写 'aborted-signal'）
- *  - 判定 verdict：signal-abort（SIGTERM 优雅）/ external-kill（外部强制，默认）
- *
- * @returns {Object} 审计条目（同时落盘）
- */
-function auditDriverDeath(runDir, liveness) {
-  const entry = {
-    ts: new Date().toISOString(),
-    heartbeatAgeMs: liveness.heartbeatAgeMs ?? null,
-    lastEvent: liveness.lastEvent ?? null,
-    phase: liveness.phase ?? null,
-    pidfile: (() => {
-      try {
-        const p = join(runDir, 'driver.pid');
-        return existsSync(p) ? readFileSync(p, 'utf-8').trim() : null;
-      } catch { return null; }
-    })(),
-    stopReason: null,
-    verdict: 'external-kill',
-  };
-  // latest.json 的 stopReason：SIGTERM handler 写 'aborted-signal'，SIGKILL 不写
-  try {
-    const latestPath = join(runDir, 'latest.json');
-    if (existsSync(latestPath)) {
-      const latest = JSON.parse(readFileSync(latestPath, 'utf-8'));
-      if (latest.stopReason) entry.stopReason = latest.stopReason;
-    }
-  } catch { /* latest.json 读失败不阻断审计 */ }
-  if (entry.stopReason === 'aborted-signal') entry.verdict = 'signal-abort';
-  try {
-    appendFileSync(join(runDir, 'death-audit.jsonl'), JSON.stringify(entry) + '\n');
-  } catch { /* 审计落盘失败不阻断 watcher 主循环 */ }
-  return entry;
-}
-
-/**
- * 从 runDir 现有元数据构造 resume 参数（target/maxRounds）。
- * latest.json 优先，resume-point.json 兜底。缺 target 返回 null（无法续跑）。
- */
-function buildRespawnArgs(runDir) {
-  for (const f of ['latest.json', 'resume-point.json']) {
-    try {
-      const p = join(runDir, f);
-      if (!existsSync(p)) continue;
-      const j = JSON.parse(readFileSync(p, 'utf-8'));
-      if (j && typeof j.target === 'string' && j.target) {
-        return { target: j.target, maxRounds: j.maxRounds || 10 };
-      }
-    } catch { /* 单个源损坏继续尝试下一个 */ }
+/** resume 参数提取（fresh-eyes 特有：target + maxRounds） */
+function extractFreshEyesRespawnArgs(j) {
+  if (j && typeof j.target === 'string' && j.target) {
+    return { args: ['--target', j.target, '--max-rounds', String(j.maxRounds || 10), '--resume'] };
   }
   return null;
 }
 
-/**
- * watcher 主管主循环——Harness 理念落地：
- *  注入（启动规则）→ 审计（死因落盘）→ 回溯（--resume 断点续跑）。
- *
- * 每 intervalSec 读 status.json 心跳（复用 checkDriverLiveness 判定）；
- * driver 心跳停 → auditDriverDeath 留痕 → spawnDetachedDriver --resume 拉起；
- * verdict.md 产出 → watcher 退出（任务完成）。
- */
+/** watcher 适配（--watch 模式入口）——共享循环 + fresh-eyes 差异注入 */
 async function runWatcher(runDir, intervalSec, thresholdSec) {
-  const log = (msg) => console.log(`[watcher] ${new Date().toISOString()} ${msg}`);
-  mkdirSync(runDir, { recursive: true });
-  try { writeFileSync(join(runDir, 'watcher.pid'), String(process.pid)); } catch { /* pidfile 失败不阻断 */ }
-  log(`启动 pid=${process.pid} · 盯 ${runDir} · interval=${intervalSec}s threshold=${thresholdSec}s`);
-
-  let resumeCount = 0;
-  while (true) {
-    if (existsSync(join(runDir, 'verdict.md'))) {
-      log('✅ verdict.md 已产出——主管任务完成，退出');
-      return;
-    }
-    const live = checkDriverLiveness(runDir, { thresholdMs: thresholdSec * 1000 });
-    if (live.alive) {
-      await sleep(intervalSec * 1000);
-      continue;
-    }
-    const death = auditDriverDeath(runDir, live);
-    log(`🛑 driver 死亡（heartbeat ${Math.round((death.heartbeatAgeMs ?? 0) / 1000)}s 未更新）→ verdict=${death.verdict} phase=${death.phase ?? '?'}`);
-    const respawn = buildRespawnArgs(runDir);
-    if (!respawn) {
-      log('⚠️ 无法构造 resume 参数（缺 target）——主管退出，需人工介入');
-      return;
-    }
-    resumeCount++;
-    log(`🔄 自动拉起 driver #${resumeCount}：--target ${respawn.target} --max-rounds ${respawn.maxRounds} --resume`);
-    try {
-      spawnDetachedDriver(
-        ['--target', respawn.target, '--max-rounds', String(respawn.maxRounds), '--resume'],
-        join(runDir, 'driver.log'),
-        { SOFAGENT_DAEMON_CHILD: '1' },
-      );
-    } catch (err) {
-      log(`💥 spawn 失败: ${err.message}——主管退出，需人工介入`);
-      return;
-    }
-    // 拉起后立即睡眠一轮（避免 driver 刚启动 status.json 尚未生成被误判 dead 反复拉起）
-    await sleep(intervalSec * 1000);
-  }
+  const result = await runWatcherShared({
+    driverEntry: fileURLToPath(import.meta.url),
+    runDir,
+    intervalSec,
+    thresholdSec,
+    extractArgs: extractFreshEyesRespawnArgs,
+  });
+  // 退出码语义：verdict-done=0（正常）；resume-max/quick-death-loop/spawn-fail=1（需人工）
+  process.exit(result.rc);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3894,6 +4105,9 @@ async function main() {
   }
 
   // ─── Driver 模式 ───
+  // 版本指纹门禁标记：本进程是长驻 driver 主进程（spawnWorker 内的
+  // assertDriverCodeFingerprint 只在 driver 模式做磁盘比对）。
+  process.env.FORGE_DRIVER_MODE = 'driver';
 
   // ─── v1.2.8 功能⑦：断点续跑（--resume）───
   // driver 被杀后已完成轮的产物全部有效；--resume 从断点继续，不重跑已完成轮。
@@ -4030,7 +4244,8 @@ async function main() {
 
   // 验证环境变量
   const missingEnvs = [];
-  for (const role of ['A', 'B']) {
+  // 单盲改造：C/D 与 A/B 同模型（profile 同源），key/spec env 同名校验
+  for (const role of ['A', 'B', 'C', 'D']) {
     const cfg = MODEL_CONFIGS[role];
     if (!process.env[cfg.apiKeyEnv])  missingEnvs.push(cfg.apiKeyEnv);
     if (!process.env[cfg.specEnv])    missingEnvs.push(cfg.specEnv);
@@ -4053,7 +4268,7 @@ async function main() {
         repoRoot: REPO_ROOT,
         runDir: join(RUNS_DIR, 'fresh-eyes-loop'), // 预检 runs 根目录可写（幂等 mkdir）
         modelConfigs: MODEL_CONFIGS,
-        roles: ['A', 'B'],
+        roles: ['A', 'B', 'C', 'D'],
         loopName: 'fresh-eyes-loop',
         toolConfig: {
           globalSoft: TOOL_SOFT_LIMIT, globalHard: TOOL_HARD_LIMIT,
@@ -4141,6 +4356,8 @@ async function main() {
       // v1.3.9 pidfile：SIGTERM 优雅终止时删除——watcher 审计死因时，
       // pidfile 残留 = 非优雅退出（SIGKILL/进程树清理），佐证 external-kill。
       try { unlinkSync(join(runDir, 'driver.pid')); } catch { /* 无 pidfile 正常 */ }
+      // 冻结窗口锁同步清理（run 终止即解除冻结）
+      releaseRunLock();
       try {
         updateLatestPointer(runDir, {
           round: preservedActualRounds,
@@ -4178,6 +4395,11 @@ async function main() {
 
     // v1.3.9 pidfile：写 driver.pid 供 watcher 审计死因（SIGTERM 时 cleanup 删除）
     try { writeFileSync(join(runDir, 'driver.pid'), String(process.pid)); } catch { /* pidfile 失败不阻断 */ }
+    // 冻结窗口锁：commit-msg hook 据此阻断「run 进行中改 driver 源码」的提交
+    // （与 pidfile 同生命周期：SIGTERM cleanup / 正常结束两路都会删）
+    if (!acquireRunLock(runId)) {
+      console.warn('   ⚠️ 冻结窗口锁写入失败（提交时防线未生效——运行时指纹门禁仍兜底）');
+    }
   }
 
   console.log(`\n🔍 fresh-eyes-loop 启动`);
@@ -4306,10 +4528,49 @@ async function main() {
       clearInterval(intraRoundTimer);
     }
 
-    const { roundDir, counts, isClean } = runRoundResult;
+    let { roundDir, counts, isClean } = runRoundResult;
     finalCounts = counts;
+
+    // ─── 单盲改造：REOPEN 回环（d-review 打回重修）───
+    // runRoundTail 在 d-review 裁出 REOPEN>0 时返回 needsReopenLoop=true
+    // （REOPEN 项已回注 findings.md 顶部）。此处重走 b-fix → c-verify →
+    // d-review 内循环，消耗修复批额度（REOPEN_BATCH_MAX，默认 2）——
+    // 不算新轮次：check worker 产物仍有效（A 审发现没变），只有修复/验证/
+    // 复核三步在 REOPEN 项上迭代。额度耗尽仍有 REOPEN → 如实交人工分诊
+    // （不停轮不熔断——REOPEN 是「修不干净」信号不是「审查无收敛」信号）。
+    if (runRoundResult.needsReopenLoop) {
+      let reopenUsed = 0;
+      let stillReopen = true;
+      while (stillReopen && reopenUsed < REOPEN_BATCH_MAX) {
+        reopenUsed++;
+        console.log(`\n  [REOPEN 回环 ${reopenUsed}/${REOPEN_BATCH_MAX}] b-fix 重修 → c-verify 重验 → d-review 复核...`);
+        try {
+          await runBFixSharded(roundDir, args.target, round);
+          await runCVerifySharded(roundDir, args.target, round);
+          await spawnWorker('d-review', roundDir, args.target, round);
+          const rc = applyDReviewReopens(roundDir);
+          if (rc === 0) {
+            stillReopen = false;
+            console.log(`     ✅ REOPEN 回环收敛（第 ${reopenUsed} 批）`);
+          } else if (reopenUsed >= REOPEN_BATCH_MAX) {
+            console.warn(`\n  ⚠️  REOPEN 修复批额度耗尽（${REOPEN_BATCH_MAX}），仍有 ${rc} 条打回——交人工分诊`);
+          }
+        } catch (reopenErr) {
+          console.warn(`\n  ⚠️  REOPEN 回环异常: ${reopenErr.message}`);
+          console.warn(`     降级：退出回环，按本轮 findings 判定`);
+          break;
+        }
+      }
+      // 回环后重新判定停止条件（REOPEN 修复可能已闭环），
+      // counts/isClean 同步刷新——后续断点写入/emit/latest.json 均用新值。
+      counts = parseStopCondition(roundDir);
+      isClean = counts.isClean;
+      finalCounts = counts;
+      console.log(`\n  [REOPEN 后停止判定] P0=${counts.p0} P1=${counts.p1} P2=${counts.p2} FAIL=${counts.hasFail}${counts.isDegraded ? ' DEGRADED' : ''} → ${isClean ? 'CLEAN' : 'NOT-CLEAN'}`);
+    }
+
     // #13 记录本轮 severity 趋势
-    severityHistory.push(counts.p0 + counts.p1);
+    severityHistory.push(finalCounts.p0 + finalCounts.p1);
     // 快照——如果后续轮 fatal-error，catch 块用这组数据，不清零
     preservedActualRounds = actualRounds;
     preservedFinalCounts   = { ...finalCounts };
@@ -4490,6 +4751,9 @@ async function main() {
   // v1.3.9 补丁：正常结束也删除 pidfile（此前仅 SIGTERM 路径删——正常结束残留 driver.pid，
   // watcher 审计不误判（stopReason=completed）但产物留脏；与 SIGTERM handler 同款 try/catch）
   try { unlinkSync(join(runDir, 'driver.pid')); } catch { /* 无 pidfile 正常 */ }
+
+  // 冻结窗口锁：正常结束清理（run 收口即解除冻结——后续提交恢复自由）
+  releaseRunLock();
 
   // v1.3.6 交付⑩：正常结束清理 worktree（run 结束 worktree 清理 + LEDGER 留行）
   safeTeardownWorktree();

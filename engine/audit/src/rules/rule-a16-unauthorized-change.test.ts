@@ -4,7 +4,7 @@
 // ============================================================
 
 import { describe, it, expect } from 'vitest';
-import { checkRuleA16 } from './rule-a16-unauthorized-change';
+import { scanA16 } from './rule-a16-unauthorized-change';
 import { makeDiffFile, makeCtx } from '../test-utils';
 
 const defaultConfig = {
@@ -21,7 +21,7 @@ describe('A16 非授权文件变更', () => {
       [makeDiffFile('config/settings.json', ['+modified'])],
       { config: defaultConfig as any }
     );
-    const result = checkRuleA16(ctx);
+    const result = scanA16(ctx);
     expect(result.status).toBe('WARN');
   });
 
@@ -30,7 +30,7 @@ describe('A16 非授权文件变更', () => {
       [makeDiffFile('src/index.ts', ['+// normal change'])],
       { config: defaultConfig as any }
     );
-    const result = checkRuleA16(ctx);
+    const result = scanA16(ctx);
     expect(result.status).toBe('PASS');
   });
 
@@ -39,7 +39,7 @@ describe('A16 非授权文件变更', () => {
       [makeDiffFile('data/report.xlsx', [], 'deleted')],
       { config: defaultConfig as any }
     );
-    const result = checkRuleA16(ctx);
+    const result = scanA16(ctx);
     expect(result.status).toBe('WARN');
   });
 
@@ -48,17 +48,8 @@ describe('A16 非授权文件变更', () => {
       [makeDiffFile('config/settings.json', ['+modified'])],
       { config: { A16: { enabled: false } } as any }
     );
-    const result = checkRuleA16(ctx);
+    const result = scanA16(ctx);
     expect(result.status).toBe('PASS');
-  });
-
-  it('evidenceMode 标注为 git-diff', () => {
-    const ctx = makeCtx(
-      [makeDiffFile('src/index.ts', ['+console.log(1);'])],
-      { config: defaultConfig as any }
-    );
-    const result = checkRuleA16(ctx);
-    expect(result.evidenceMode).toBe('git-diff');
   });
 
   it('敏感类型文件被修改（非删除）→ PASS', () => {
@@ -66,19 +57,19 @@ describe('A16 非授权文件变更', () => {
       [makeDiffFile('data/report.pdf', ['+modified content'])],
       { config: defaultConfig as any }
     );
-    const result = checkRuleA16(ctx);
+    const result = scanA16(ctx);
     expect(result.status).toBe('PASS');
   });
 
-  // v1.2.5 §4.9.3: 审计引擎源码自保护
-  it('diff 修改 engine/audit/src/rules/runner.ts → WARN（审计引擎源码）', () => {
+  // v1.2.5 §4.9.3: 审计模块源码自保护
+  it('diff 修改 engine/audit/src/rules/runner.ts → WARN（审计模块源码）', () => {
     const ctx = makeCtx(
       [makeDiffFile('engine/audit/src/rules/runner.ts', ['+const x = 1;'], 'modified')],
       { config: defaultConfig as any }
     );
-    const result = checkRuleA16(ctx);
+    const result = scanA16(ctx);
     expect(result.status).toBe('WARN');
-    expect(result.details[0]).toContain('审计引擎源码被修改');
+    expect(result.details[0]).toContain('审计模块源码被修改');
   });
 
   it('diff 修改 rule-a1-sensitive-files.ts → WARN', () => {
@@ -86,7 +77,7 @@ describe('A16 非授权文件变更', () => {
       [makeDiffFile('engine/audit/src/rules/rule-a1-sensitive-files.ts', ['+modified'], 'modified')],
       { config: defaultConfig as any }
     );
-    const result = checkRuleA16(ctx);
+    const result = scanA16(ctx);
     expect(result.status).toBe('WARN');
   });
 
@@ -95,7 +86,7 @@ describe('A16 非授权文件变更', () => {
       [makeDiffFile('engine/core/src/shared/secret-patterns.ts', ['+modified'], 'modified')],
       { config: defaultConfig as any }
     );
-    const result = checkRuleA16(ctx);
+    const result = scanA16(ctx);
     expect(result.status).toBe('WARN');
   });
 
@@ -104,7 +95,7 @@ describe('A16 非授权文件变更', () => {
       [makeDiffFile('engine/audit/src/reporter.ts', ['+modified'], 'modified')],
       { config: defaultConfig as any }
     );
-    const result = checkRuleA16(ctx);
+    const result = scanA16(ctx);
     expect(result.status).toBe('PASS');
   });
 
@@ -113,7 +104,7 @@ describe('A16 非授权文件变更', () => {
       [makeDiffFile('engine/core/src/data-paths.ts', ['+modified'], 'modified')],
       { config: defaultConfig as any }
     );
-    const result = checkRuleA16(ctx);
+    const result = scanA16(ctx);
     expect(result.status).toBe('PASS');
   });
 });

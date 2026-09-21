@@ -28,7 +28,7 @@ fi
 #   规则审计  $SOFAGENT_HOME/data/audit/history.jsonl
 #   工作状态  $SOFAGENT_HOME/data/audit/sub-progress-*.jsonl（自动发现）
 #            $SOFAGENT_HOME/data/dashboard/daemon-health.json
-#   Graph引擎 $SOFAGENT_HOME/data/dashboard/graph-state.json（v1.2.3 完整控制图）
+#   编排控制图 $SOFAGENT_HOME/data/dashboard/graph-state.json（v1.2.3 完整控制图）
 #   FORGE    $SOFAGENT_HOME/data/forge-runs/fresh-eyes-loop/latest.json（交付三）
 #   最近变更  $SOFAGENT_HOME/data/dashboard/workspace-changes.jsonl（交付五）
 #   最近报告  $SOFAGENT_HOME/data/{企业名}/审计报告/（fde-profile.json 定企业名）
@@ -109,7 +109,7 @@ if [ "${SOFAGENT_DASHBOARD_LIB_ONLY:-}" != "1" ] && [ "$TREND" != "1" ]; then
     echo "     sofagent-daemon start"
     echo ""
     echo "  ③ 想看训练任务（v1.4.3 新增区块）：先提交一个训练任务"
-    echo "     环境准备：bash tools/train-env-init.sh"
+    echo "     环境准备：bash tools/train/train-env-init.sh"
     echo "     任务提交：MCP train_submit（进度/健康度自动落盘）"
     echo ""
     echo "  指南：docs/HANDBOOK.md「新功能入口导览」表（三条产品线的入口与前置）"
@@ -693,7 +693,7 @@ render_graph_engine() {
   emit "${C_BOLD}${C_BLUE}▌ 编排状态（工作流控制图）${C_RESET}"
 
   if [ ! -f "$GRAPH_STATE" ]; then
-    emit "  ${C_DIM}控制图数据不可用（编排引擎未运行）${C_RESET}"
+    emit "  ${C_DIM}控制图数据不可用（编排模块未运行）${C_RESET}"
     return 0
   fi
 
@@ -1045,9 +1045,9 @@ render_frame() {
     strip1="$(mktemp -t sofagent-dash-s1.XXXXXX)"
     strip2="$(mktemp -t sofagent-dash-s2.XXXXXX)"
     strip3="$(mktemp -t sofagent-dash-s3.XXXXXX)"
-    sed $'s/\033\[[0-9;]*m//g' "$f1" | cut -c1-"$COL_W" > "$strip1"
-    sed $'s/\033\[[0-9;]*m//g' "$f2" | cut -c1-"$COL_W" > "$strip2"
-    sed $'s/\033\[[0-9;]*m//g' "$f3" | cut -c1-"$COL_W" > "$strip3"
+    LC_ALL=C sed $'s/\033\[[0-9;]*m//g' "$f1" | cut -c1-"$COL_W" > "$strip1"
+    LC_ALL=C sed $'s/\033\[[0-9;]*m//g' "$f2" | cut -c1-"$COL_W" > "$strip2"
+    LC_ALL=C sed $'s/\033\[[0-9;]*m//g' "$f3" | cut -c1-"$COL_W" > "$strip3"
     paste "$strip1" "$strip2" "$strip3" | while IFS=$'\t' read -r c1 c2 c3; do
       if [ "$WATCH" = "1" ]; then
         printf '%-'$COL_W's │ %-'$COL_W's │ %s\n' "$(trunc "$c1" "$COL_W")" "$(trunc "$c2" "$COL_W")" "$c3" >> "$BUFFER_FILE"

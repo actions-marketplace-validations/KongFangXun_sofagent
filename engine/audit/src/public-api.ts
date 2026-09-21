@@ -1,4 +1,4 @@
-// ── API 分级契约（v1.4.3 四）────────────────────────────
+// ── API 分级契约（v1.5.0 四）────────────────────────────
 // `/* @public */`：公开 API——semver 锁定，变更必须 bump 版本 + CHANGELOG 记录
 //                 （外部依赖方与跨平台适配器只许 import 这一层）
 // `/* @internal */`：内部 API——不承诺稳定性，破坏性变更无需 bump
@@ -6,7 +6,7 @@
 // ────────────────────────────────────────────────────────
 // ============================================================
 // public-api.ts · @sofagent/audit 公共 API（barrel export）
-// v1.4.3: 供 @sofagent/mcp 等外部包使用的稳定接口
+// v1.5.0: 供 @sofagent/mcp 等外部包使用的稳定接口
 // ============================================================
 // 注意：此文件只导出已经稳定且被外部消费的符号。
 // 内部实现细节不要加到这里——避免泄露实现导致耦合。
@@ -32,7 +32,7 @@
 
 // clearHistory 已移出公共 exports——「用于测试」的破坏性 API 不应挂在包默认导出，
 // 任何人调一行 clearHistory() 就能清空全部审计历史。内部测试仍可从模块路径导入。
-/* @public */ export { loadHistory, appendHistory, checkHistoryChainIntegrity, isHmacKeyConfigured, validateHmacKey } from './audit-history';
+/* @public */ export { loadHistory, appendHistory, isHmacKeyConfigured, validateHmacKey } from './audit-history';
 /* @public */ export type { AuditHistoryEntry } from './audit-history';
 
 /* @public */ export { VERSION } from '@sofagent/core';
@@ -47,7 +47,7 @@
 } from '@sofagent/core';
 /* @public */ export type { SnapshotEntry } from '@sofagent/core';
 
-// ── Skill 安全审查（v1.1.3: 供 @sofagent/skillopt 等外部包使用） ──
+// ── Skill 安全审查（v1.1.3: 供 @sofagent/evolve 等外部包使用） ──
 /* @public */ export { findFiles, scanFile } from './rules/skill-safety-engine';
 /* @public */ export { COMPILED_RULES, SCANNABLE_EXTENSIONS, VERSION as SKILL_SAFETY_VERSION } from './rules/skill-safety-rules';
 /* @public */ export type { SafetyHit, SafetyRule, SafetyResult } from './rules/skill-safety-rules';
@@ -91,6 +91,12 @@
 /* @public */ export { sanitizeWhy } from './decision-schema';
 /* @public */ export type { DecisionKind, DecisionCategory, LoopPhase, DecisionWhy, RouteReason, CausalType } from './decision-schema';
 
+// ── HMAC 审计链协议内核（v1.4.8 第〇批收口——复刻收口为单一事实源）──
+// @internal：跨包内部接缝（orchestrator/train-audit 消费）——不承诺 semver 稳定性，
+// 按 tools/check/public-api.mjs 的 @internal 语义不计入 public API 基线。
+/* @internal */ export { appendChained, verifyChain, ChainKernelError } from './chain-kernel';
+/* @internal */ export type { AppendChainedOptions, VerifyChainOptions, ChainCheckStatus, ChainCheckResult, ChainFields } from './chain-kernel';
+
 // ── 决策审计查询（v1.3.0 交付 6 T04；v1.3.6 交付⑮ 补 moment/agent/category/组合查询）──
 /* @public */ export {
   queryByKind,
@@ -124,3 +130,70 @@
 /* @public */ export { exportRuleCorpus, generateVerifiers, buildRuleCorpusBody, signBody, jsonToYaml } from './export/exporter';
 /* @public */ export { buildVerifiersManifest, buildVerifiersWithOverrides } from './export/reward-mapping';
 /* @public */ export type { RuleExportEntry, RuleCorpusBody, RuleCorpusExport, Verifiability, RewardHint } from './export/rule-schema';
+
+// ── PR 生命周期（G13 · workflow 变更提案状态机——MCP pr_submit/pr_review/pr_merge 消费面）──
+/* @public */ export {
+  prSubmit,
+  prReview,
+  prMerge,
+  listPrs,
+  upsertTriggerBinding,
+  isHeuristicallyBlocked,
+  prRecordMergedVersion,
+  prRevertToOpen,
+} from './pr-store';
+/* @public */ export type {
+  PrStatus,
+  TriggerConfidence,
+  TriggerBinding,
+  PrContributor,
+  StoredPr,
+  PrResult,
+  PrSubmitInput,
+  PrReviewInput,
+  PrMergeInput,
+} from './pr-store';
+
+// ── 贡献度聚合（G4 · 人/数字员工同标准——MCP contribution_query 消费面）──
+/* @public */ export { aggregateContributions, prOverview } from './contribution';
+/* @public */ export type { ContributorRow, WorkflowRow, ContributionReport } from './contribution';
+
+// ── 审计留痕规约层 + PROV-O 导出（章十 · audit_query 查询面）──
+/* @public */ export { reduceAuditHistory, exportProvTurtle, exportProvJsonLd } from './audit-reducer';
+/* @public */ export type { AuditQueryFilter, AuditReducedReport, AgentRollupRow, RuleRollupRow } from './audit-reducer';
+
+// ============================================================
+// v1.4.8 扩展三：并发 Git 纪律守卫（orchestrator/daemon 执行侧消费）
+// ============================================================
+/* @public */ export { checkPathspecDiscipline, detectForeignStaged, snapshotForTurn, verifyNoConcurrentWrite } from './concurrent-git-discipline';
+
+// ============================================================
+// v1.4.9 G5b（T4）：连接器注册面（MCP connector_register /
+// connector_list 消费——准入复用 plugin-gate 来源白名单）
+// ============================================================
+/* @public */ export {
+  registerConnector,
+  listConnectors,
+  getConnector,
+  loadConnectorPolicy,
+} from './cli/plugin-gate';
+/* @public */ export type {
+  ConnectorKind,
+  ConnectorEntry,
+  ConnectorRegisterResult,
+} from './cli/plugin-gate';
+
+// ============================================================
+// v1.5.0 章一：治理 KPI 聚合（dashboard「治理」tab 数据引擎）+
+// v1.4.9 第七章 stats 同源出口（--stats 契约不变，本批补公共面）
+// ============================================================
+/* @public */ export { computeAuditStats, formatStatsReport, formatStatsJson, readHistoryEntries } from './stats';
+/* @public */ export type { AuditStatsReport, StatsOptions, RuleTriggerEntry } from './stats';
+/* @public */ export {
+  computeGovernanceKpis,
+  formatGovernanceWeekly,
+  buildDatasetLineageReport,
+  readDecisionEntries,
+  readDatasetVersionsLite,
+} from './governance';
+/* @public */ export type { GovernanceKpiReport, GovernanceOptions, DatasetVersionLite, LineageReportOptions } from './governance';

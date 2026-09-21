@@ -37,7 +37,8 @@ export type DecisionKind =
   | 'EVOLUTION'         // 进化动作（优化器改经验层 / Benchmark accept-reject / 回滚）
   | 'TEAM'              // 团队协作动作（冲突消解 / 意图广播 / 反馈放大 / 自动入队）
   | 'COMMONS'            // 公地能力动作（能力发布 / 调用 / 评分 / 退役 / SkillScan）
-  | 'COST';              // 成本告警（v1.4.0 交付三 · budget 超支 WARN，queryByKind('COST') 可追溯）
+  | 'COST'              // 成本告警（v1.4.0 交付三 · budget 超支 WARN，queryByKind('COST') 可追溯）
+  | 'COVERAGE';          // 对账覆盖动作（v1.5.0 章八 · trace 三源对账结果入 decision-log——说的和干的差在哪）
 
 /**
  * 判断时刻分类（v1.3.6 交付⑮ · decisions.jsonl 完整版 · OpenFDE 启发）。
@@ -150,6 +151,12 @@ export interface DecisionLogEntry {
   specRef?: string;
   /** 关联产物引用（文件路径 / commitSha） */
   artifactRef?: string;
+  /**
+   * 双时态快照：决策引用本体实体时，记录当时的 validFrom/validTo 区间——
+   * 「当时依据的版本」不再靠 git snapshot 反推（v1.5.0 第二章审计回溯联动）。
+   * 键 = 实体名，值 = 决策时刻的时间区间（undefined 字段语义同 schema：未填 = 永久/仍有效）。
+   */
+  entityValidity?: Record<string, { validFrom?: string; validTo?: string }>;
   // ── 防篡改链字段（复用 audit-history.ts 同套） ──
   /** 前一条记录的 hash（链完整性校验用） */
   prevHash?: string;
@@ -161,7 +168,7 @@ export interface DecisionLogEntry {
   hmacAlgo?: 'stable';
   /** ⚠️ 必加——读侧 checkDecisionChainDetailed 靠它区分「真篡改 vs 环境漂移」 */
   envFingerprint?: string;
-  /** 决策引擎标识（缺省 'sofagent-audit'） */
+  /** 决策记录来源标识（缺省 'sofagent-audit'） */
   engine?: string;
   /** 触发证据链（字符串数组，可空）—— v1.3.3 新增
    *

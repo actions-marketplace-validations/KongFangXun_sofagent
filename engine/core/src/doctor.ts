@@ -7,22 +7,22 @@
 // 检查项：
 //   1. 环境检查（Node / git / npm / disk / bash）
 //   2. 配置检查（.sofagent/config.yml 是否存在且有效）
-//   3. 数据目录结构（v1.4.3：data/ 用户可见数据 + .sofagent/ 引擎内部状态）
+//   3. 数据目录结构（v1.5.0：data/ 用户可见数据 + .sofagent/ 引擎内部状态）
 //   4. Hook 状态（commit-msg 是否安装含 sofagent 标识 + post-commit 是否存在）
 //   5. 包完整性（node_modules 依赖）
 //   8. Ontology 完整性（v1.4.3 十三：knowledge/entities/ frontmatter 三查 + skip-log 对账）
 //
 // 注意：post-commit 仅检查存在性——不检查内容是否引用 sofagent
 
-import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSync } from 'fs';
-import { join, dirname } from 'path';
+import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { join, dirname, isAbsolute, resolve } from 'path';
 import { execFileSync } from 'child_process';
 import { createHash } from 'crypto';
 import { homedir } from 'os';
 import { checkEnv } from './env-check';
 import { VERSION } from './shared/constants';
 import { load as yamlLoad, YAMLException } from 'js-yaml';
-import { checkHistoryChainDetailed, validateHmacKey } from './audit-history';
+import { checkHistoryChainDetailed, validateHmacKey, getHistoryFilePath } from './audit-history';
 import { DATA_DIR, getConfigFile, resolveDataDir, resolveHomeDir, resolveKnowledgeDir } from './data-paths';
 
 function ok(msg: string) { console.log(`  ✅ ${msg}`); }
@@ -36,6 +36,77 @@ let _failCount = 0;
 
 /** v1.2.7: 修复提示输出 */
 function repairHint(cmd: string) { console.log(`     修复：${cmd}`); }
+
+// ============================================================
+// v1.4.9 P1-13 · 版本检查修复提示按**安装形态**分流
+// ------------------------------------------------------------
+// 缺陷：`:115` / `:125` 两条版本修复提示都把 `bash install.sh` 当唯一修法，
+//   而 npm 形态下该脚本**根本不在用户机器上**——提示是死路，用户按提示操作必然失败。
+// 实测依据（非推测）：
+//   ① `npm pack --dry-run`（@sofagent/audit v1.4.8）共 188 个文件，`install.sh`
+//      **0 命中**——package.json 的 files 字段只有 `dist/` · `hooks/` · `README.md`。
+//   ② 全仓 `~/.sofagent/VERSION` 的**唯一写入点**是 `install.sh:403`
+//      （`echo "${VERSION}" > "$SOFAGENT_HOME/VERSION"`），而 install.sh 不在 tarball 内
+//      ⇒ npm 形态下该文件恒缺失。故 `:125` 的「**重新**运行 install.sh」双重不成立：
+//      脚本不存在 + 从未运行过。
+// 边界：本项只分流**提示文案**，不动检查判据本身（npm 形态仍报该 warn——
+//   它是「引擎版本与全局安装标记不一致」的真实信号，只是修法不同）。
+// ============================================================
+
+/**
+ * 安装形态（v1.4.9 P1-13）：
+ *   `'repo'` = 仓库克隆 / install.sh 安装（install.sh 在安装根可见）
+ *   `'npm'`  = 纯 npm 安装（`npm i -g @sofagent/audit` 等，tarball 内无 install.sh）
+ */
+export type InstallShape = 'repo' | 'npm';
+
+/**
+ * 判定当前引擎的安装形态（v1.4.9 P1-13）。
+ *
+ * 判据：模块所在目录路径的路径段里是否含 `node_modules`。
+ *   - 仓库克隆：`<root>/engine/core/{src,dist}`                → `'repo'`
+ *   - npm 安装：`<global>/node_modules/@sofagent/core/dist`     → `'npm'`
+ * 选它而非「向上找 install.sh」的理由：路径段判定**确定**（不依赖安装根里有/没有
+ * 同名脚本），且 npm 与仓库两种布局的差别正是这一层 node_modules。
+ *
+ * @param moduleDir 本模块所在目录（默认 `__dirname`；测试可注入以覆盖 npm 布局）
+ * @returns 安装形态
+ */
+export function detectInstallShape(moduleDir: string = __dirname): InstallShape {
+  return moduleDir.split(/[\\/]+/).includes('node_modules') ? 'npm' : 'repo';
+}
+
+/**
+ * 生成版本一致性检查的修复提示（v1.4.9 P1-13）。
+ *
+ * 四条文案（`shape` × `situation`）都**必须**带上 `homeVersionFile` 绝对路径——
+ * 否则用户不知道要改哪个文件（`:125` 原先只说「创建 VERSION 文件」）。
+ * `repo + mismatch` 一条与 v1.4.9 之前的原文**逐字一致**，属纯保持。
+ *
+ * @param shape           安装形态（`detectInstallShape` 的结果）
+ * @param situation       `'mismatch'` = VERSION 存在但版本不符；`'missing'` = VERSION 不存在
+ * @param homeVersionFile VERSION 文件绝对路径
+ * @param version         当前引擎版本（升级/写入的目标版本）
+ * @returns 修复提示文案
+ */
+export function formatVersionRepairHint(
+  shape: InstallShape,
+  situation: 'mismatch' | 'missing',
+  homeVersionFile: string,
+  version: string,
+): string {
+  if (shape === 'npm') {
+    // npm 形态无 install.sh：修法是升级 npm 包（或直接改该文件）。
+    // 括号里保留「无 install.sh」这句解释是刻意的——用户若看过旧提示会疑惑脚本去哪了；
+    // 但**不得出现 `bash install.sh` 这个可执行修法**（npm 机器上没有该脚本）。
+    return situation === 'mismatch'
+      ? `npm 全局安装形态无 install.sh——升级到匹配版本：npm i -g @sofagent/audit@${version}（或手动更新 ${homeVersionFile}）`
+      : `npm 全局安装形态无 install.sh——该文件由安装器生成，npm 安装不产生它；手动创建 ${homeVersionFile} 并写入当前引擎版本：echo ${version} > ${homeVersionFile}`;
+  }
+  return situation === 'mismatch'
+    ? `重新安装以同步版本：bash install.sh（或手动更新 ${homeVersionFile}）`
+    : `重新运行 install.sh 创建 VERSION 文件（${homeVersionFile}）`;
+}
 
 /**
  * v1.2.7: doctor 检查结果（结构化，含修复命令）
@@ -108,11 +179,14 @@ export function runDoctor(projectDir: string = process.cwd(), options: { resetBa
     // 白名单防护），不再直读 process.env.SOFAGENT_HOME——v1.3.2 P0-RC2 path-traversal
     // 防护对 doctor 三处全局路径读取同样生效。
     const homeVersionFile = join(resolveHomeDir(), 'VERSION');
+    // v1.4.9 P1-13：修复提示按安装形态分流（npm tarball 内无 install.sh——
+    // `bash install.sh` 对 npm 用户是死路）。判据见 detectInstallShape 注释。
+    const installShape = detectInstallShape();
     if (existsSync(homeVersionFile)) {
       const installedVersion = readFileSync(homeVersionFile, 'utf-8').trim();
       if (installedVersion !== VERSION) {
         warn(`~/.sofagent/VERSION 写的是 ${installedVersion}，当前引擎 ${VERSION}——可能发版后未同步`);
-        repairHint(`重新安装以同步版本：bash install.sh（或手动更新 ${homeVersionFile}）`);
+        repairHint(formatVersionRepairHint(installShape, 'mismatch', homeVersionFile, VERSION));
         // v1.3.9 补充升级安全性：消除企业 IT 对「升级覆盖数据」的顾虑——
         // 升级保留用户数据与已装 hooks（不覆盖 ~/.sofagent/data/ 与已装 hooks），
         // 破坏性变更见 CHANGELOG 对应版本条目。
@@ -122,7 +196,7 @@ export function runDoctor(projectDir: string = process.cwd(), options: { resetBa
       }
     } else {
       warn('~/.sofagent/VERSION 不存在——可能是首次安装或旧版本残留');
-      repairHint('重新运行 install.sh 创建 VERSION 文件');
+      repairHint(formatVersionRepairHint(installShape, 'missing', homeVersionFile, VERSION));
     }
   } catch {
     warn('版本检查失败（不影响审计功能）');
@@ -234,9 +308,49 @@ export function runDoctor(projectDir: string = process.cwd(), options: { resetBa
   console.log('\n── Git Hook 状态 ──');
   let hookOk = false;
   try {
-    const gitDirResult = execFileSync('git', ['rev-parse', '--git-dir'], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    // 🔴 cwd: projectDir 必传——gitDir 必须基于被检查目录解析，否则在进程 cwd
+    // （如 vitest worker 所在的主仓）解析：主仓装了 hook 时测试假阳性、CI 主仓
+    // 未装时真失败（两环境结果相反的根因）
+    const gitDirResult = execFileSync('git', ['rev-parse', '--git-dir'], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], cwd: projectDir }).trim();
     const gitDir = gitDirResult.startsWith('/') ? gitDirResult : join(projectDir, gitDirResult);
-    const hookPath = join(gitDir, 'hooks', 'commit-msg');
+    // v1.4.5 (T14): hook 目录尊重 core.hooksPath——与安装侧（audit 包 hook-install.ts
+    // 的 resolveHooksDir，E1 施工）同一语义。repo 配置 core.hooksPath 时 hook 写进
+    // 该目录，doctor 若仍查 $gitDir/hooks 会假红。解析规则：
+    //   1. git config core.hooksPath 有值 → ~ / $VAR 先展开；相对路径按 repo 顶层
+    //      （--show-toplevel）resolve——git 自身对 core.hooksPath 就是顶层基准语义，
+    //      安装侧同规则，两侧对齐防「装在 A 查在 B」
+    //   2. 未配置 → $gitDir/hooks（git 缺省，v1.4.5 之前的行为）
+    //   3. 任一 git 子命令失败 → 退回 $gitDir/hooks（与未配置同路径，不因此中断检查）
+    let hooksDir = join(gitDir, 'hooks');
+    try {
+      const configured = execFileSync('git', ['config', 'core.hooksPath'], {
+        encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], cwd: projectDir,
+      }).trim();
+      if (configured) {
+        let expanded = configured;
+        if (expanded.startsWith('~/')) expanded = join(homedir(), expanded.slice(2));
+        else if (expanded.startsWith('~')) expanded = join(homedir(), expanded.slice(1));
+        else {
+          const envMatch = expanded.match(/^\$([A-Za-z_][A-Za-z0-9_]*)(.*)$/);
+          if (envMatch) {
+            const envVal = process.env[envMatch[1] ?? ''] ?? '';
+            expanded = join(envVal, (envMatch[2] ?? '').replace(/^[/\\]/, ''));
+          }
+        }
+        let repoTop = '';
+        try {
+          repoTop = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+            encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], cwd: projectDir,
+          }).trim();
+        } catch { /* worktree 等场景退化用 .git 父目录 */ }
+        const base = repoTop || dirname(gitDir);
+        hooksDir = isAbsolute(expanded) ? expanded : resolve(base, expanded);
+        info(`core.hooksPath 已配置——hook 目录: ${hooksDir}`);
+      }
+    } catch {
+      // core.hooksPath 未配置或 git config 失败——缺省 $gitDir/hooks
+    }
+    const hookPath = join(hooksDir, 'commit-msg');
     if (existsSync(hookPath)) {
       try {
         const hookContent = readFileSync(hookPath, 'utf-8');
@@ -257,7 +371,8 @@ export function runDoctor(projectDir: string = process.cwd(), options: { resetBa
     }
 
     // v1.4.2 H-01: pre-commit——三层防线主防线（.sofagent/ 永不入库的 staged 清理）
-    const preCommitPath = join(gitDir, 'hooks', 'pre-commit');
+    // v1.4.5 (T14): 路径同 commit-msg——统一走 hooksDir（core.hooksPath 生效时为配置目录）
+    const preCommitPath = join(hooksDir, 'pre-commit');
     if (existsSync(preCommitPath)) {
       try {
         const prcContent = readFileSync(preCommitPath, 'utf-8');
@@ -281,7 +396,8 @@ export function runDoctor(projectDir: string = process.cwd(), options: { resetBa
     }
 
     // post-commit：检查存在性 + 内容是否含审计对账逻辑（v1.3.2 P0-RC3 加强）
-    const postCommitPath = join(gitDir, 'hooks', 'post-commit');
+    // v1.4.5 (T14): 路径同上——统一走 hooksDir（core.hooksPath 生效时为配置目录）
+    const postCommitPath = join(hooksDir, 'post-commit');
     if (existsSync(postCommitPath)) {
       try {
         const pcContent = readFileSync(postCommitPath, 'utf-8');
@@ -318,13 +434,13 @@ export function runDoctor(projectDir: string = process.cwd(), options: { resetBa
   const criticalDeps = ['js-yaml'];
   for (const dep of criticalDeps) {
     try {
-      // require.resolve 从 doctor.ts 编译后的位置（引擎包 dist/ 内）向上查找
+      // require.resolve 从 doctor.ts 编译后的位置（模块包 dist/ 内）向上查找
       // node_modules，不受 cwd 影响——修复非仓库目录运行 --doctor 时误报依赖缺失。
       // CJS 环境下 require 全局可用，直接调用 require.resolve。
       require.resolve(dep);
       ok(`${dep} 已安装`);
     } catch {
-      // 引擎包内解析失败 → 尝试从 cwd 解析（workspace 场景）
+      // 模块包内解析失败 → 尝试从 cwd 解析（workspace 场景）
       try {
         const cwdRequire = require('module').createRequire(join(projectDir, 'package.json'));
         cwdRequire.resolve(dep);
@@ -346,14 +462,20 @@ export function runDoctor(projectDir: string = process.cwd(), options: { resetBa
   //   影子审计器防御永久失效（SECURITY.md:329 声称与事实矛盾）。
   // 修复后的解析顺序（覆盖 monorepo / npm 全局安装两种布局）：
   //   ① monorepo：core/dist → core → engine/ → engine/audit/dist/index.js（../../audit/dist）
-  //   ② 发布安装：require.resolve('@sofagent/audit') 反推 audit 包根，再拼 dist/index.js
+  //   ② 发布安装：require.resolve('@sofagent/audit') 得包 main 入口（./dist/public-api.js），
+  //      从入口文件上溯两级（dist/public-api.js → dist → 包根）再拼 dist/index.js
   //   ③ 两者均不存在 → 显式 warn（不再静默跳过——「检查不到」不等于「通过」）
+  // 🔴 v1.5.0 TASK-19 修正 ②：原实现 join(dirname(resolve(...)), 'dist', 'index.js')——
+  //   dirname(public-api.js) 是 dist/，再拼 dist/index.js 得 dist/dist/index.js（错位，
+  //   发布安装态恒 miss → doctor 的 audit 检查空转走显式 warn）。resolve 已落在 dist 内，
+  //   正解是上溯到**包根**再拼 dist/index.js（两种安装态的包根布局一致）。
   let auditDistPath = join(__dirname, '..', '..', 'audit', 'dist', 'index.js');
   if (!existsSync(auditDistPath)) {
     try {
       // CJS 环境下 require 全局可用（与上方依赖检查同一先例）；
       // 从 core 包位置出发解析 audit 包，兼容任意 node_modules 嵌套深度。
-      auditDistPath = join(dirname(require.resolve('@sofagent/audit')), 'dist', 'index.js');
+      // main 入口（dist/public-api.js）→ dirname×2 = 包根 → dist/index.js
+      auditDistPath = join(dirname(dirname(require.resolve('@sofagent/audit'))), 'dist', 'index.js');
     } catch {
       // @sofagent/audit 不可解析（未安装/独立安装 core）——留给下方显式 warn
     }
@@ -367,11 +489,25 @@ export function runDoctor(projectDir: string = process.cwd(), options: { resetBa
       // v1.3.5 --reset-baseline：无条件重算并覆写基线（rebuild dist 后一键重置）
       // 覆写后按「基线 = 当前值」输出校验通过——不产生假 mismatch 告警。
       if (options.resetBaseline === true) {
+        // v1.4.8 阶段八修正：原实现只写 audit-hash.txt（**兼容锚**，语义 = dist/index.js 单文件哈希），
+        // 而 hook 的完整性校验读的是 **主锚 audit-dist-hash.txt**（多入口聚合哈希）⇒ 实测「--reset-baseline
+        // 输出『基准哈希已重置』但主锚纹丝不动、commit 仍被拦截」= 名不副实。
+        // 正解：调仓内唯一权威实现 tools/audit-baseline-sync.sh（它同步全部三锚：主锚/兼容锚/源码指纹），
+        // 避免在此重复实现聚合算法（会再造一套「靠人工保持一致」的双源）。
+        // 仓外场景（无 tools/）删除三个锚文件——hook 的「基准缺失」分支会 fail-closed 补生成并放行本次。
         try {
           const hashDir = join(hashRecordPath, '..');
           if (!existsSync(hashDir)) mkdirSync(hashDir, { recursive: true, mode: 0o700 });
-          writeFileSync(hashRecordPath, currentHash + '\n', { mode: 0o600 });
-          ok(`✅ 基准哈希已重置（SHA-256: ${currentHash.slice(0, 8)}…）`);
+          const syncScript = join(projectDir, 'tools', 'audit-baseline-sync.sh');
+          if (existsSync(syncScript)) {
+            execFileSync('bash', [syncScript, '--quiet'], { stdio: 'pipe' });
+            ok(`✅ 三锚已重置（主锚 audit-dist-hash / 兼容锚 audit-hash / 源码指纹）——经 tools/audit-baseline-sync.sh`);
+          } else {
+            for (const f of ['audit-dist-hash.txt', 'audit-hash.txt', 'audit-src-fingerprint.txt']) {
+              try { rmSync(join(hashDir, f), { force: true }); } catch { /* 为何可静默：force:true 下文件不存在不抛错，此 catch 仅兜底权限异常，且清锚失败会让 hook 的「基准缺失」分支兜住，不影响语义 */ }
+            }
+            ok(`✅ 三锚已清除（仓外无 tools/ 同步脚本）——下次 hook 运行会 fail-closed 重新记录基线`);
+          }
         } catch (err) {
           fail(`基准哈希重置失败: ${err instanceof Error ? err.message : String(err)}`);
           distIntegrityOk = false;
@@ -419,13 +555,49 @@ export function runDoctor(projectDir: string = process.cwd(), options: { resetBa
     warn(`HMAC 密钥强度不足（${keyStatus.reason}）——审计日志强校验被弱密钥稀释，建议重新生成 ≥16 字节强密钥（如：openssl rand -hex 32 > ~/.sofagent-key && chmod 600 ~/.sofagent-key）`);
     repairHint('openssl rand -hex 32 > ~/.sofagent-key && chmod 600 ~/.sofagent-key');
   } else {
-    ok('已配置 HMAC 密钥（~/.sofagent-key，≥16 字节），审计日志使用 HMAC-SHA256 强校验');
+    ok('已配置 HMAC 密钥（~/.sofagent-key，≥16 字节），审计日志使用 HMAC-SHA256 校验（防其他 OS 用户篡改；同用户运行的 Agent 仍可读密钥重算整链，非强防篡改）');
   }
 
   // 实际校验链完整性（v1.2.0: checkHistoryChainDetailed 已下沉到 core，区分篡改 vs 历史不可复验 vs 不可信）
   // v1.3.1 #14: doctor 只校验最近 500 条（而非全量）——大量历史记录时全量校验性能开销大，
   // doctor 是健康检查不应耗时过久。--verify-chain 命令仍全量校验。
   let auditLogOk = true;
+
+  // v1.4.5 (T3): 凭据文件权限巡检——federation.token 与 data.key 是凭据材料，
+  // 宽权限（组/其他可读）= 本机泄露面。文件不存在不告警（未启用联邦/加密是常态）。
+  console.log('\n── 凭据文件权限 [全局 ~/.sofagent/，非当前仓库] ──');
+  const CREDENTIAL_FILE_CHECKS: Array<{ label: string; path: string; repair: string }> = [
+    {
+      label: 'federation.token（联邦配对凭据）',
+      path: join(resolveHomeDir(), 'federation.token'),
+      repair: `chmod 600 ${join(resolveHomeDir(), 'federation.token')}`,
+    },
+    {
+      label: 'keys/data.key（数据加密密钥）',
+      path: join(resolveHomeDir(), 'keys', 'data.key'),
+      repair: `chmod 600 ${join(resolveHomeDir(), 'keys', 'data.key')}`,
+    },
+    {
+      label: '.sofagent-key（HMAC 签名密钥）',
+      path: join(homedir(), '.sofagent-key'),
+      repair: `chmod 600 ${join(homedir(), '.sofagent-key')}`,
+    },
+  ];
+  for (const check of CREDENTIAL_FILE_CHECKS) {
+    if (!existsSync(check.path)) continue; // 未启用该能力是常态，不告警
+    try {
+      const mode = statSync(check.path).mode & 0o777;
+      if ((mode & 0o077) !== 0) {
+        warn(`${check.label} 权限过宽（${mode.toString(8).padStart(3, '0')}，应为 600）——组/其他用户可读 = 凭据泄露面`);
+        repairHint(check.repair);
+      } else {
+        ok(`${check.label} 权限正确（600）`);
+      }
+    } catch {
+      warn(`${check.label} 权限不可读（stat 失败）——请检查文件状态`);
+    }
+  }
+
   try {
     const result = checkHistoryChainDetailed(undefined, 500);
     if (result.status === 'ok') {
@@ -454,8 +626,63 @@ export function runDoctor(projectDir: string = process.cwd(), options: { resetBa
     auditLogOk = true;
   }
 
+  // 7b. 未审计 commit 扫描（v1.4.8 F-18——SECURITY.md「二级防御」声称落地）
+  // 原理：git log --grep 匹配审计签名（sofagent 审计通过的 commit message 由
+  // hook 之外的历史记录覆盖——history.jsonl 的 commitSha/parentSha 集合才是
+  // 审计事实源）；对最近 N=50 个 commit 的 SHA 集合与 history 记录的
+  // commitSha/parentSha 集合做差，差集 = 未审计 commit → 逐条 WARN。
+  console.log('\n── 未审计 commit 扫描 [最近 50 个] ──');
+  try {
+    const logFmt = execFileSync('git', ['log', '-50', '--pretty=format:%H%x09%h%x09%s'], { cwd: projectDir, encoding: 'utf8' }).toString();
+    const commitLines = logFmt.trim().split('\n').filter((l) => l.includes('\t'));
+    if (commitLines.length === 0) {
+      info('无 commit 历史（空仓库），跳过未审计扫描');
+    } else {
+      // history.jsonl 审计事实集合（loadHistory 在 audit-history.ts，doctor 已 import 链内）
+      const histPath = getHistoryFilePath();
+      const auditedShas = new Set<string>();
+      if (existsSync(histPath)) {
+        try {
+          const histLines = readFileSync(histPath, 'utf-8').trim().split('\n').filter(Boolean);
+          // 只取最近 500 条（对齐 v1.3.1 #14 doctor 只校验最近 500 条的性能先例）
+          for (const line of histLines.slice(-500)) {
+            try {
+              const entry = JSON.parse(line) as { commitSha?: string; parentSha?: string };
+              if (entry.commitSha) auditedShas.add(entry.commitSha);
+              // parentSha 记录的是审计时 HEAD——它对应的 commit 本身也被审计覆盖
+              if (entry.parentSha) auditedShas.add(entry.parentSha);
+            } catch { /* 损坏行跳过——链完整性检查另行报告 */ }
+          }
+        } catch { /* 读失败按空集处理——下方 diff 为全量时自然提示 */ }
+      }
+      if (auditedShas.size === 0) {
+        warn(`history.jsonl 无可用审计记录（${histPath}）——未审计扫描退化为「全部待核」，请先运行一次审计或 --init`);
+      } else {
+        const missing: string[] = [];
+        for (const line of commitLines) {
+          const [fullSha, shortSha, ...rest] = line.split('\t');
+          if (!fullSha) continue;
+          if (!auditedShas.has(fullSha)) {
+            missing.push(`${shortSha ?? fullSha.slice(0, 7)} ${rest.join('\t').slice(0, 50)}`);
+          }
+        }
+        if (missing.length === 0) {
+          ok(`最近 ${commitLines.length} 个 commit 均有审计记录覆盖`);
+        } else {
+          warn(`检测到 ${missing.length} 个未审计 commit（可能 --no-verify 绕过或 hook 安装前提交）：`);
+          for (const m of missing.slice(0, 10)) console.log(`     ${m}`);
+          if (missing.length > 10) console.log(`     ... 共 ${missing.length} 个`);
+          repairHint('sofagent-audit --verify-commit <SHA> 逐个复核；确认无风险后可忽略（hook 安装前的历史 commit 属预期）');
+        }
+      }
+    }
+  } catch (err) {
+    // 非 git 仓库 / git 不可用——doctor 主流程已有环境检查兜底，这里不重复告警
+    info(`未审计 commit 扫描跳过（git 不可用或非 git 仓库）: ${err instanceof Error ? err.message.split('\n')[0] : ''}`);
+  }
+
   // 8. Ontology 完整性检查（v1.4.3 十三）
-  // 背景：LIMITATIONS §七多年披露——entities/ frontmatter 格式不规范时实体被合并引擎
+  // 背景：LIMITATIONS §七多年披露——entities/ frontmatter 格式不规范时实体被合并逻辑
   // 静默跳过，Ontology 缺失对象用户无法自动发现。本段把静默跳过变成 doctor 可见信号：
   //   ① 遍历 <dataDir>/knowledge/entities/*.md，逐文件 frontmatter 三查：
   //      `---` 分隔符存在 / YAML 可解析 / relations 字段名合法
@@ -487,7 +714,7 @@ export function runDoctor(projectDir: string = process.cwd(), options: { resetBa
         const normalized = content.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
         const fmMatch = normalized.match(/^---\n([\s\S]*?)\n---/);
         if (!fmMatch || !fmMatch[1]) {
-          warn(`Ontology 实体缺少 frontmatter（--- 分隔符）: ${filePath}——该实体已被合并引擎跳过，Ontology 缺失此对象`);
+          warn(`Ontology 实体缺少 frontmatter（--- 分隔符）: ${filePath}——该实体已被合并逻辑跳过，Ontology 缺失此对象`);
           repairHint('在文件开头补 frontmatter，模板：---\\ntitle: 实体名\\ntype: entity\\nrelations:\\n  has_many: [其他实体]\\n---（字段说明见 CHANGELOG v1.0.1「页面 frontmatter」节）');
           warnReported++;
           continue;
@@ -498,7 +725,7 @@ export function runDoctor(projectDir: string = process.cwd(), options: { resetBa
           fm = yamlLoad(fmMatch[1]) as Record<string, unknown>;
         } catch (yamlErr) {
           const line = yamlErr instanceof YAMLException && yamlErr.mark?.line != null ? yamlErr.mark.line + 1 : '?';
-          warn(`Ontology 实体 frontmatter YAML 语法错误: ${filePath}（第 ${line} 行附近）——该实体已被合并引擎跳过`);
+          warn(`Ontology 实体 frontmatter YAML 语法错误: ${filePath}（第 ${line} 行附近）——该实体已被合并逻辑跳过`);
           repairHint('修正 frontmatter YAML 语法（冒号后补空格 / 引号包裹特殊字符），字段说明见 CHANGELOG v1.0.1「页面 frontmatter」节');
           warnReported++;
           continue;
@@ -507,7 +734,7 @@ export function runDoctor(projectDir: string = process.cwd(), options: { resetBa
         if (fm && typeof fm === 'object' && fm['relations'] !== undefined) {
           const rel = fm['relations'];
           if (rel === null || typeof rel !== 'object' || Array.isArray(rel)) {
-            warn(`Ontology 实体 relations 字段类型错误（应为映射对象）: ${filePath}——关联信息被合并引擎忽略`);
+            warn(`Ontology 实体 relations 字段类型错误（应为映射对象）: ${filePath}——关联信息被合并逻辑忽略`);
             repairHint('relations 应为映射：relations:\\n  has_many: [其他实体]\\n  belongs_to: [父实体]，合法键：has_many / belongs_to / depends_on / produces / consumes');
             warnReported++;
           } else {
@@ -535,9 +762,9 @@ export function runDoctor(projectDir: string = process.cwd(), options: { resetBa
         const skipLog = JSON.parse(readFileSync(skipLogPath, 'utf-8')) as { mergedAt?: string; scanned?: number; skipped?: Array<{ file?: string; reason?: string }> };
         const skipCount = Array.isArray(skipLog.skipped) ? skipLog.skipped.length : 0;
         if (skipCount === warnReported) {
-          ok(`跳过对账一致（合并引擎跳过 ${skipCount} = doctor 报告 ${warnReported}）`);
+          ok(`跳过对账一致（合并逻辑跳过 ${skipCount} = doctor 报告 ${warnReported}）`);
         } else {
-          warn(`跳过对账不一致：合并引擎 skip-log.json 记录 ${skipCount} 条跳过，doctor 本次报告 ${warnReported} 条——两次读取之间文件可能已变化，或合并引擎未重跑（运行 sofagent-ontology merge 刷新）`);
+          warn(`跳过对账不一致：合并逻辑 skip-log.json 记录 ${skipCount} 条跳过，doctor 本次报告 ${warnReported} 条——两次读取之间文件可能已变化，或合并逻辑未重跑（运行 sofagent-ontology merge 刷新）`);
           repairHint('sofagent-ontology merge');
         }
       } catch (err) {
@@ -553,8 +780,8 @@ export function runDoctor(projectDir: string = process.cwd(), options: { resetBa
     warn(`Ontology 完整性检查异常（已跳过，不影响其余检查）: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // spec 关联覆盖率（纯展示——让「多少代码变更是 spec 驱动的」从不可见变为可运营数字）
-  console.log('\n── spec-first 覆盖率（纯展示）──');
+  // 规范关联覆盖率（纯展示——让「多少代码变更是规范驱动的」从不可见变为可运营数字）
+  console.log('\n── 规范先行覆盖率（纯展示）──');
   try {
     const recent = execFileSync('git', ['log', '-30', '--pretty=format:%H%x09%s'], { cwd: projectDir, encoding: 'utf8' })
       .trim().split('\n').filter((l) => l.length > 0);
@@ -576,7 +803,7 @@ export function runDoctor(projectDir: string = process.cwd(), options: { resetBa
       info('近 30 条 commit 无 engine/*/src 代码变更——spec 覆盖率不适用');
     } else {
       const rate = Math.round(((compliant + exempted) / codeCommits) * 100);
-      ok(`spec 关联覆盖率 ${rate}%（近 30 条：代码提交 ${codeCommits}，spec: 标记 ${compliant}，no-spec: 豁免 ${exempted}，无标记 ${codeCommits - compliant - exempted}）`);
+      ok(`规范关联覆盖率 ${rate}%（近 30 条：代码提交 ${codeCommits}，spec: 标记 ${compliant}，no-spec: 豁免 ${exempted}，无标记 ${codeCommits - compliant - exempted}）`);
     }
   } catch (err) {
     info(`spec 覆盖率统计不可用（非 git 仓库或 git 不可用）：${err instanceof Error ? err.message : String(err)}`);

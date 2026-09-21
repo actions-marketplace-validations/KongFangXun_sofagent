@@ -43,7 +43,9 @@ import {
   deployWorkflow,
   type NodeQuantifyInput,
 } from '../fde/fde-quantify';
-import { computeQuantification } from '../train/train-report';
+// v1.4.8 第 7 批（train 拆包）：量化四字段已随解环搬至 fde/quantify-core——
+// 本测试测的是 FDE 侧 ROI 公式，与 train 包无耦合，故仍留在 orchestrator 测试目录。
+import { computeQuantification } from '../fde/quantify-core';
 import type { NodeInterview, ComposeSession } from '../fde/compose-interview';
 
 let dataDir: string;
@@ -308,7 +310,7 @@ describe('fde-quantify · 引擎三 quantify', () => {
     const direct = computeQuantification({ annualSalary: 200_000, takeoverRatio: 0.5, aiAnnualCost: 10_000 });
     expect(f.ranked[0].metrics.annualSaving.value).toBe(direct.annualSaving.value); // 100000
     expect(f.ranked[0].metrics.annualSaving.value).toBe(100_000);
-    expect(f.ranked[0].roiScore).toBeCloseTo(100_000 / 5_001, 5); // 分母 invest+1
+    expect(f.ranked[0].roiScore).toBeCloseTo(100_000 / 6_000, 5); // 分母 invest+1000（千元地板防小额失真——fresh-eyes 视角8-1）
     // totals 汇总
     expect(f.totals.totalAnnualSaving).toBe(100_000 + 20_000);
     expect(f.totals.totalOneTimeInvestment).toBe(55_000);
@@ -353,6 +355,27 @@ describe('fde-quantify · 引擎四 derive', () => {
     const nodes = Array.from({ length: 6 }, (_, i) => makeNode({ nodeId: `n${i}` }));
     const r = deriveOntology(dataDir, 'acme', makeSession(nodes));
     expect(r.needsFullOntology).toBe(true);
+  });
+
+  it('test_deriveOntology_特殊字符nodeId的YAML安全转义（round-trip 解析不丢字段）', () => {
+    // fresh-eyes 视角11-4 修复行为锁：实体名来自名词短语提取（冒号等特殊字符
+    // 是分词边界天然穿不透），但 relations 的 from/to 是 nodeId 自由文本——
+    // 「关键: 材料」这类形态能穿透到 YAML，必须加引号转义防 ontology_import 解析错位
+    const nodes = [
+      makeNode({ nodeId: '关键: 材料' }),
+      makeNode({ nodeId: 'check-invoice', dependsOn: ['关键: 材料'] }),
+    ];
+    const r = deriveOntology(dataDir, 'acme', makeSession(nodes));
+    const fs = require('fs') as typeof import('fs');
+    const yaml = fs.readFileSync(r.draftPath, 'utf8') as string;
+    // 转义断言：relations 段的 from/to 含冒号 nodeId 必须以双引号形态落盘
+    expect(yaml).toContain('from: "关键: 材料"');
+    // round-trip：解析回读关系字段完整不丢
+    const YAML = require('yaml');
+    const parsed = YAML.parse(yaml);
+    const rel = (parsed.relations ?? []).find((x: { from?: string }) => x.from === '关键: 材料');
+    expect(rel).toBeTruthy();
+    expect(rel.to).toBe('check-invoice');
   });
 });
 
@@ -401,6 +424,28 @@ describe('fde-quantify · 引擎五 distill', () => {
     const fs = require('fs') as typeof import('fs');
     const manual = fs.readFileSync(r.layers[0].docLayer.path, 'utf8');
     expect(manual).toContain('👤 暂不动');
+  });
+
+  it('test_distillDeliverables_中文nodeId清洗（Skill name 合法 + 文件名安全）', () => {
+    // fresh-eyes 视角6-1 修复行为锁：fde-interview node_id 为自由文本，中文场景
+    // （如「电池质检」）此前生成 name: node-电池质检 必非法——sanitizeNodeId
+    // 清洗后 ASCII 安全形态，全非法字符回退 node
+    const fs = require('fs') as typeof import('fs');
+    const nodes = [
+      makeNode({ nodeId: '电池质检' }),
+      makeNode({ nodeId: '  ' }), // 全非法（清洗后空）→ 回退 'node'
+    ];
+    const r = distillDeliverables(dataDir, 'acme', nodes);
+    // 中文 nodeId → Skill 层 name 合法（无中文、无空格）
+    const skill = fs.readFileSync(r.layers[0].skillLayer.path, 'utf8');
+    expect(skill).not.toContain('name: node-电池质检');
+    expect(skill).toMatch(/name: node-[a-zA-Z0-9-_.]+/);
+    // 全非法 nodeId 回退 node（不产生空标识）
+    const skill2 = fs.readFileSync(r.layers[1].skillLayer.path, 'utf8');
+    expect(skill2).toContain('name: node-node');
+    // 文件名同样安全（无中文路径成分）
+    expect(r.layers[0].docLayer.path).not.toMatch(/电池质检/);
+    expect(r.layers[1].docLayer.path).not.toMatch(/电池质检/);
   });
 
   // ── 模板外置（v1.4.4 第七章·九）：改模板不改代码 ──

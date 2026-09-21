@@ -1,5 +1,5 @@
 // ============================================================
-// loop/checker-nodes.ts · 多类型 Checker 图节点（v1.4.3 · P2b）
+// loop/checker-nodes.ts · 多类型 Checker 图节点（v1.5.0 · P2b）
 // ============================================================
 //
 // 三种 Checker 节点（audit 之后、reviewer 之前）：
@@ -12,7 +12,7 @@
 //   - 降级通过：audit WARN→标记后 reviewer 带警告展示
 //   - 循环守卫：每种循环独立 maxRetries + degradationThreshold + humanHandoffTrigger
 //
-// 集成衔接：Checker 发现的失败模式喂给 P1 skillopt failure-ledger
+// 集成衔接：Checker 发现的失败模式喂给 P1 evolve failure-ledger
 // ============================================================
 
 import { existsSync } from 'fs';
@@ -308,20 +308,20 @@ export function resolveLoopMode(
 }
 
 /**
- * 将 checker 的失败模式记录到 failure-ledger（喂给 P1 skillopt）
+ * 将 checker 的失败模式记录到 failure-ledger（喂给 P1 evolve）
  *
- * 通过动态 import skillopt 避免编译期依赖
+ * 通过动态 import evolve 避免编译期依赖
  */
 export async function recordCheckerFailures(
   checkerResults: CheckerResult[],
   skillId: string,
 ): Promise<void> {
   try {
-    const skillopt = await import('@sofagent/skillopt');
-    if (typeof skillopt.recordFailure === 'function') {
+    const evolve = await import('@sofagent/evolve');
+    if (typeof evolve.recordFailure === 'function') {
       for (const result of checkerResults) {
         if (result.failureMode) {
-          skillopt.recordFailure({
+          evolve.recordFailure({
             timestamp: new Date().toISOString(),
             skillId,
             failureMode: result.failureMode,
@@ -333,7 +333,7 @@ export async function recordCheckerFailures(
       }
     }
   } catch {
-    // skillopt 不可用时静默跳过（不影响 LOOP 流程）
+    // evolve 不可用时静默跳过（不影响 LOOP 流程）
   }
 }
 

@@ -1,7 +1,7 @@
 ---
 name: 代码审查员
 slug: sofagent-reviewer
-version: 1.4.3
+version: 1.5.0
 displayName: 代码审查员
 description: 专业代码审查专家，提供建设性、可操作的反馈，聚焦正确性、可维护性、安全性和性能，而非代码风格偏好。
 tags:
@@ -14,6 +14,9 @@ scenarios: [有人提交了代码要审查, 需要代码质量评估, FORGE子�
 not_when: [写功能代码, 修复bug, 简单闲聊]
 emoji: 👀
 color: purple
+solves:
+  - 代码审查无标准（建设性可操作反馈四维聚焦）
+  - 审查变风格之争（聚焦正确性/可维护性/安全/性能而非偏好）
 ---
 
 # 代码审查员
@@ -237,7 +240,7 @@ async function fetchData() {
 ## 📝 审查报告格式
 
 ```markdown
-> **审计引擎**: sofagent-audit · 24 条规则（17 默认 + 7 扩展） | **审查引擎**: sofagent-orchestrator · sofagent-reviewer
+> **审计模块**: sofagent-audit · 24 条规则（17 默认 + 7 扩展） | **审查模块**: sofagent-orchestrator · sofagent-reviewer
 
 # 代码审查报告
 

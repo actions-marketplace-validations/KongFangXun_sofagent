@@ -1,6 +1,6 @@
 # SubAgent 托管 SDK（`harness.wrap`）
 
-> v1.3.6 交付——约束层作为引擎的**最终接缝**：开发者用 LangChain/LangGraph 写自己的 graph，一行包装即自动获得约束层全部能力（审计 / 审批 / 身份 / Trace / 决策审计）。
+> v1.3.6 交付——约束层作为**最终接缝**：开发者用 LangChain/LangGraph 写自己的 graph，一行包装即自动获得约束层全部能力（审计 / 审批 / 身份 / Trace / 决策审计）。
 
 ## 为什么需要托管 SDK
 
@@ -58,7 +58,7 @@ const result = await hosted.agent.invoke({ messages: [...] });
 
 ## 版本边界
 
-`sandbox: true` 依赖 v1.3.7 沙箱组件——**本版传 true 返回明确错误「v1.3.8 启用」**，v1.3.8（沙箱已交付）接入。
+`sandbox: true` 依赖 v1.3.7 沙箱组件，**v1.3.8 起已启用**（v1.3.7 的版本边界 throw 已移除）——工具调用过 tool-gate、文件写走虚拟层、网络出站走白名单。见 `engine/orchestrator/src/harness-sdk/wrap.ts`。
 
 ## 层级定位
 

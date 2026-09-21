@@ -1,10 +1,10 @@
 {
   "name": "@sofagent/rules",
-  "version": "1.4.3",
+  "version": "1.5.0",
   "engines": {
     "node": ">=18"
   },
-  "description": "sofagent 规则引擎包——从 audit 抽出，零 git 依赖，供编排引擎 tool call 事前拦截；v1.3.9 起含官方 AST 规则引擎（sofagent-ruleset-ast，经临时文件驱动 TS 编译器，无仓库 fs 依赖）",
+  "description": "sofagent 规则模块——从 audit 抽出，零 git 依赖，供编排模块 tool call 事前拦截；v1.3.9 起含官方 AST 规则引擎（sofagent-ruleset-ast，经临时文件驱动 TS 编译器，无仓库 fs 依赖）",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -33,7 +33,7 @@
   "license": "MIT",
   "devDependencies": {
     "typescript": "7.0.2",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.0"
   },
   "files": [
     "dist/",
@@ -43,7 +43,7 @@
     "README.md"
   ],
   "dependencies": {
-    "@sofagent/core": "1.4.3"
+    "@sofagent/core": "1.5.0"
   },
   "peerDependencies": {
     "typescript": ">=5.0.0"

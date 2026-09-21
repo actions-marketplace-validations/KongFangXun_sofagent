@@ -1,32 +1,39 @@
 {
   "name": "sofagent-monorepo",
-  "version": "1.4.3",
+  "version": "1.5.0",
   "private": true,
   "license": "MIT",
+  "files": [
+    "README.md",
+    "README.en.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "//files": "根包打包边界（v1.4.7 收面批）：private:true 只拦得住 npm publish，拦不住 npm pack / --dry-run。此前既无 files 也无 .npmignore → npm 回退用 .gitignore 排除 → 排除不到 → 实测打过 1621 文件 / 17.3 MB 解包，平铺含 FORGE/ docs/ engine/ tools/ SKILL/ FDE/ .claude/ .cursor/（把内部施工面连同一份含凭证路径说明的配置一起打进 tarball）。本字段把根 pack 收敛到根级必要文件。⚠️ 不影响 @sofagent/* 各 workspace 包（各自 files 独立限定，如 engine/umbrella 恒为 3 文件）；也不影响 install.sh（走 git clone 钉发版 tag，不走 npm pack）。⚠️ 维护注意：根 pack 只用于边界收口，无任何发布/安装链路依赖它——新增根级文件如确需随包分发再显式登记。",
   "engines": {
     "node": ">=18"
   },
   "workspaces": [
-    "engine/harness",
+    "engine/inject",
     "engine/ontology",
     "engine/eval",
     "engine/core",
     "engine/think",
     "engine/audit",
     "engine/orchestrator",
+    "engine/train",
     "engine/daemon",
     "engine/ab-test",
-    "engine/skillopt",
+    "engine/evolve",
     "engine/mcp",
     "engine/rules",
+    "engine/umbrella",
     "engine/hooks/sofagent-load-chain",
     "engine/dsh-plugins/cordis-plugin-sofagent-audit",
     "engine/dsh-plugins/cordis-plugin-sofagent-rollback",
     "engine/dsh-plugins/cordis-plugin-sofagent-inject",
     "engine/dsh-plugins/cordis-plugin-sofagent-evolve",
-    "engine/dsh-plugins/cordis-plugin-sofagent-ontology",
-    "engine/dsh-plugins/cordis-plugin-sofagent-commons",
-    "engine/dsh-plugins/cordis-plugin-sofagent-gate",
+    "engine/dsh-plugins/cordis-plugin-sofagent",
     "engine/dsh-plugins/cordis-plugin-sofagent-daemon",
     "engine/dsh-plugins/cordis-plugin-sofagent-fde",
     "engine/openclaw-plugins/sofagent-audit",
@@ -37,16 +44,18 @@
   "scripts": {
     "test": "npm test --workspaces --if-present && bash tools/dashboard/sofagent-dashboard.test.sh",
     "test:count": "bash tools/check/check-test-count.sh",
-    "build": "npm run build --workspace=engine/harness && npm run build --workspace=engine/ontology && npm run build --workspace=engine/core && npm run build --workspace=engine/rules && npm run build --workspace=engine/think && npm run build --workspace=engine/audit && npm run build --workspace=engine/eval && npm run build --workspace=engine/skillopt && npm run build --workspace=engine/orchestrator && npm run build --workspace=engine/daemon && npm run build --workspace=engine/ab-test && npm run build --workspace=engine/mcp && npm run build --workspace=engine/hooks/sofagent-load-chain",
-    "postbuild": "node -e \"const fs=require('fs');const dirs=['engine/ab-test','engine/audit','engine/core','engine/daemon','engine/eval','engine/mcp','engine/ontology','engine/orchestrator','engine/skillopt','engine/think'];for(const d of dirs){const p=require('path').join(d,'dist');if(fs.existsSync(p)){fs.readdirSync(p).forEach(f=>{if(f.endsWith('.js')){try{fs.chmodSync(require('path').join(p,f),0o755)}catch(e){}}})}}\""
+    "build": "npm run build --workspace=engine/inject && npm run build --workspace=engine/core && npm run build --workspace=engine/ontology && npm run build --workspace=engine/rules && npm run build --workspace=engine/audit && npm run build --workspace=engine/eval && npm run build --workspace=engine/think && npm run build --workspace=engine/evolve && npm run build --workspace=engine/orchestrator && npm run build --workspace=engine/train && npm run build --workspace=engine/daemon && npm run build --workspace=engine/ab-test && npm run build --workspace=engine/mcp && npm run build --workspace=engine/hooks/sofagent-load-chain && npm --prefix engine/dsh-plugins/plugin-kit run build && npm run build --workspace=engine/dsh-plugins/cordis-plugin-sofagent-audit && npm run build --workspace=engine/dsh-plugins/cordis-plugin-sofagent-rollback && npm run build --workspace=engine/dsh-plugins/cordis-plugin-sofagent-inject && npm run build --workspace=engine/dsh-plugins/cordis-plugin-sofagent-evolve && npm run build --workspace=engine/dsh-plugins/cordis-plugin-sofagent && npm run build --workspace=engine/dsh-plugins/cordis-plugin-sofagent-daemon && npm run build --workspace=engine/dsh-plugins/cordis-plugin-sofagent-fde",
+    "postbuild": "node -e \"const fs=require('fs');const dirs=['engine/ab-test','engine/audit','engine/core','engine/daemon','engine/eval','engine/mcp','engine/ontology','engine/orchestrator','engine/evolve','engine/think'];for(const d of dirs){const p=require('path').join(d,'dist');if(fs.existsSync(p)){fs.readdirSync(p).forEach(f=>{if(f.endsWith('.js')){try{fs.chmodSync(require('path').join(p,f),0o755)}catch(e){}}})}}\""
   },
-  "//optionalDependencies": "F-18 归属说明：@langchain/anthropic 是 root 级可选依赖，对应编排层 LLM 厂商运行时可选适配器——orchestrator/ab-test 经 @langchain/langgraph 的 createReactAgent（launcher.ts/ab-runner.ts 动态 import）按模型厂商动态加载 ChatAnthropic。源码无静态 import（grep engine/*/src 零命中），仅运行时按需解析；作为 optionalDependency，其安装失败不阻断 build/test，audit 核心引擎零依赖。v1.2.1 (commit 295bf26) 加入。结论：保留并在此注明用途，勿删（删之会破坏运行时 Anthropic 模型动态加载）。",
+  "//postbuild": "chmod 覆盖面说明（v1.4.7 批次 J-5 核对）：hooks/sofagent-load-chain 与 umbrella 两包不在 dirs 列表——hooks 无 bin 入口（handler.js 是 require 消费不需可执行位）；umbrella 的 bin/sofagent.js 是源码级入口非 dist 产物，git 已带 755 可执行位（100755，npm 安装保留 git mode），不经 postbuild。",
+  "//optionalDependencies": "F-18 归属说明：@langchain/anthropic 是 root 级可选依赖，对应编排层 LLM 厂商运行时可选适配器——orchestrator/ab-test 经 @langchain/langgraph 的 createReactAgent（launcher.ts/ab-runner.ts 动态 import）按模型厂商动态加载 ChatAnthropic。源码无静态 import（grep engine/*/src 零命中），仅运行时按需解析；作为 optionalDependency，其安装失败不阻断 build/test，audit 包零依赖。v1.2.1 (commit 295bf26) 加入。结论：保留并在此注明用途，勿删（删之会破坏运行时 Anthropic 模型动态加载）。",
   "optionalDependencies": {
     "@langchain/anthropic": "^1.5.2"
   },
   "//dependencies": "B-3 (v1.4.4) 归属说明：@sofagent/rules 是 root 级声明，实测（临时移除跑 npm install --package-lock-only 对比 lock 面）workspace 态下 node_modules/@sofagent/rules 的 link 条目由 engine/audit、engine/orchestrator、engine/mcp 三个 workspace 消费者维持，root 声明本身零增量语义——但保留声明可让根目录脚本直接 require('@sofagent/rules') 开箱可解析，且对齐 workspace 内部依赖版本对齐原则。勿删（先例：optionalDependencies 同款注释保留）。",
   "dependencies": {
-    "@sofagent/rules": "1.4.3"
+    "@sofagent/rules": "1.5.0",
+    "fzstd": "^0.1.1"
   },
   "devDependencies": {
     "undici": "^8.10.0"

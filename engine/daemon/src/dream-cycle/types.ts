@@ -5,7 +5,7 @@
 // Dream Cycle 是 gbrain 21 阶段的精简版——对约束沉淀真正有用的前半段：
 //   extract_facts → extract_atoms → cluster_patterns
 //                → synthesize_concepts（喂 @sofagent/ontology）
-//                → skillopt_backfill（回灌自进化）
+//                → evolve_backfill（回灌自进化）
 //                → embed（向量化，供未来检索）
 //
 // 数据流：
@@ -21,7 +21,7 @@ export const DREAM_CYCLE_STAGES = [
   'extract_atoms',
   'cluster_patterns',
   'synthesize_concepts',
-  'skillopt_backfill',
+  'evolve_backfill',
   'embed',
 ] as const;
 
@@ -107,7 +107,7 @@ export interface Embedding {
  *
  * 铁律：任何 stage 不直接调 LLM SDK，必须经 LLMProvider。
  * v1.1.6 只提供 MockLLM（确定性输出，开发期验证 pipeline 串接）；
- * RealLLM 只写类型签名，构造器抛用户可读错（v1.1.8 接入）。
+ * RealLLM 只写类型签名，构造器抛用户可读错（接入时间未定——见 roadmap）。
  */
 export interface LLMProvider {
   /** 从文本提取事实（think.md 段落 / audit 条目 → fact 文本列表） */
@@ -150,6 +150,13 @@ export interface DreamCycleResult {
   };
   /** 输入 Ledger 规模（audit history 条数，供周报） */
   auditEntryCount: number;
+  /**
+   * v1.4.5 第七章五：大脑运行状态（'real' = 真 LLM；'mock' = 显式降级）。
+   * 周报与 evolution report 据此带降级标注——「占位符跑 7 天」永不默默发生。
+   */
+  providerStatus?: 'real' | 'mock';
+  /** 降级原因（providerStatus='mock' 时非空） */
+  degradedReason?: string;
   /** 错误信息（失败时填充） */
   error?: string;
 }

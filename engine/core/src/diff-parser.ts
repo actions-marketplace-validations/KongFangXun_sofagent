@@ -1,7 +1,7 @@
 // ============================================================
 // diff-parser.ts · git diff 解析器
-// v1.4.3: 添加 isomorphic-git fallback（当系统 git 不可用时）
-// v1.4.3（十二）：>5MB diff 缝隙修复——maxBuffer 溢出不再跳过内容扫描，
+// v1.5.0: 添加 isomorphic-git fallback（当系统 git 不可用时）
+// v1.5.0（十二）：>5MB diff 缝隙修复——maxBuffer 溢出不再跳过内容扫描，
 //   改走 spill 落盘（spawnSync stdio fd 重定向，零内存写文件）+ 分块读回。
 //   读回上限 64MB：以内全量扫描（oversized 不置位，无审计盲区）；
 //   超限截断（oversized 置位，WARN 注入）+ spillFile locator 供按需取回。
@@ -9,7 +9,7 @@
 
 import { execFileSync, spawnSync } from 'child_process';
 import { createHash } from 'crypto';
-import { mkdirSync, openSync, closeSync, readSync } from 'fs';
+import { mkdirSync, openSync, closeSync, readSync, rmSync } from 'fs';
 import { join } from 'path';
 import { getDataDir } from './data-paths';
 
@@ -54,6 +54,25 @@ const SPILL_READ_CAP = 64 * 1024 * 1024;
 const SPILL_CHUNK = 8 * 1024 * 1024;
 
 /**
+ * v1.4.8 F-14：审计 diff 调用的统一前缀（命令级 -c 清场）——锁死仓库本地配置对
+ * diff 输出的摆布。⚠️ flag 位置两段式：-c 必须在 `git` 与 `diff` 子命令之间
+ * （global 前置区），--no-textconv/--no-ext-diff 必须在 `diff` 之后（子命令 flag 区，
+ * 前置区会报 unknown option）。
+ * - `-c core.quotePath=false`：非 ASCII 路径不转义（既有行为，保持）
+ * - `-c diff.external=` / `-c core.attributesfile=`：命令级清场 ext-diff 驱动与
+ *   外部 attributesfile（覆盖仓库/全局配置，不写回用户配置）
+ * - `--no-textconv --no-ext-diff`：阻断 .gitattributes textconv 过滤器与
+ *   diff.external 对内容 diff 的改写——攻击者提交 `.gitattributes` 标记 textconv 后，
+ *   密钥文件的 diff 内容会被替换成过滤器输出（凭空消失），A2 无内容可扫即假绿 PASS。
+ */
+const GIT_AUDIT_C_FLAGS: readonly string[] = [
+  '-c', 'core.quotePath=false',
+  '-c', 'diff.external=',
+  '-c', 'core.attributesfile=',
+];
+const GIT_AUDIT_DIFF_FLAGS: readonly string[] = ['--no-textconv', '--no-ext-diff'];
+
+/**
  * spill 落盘目录：显式 SOFAGENT_DATA 环境变量 > ~/.sofagent/data/（引擎 home）
  *
  * v1.4.3 P2-e 修复（跨仓密钥泄漏面）：旧实现 `join(process.env.SOFAGENT_DATA ?? 'data', 'spill')`
@@ -79,6 +98,9 @@ interface SpillReadResult {
   spillFile: string;
 }
 
+/** spill 路径 git 失败的错误标记（parseDiff/parseStagedDiff 按此原样上抛，不走「范围无效」宽容 catch） */
+const SPILL_FAILURE_CODE = 'DIFF_SPILL_FAILURE';
+
 /**
  * 把一次 git diff 输出 spill 到磁盘文件（spawnSync stdio fd 重定向，零内存），
  * 再分块读回拼行。攻击者构造超大 diff 藏密钥的场景（LIMITATIONS >5MB 缝隙）
@@ -96,12 +118,31 @@ function spillDiffToLines(gitArgs: string[], cwd: string | undefined, filePath: 
   const spillFile = join(spillDir, `diff-${hash}.diff`);
 
   // 第一步：stdout 直接重定向进文件——spawnSync 对 fd 型 stdio 不做缓冲，
-  // git 输出多大都不占 Node 内存
+  // git 输出多大都不占 Node 内存（stderr 走 pipe：失败时带回原因，不再吞掉）。
+  // stderr maxBuffer 显式放大（F09）：默认 1MB，git hook 向 stderr 倾倒超量输出
+  // 会 ENOBUFS——把「正常可审计的 diff」误伤成 fail-closed 硬拒。与同文件
+  // 快路径（5MB/10MB）同向，上限内截断不致命（仅用于失败原因展示）。
   const fd = openSync(spillFile, 'w');
+  let spillFailure = '';
   try {
-    spawnSync('git', gitArgs, { cwd, stdio: ['ignore', fd, 'ignore'] });
+    const result = spawnSync('git', gitArgs, { cwd, stdio: ['ignore', fd, 'pipe'], maxBuffer: 5 * 1024 * 1024 });
+    if (result.error || result.status !== 0) {
+      const stderrText = (result.stderr ?? Buffer.alloc(0)).toString('utf-8').trim().slice(0, 500);
+      spillFailure = result.error ? result.error.message : `exit=${result.status}${stderrText ? `：${stderrText}` : ''}`;
+    }
   } finally {
     closeSync(fd);
+  }
+  // fail-closed（v1.4.9 审）：git 失败 ⇒ spill 文件是空内容——静默返回空行集会让这个
+  // >5MB 文件「零内容过审」（fail-open 审计盲区）。验不了 = 拒审：带标记上抛，
+  // 由 parseDiff/parseStagedDiff 原样抛出走引擎崩溃路径（退出码 4），不许降级为告警。
+  // 失败即清理落盘残留（F10）：spill 文件可能含密钥类 diff 内容，git 已失败
+  // （无 locator 消费价值），不留驻数据目录——best-effort，清理失败不掩盖原错误。
+  if (spillFailure) {
+    const err = new Error(`[sofagent] ⚠️ spill 读取文件 ${filePath} 的 diff 失败（${spillFailure}）——拒绝以空内容过审。常见原因：index.lock 被占 / 浅克隆缺对象；可先处理锁文件后重试（重试仍失败请带本行上报）`);
+    (err as NodeJS.ErrnoException).code = SPILL_FAILURE_CODE;
+    try { rmSync(spillFile, { force: true }); } catch { /* 为何可静默：spill 残留清理属 best-effort——原错误（已构造 err，含上报指引）继续抛出，清理失败不掩盖原错误 */ }
+    throw err;
   }
 
   // 第二步：分块读回拼行（带跨块残行拼接）
@@ -159,8 +200,18 @@ function readDiffLines(
     const isBufOverflow = (err as NodeJS.ErrnoException)?.code === 'ENOBUFS'
       || /maxBuffer/i.test((err as Error)?.message ?? '');
     if (!isBufOverflow) {
-      console.error('[diff-parser] 读取文件差异失败:', err);
-      return { lines: [], oversized: false };
+      // fail-closed（v1.4.9 审 F02）：git 进程失败 = diff 内容验不了——静默返回空行集
+      // 会让绝大多数 diff「零内容过审」（fail-open 审计盲区，A2 密钥检测空转）。
+      // 与 spill 路径同错误码同穿透：原样上抛走引擎崩溃路径（退出码 4），不许降级为告警。
+      // ⚠️ git 成功且输出为空 = 合法空 diff，仍走上方正常返回（不误伤无变更场景）。
+      const execErr = err as NodeJS.ErrnoException & { stderr?: Buffer | string; status?: number | null };
+      const stderrText = String(execErr.stderr ?? '').trim().slice(0, 500);
+      const failureDetail = execErr.status != null
+        ? `exit=${execErr.status}${stderrText ? `：${stderrText}` : ''}`
+        : (execErr.message ?? String(err)).slice(0, 500);
+      const failure = new Error(`[diff-parser] 读取文件 ${filePath} 的 diff 失败（${failureDetail}）——拒绝以空内容过审`);
+      (failure as NodeJS.ErrnoException).code = SPILL_FAILURE_CODE;
+      throw failure;
     }
     // 溢出 → spill 落盘分块读回（内容照扫，不再跳过）
     console.error(`[diff-parser] 文件 ${filePath} 的 diff 超过 5MB，spill 落盘后分块扫描`);
@@ -269,7 +320,11 @@ export function parseDiff(range: string, cwd?: string): DiffFile[] {
     // v1.0.5: 加 --find-renames 避免重命名+修改文件漏检
     // v1.3.8 P1-B5：stdio pipe stderr——非法 refspec 时 git 的 raw stderr
     // （fatal: ambiguous argument ...）不再直接透传到用户终端，由 catch 统一产品化提示
-    const output = execFileSync('git', ['-c', 'core.quotePath=false', 'diff', '--find-renames', '--name-status', range], {
+    // v1.4.8 F-14: 审计信任地基锁死——--no-textconv/--no-ext-diff 阻断仓库本地
+    // .gitattributes（textconv 过滤器）与 diff.external（ext-diff 驱动）对 diff 输出的
+    // 摆布（攻击者提交 .gitattributes 后密钥 diff 凭空消失、审计假绿）；命令级
+    // -c diff.external= -c core.attributesfile= 覆盖清场（不碰用户全局配置）。
+    const output = execFileSync('git', GIT_AUDIT_C_FLAGS.concat(['diff', ...GIT_AUDIT_DIFF_FLAGS, '--find-renames', '--name-status', range]), {
       encoding: 'utf-8',
       cwd,
       maxBuffer: 10 * 1024 * 1024,
@@ -326,13 +381,16 @@ export function parseDiff(range: string, cwd?: string): DiffFile[] {
         // 否则 git 无法配对 rename，R100 纯改名会被当成全新文件输出全量 diff
         // v1.3.9（十二）：溢出走 spill 落盘读回——内容不跳过，A2 密钥检测全量覆盖
         const pathspec = (status === 'renamed' && oldPath) ? [oldPath, path] : [path];
-        const gitArgs = ['-c', 'core.quotePath=false', 'diff', range, '--', ...pathspec];
+        // v1.4.8 F-14: 内容 diff 同样锁死 textconv/ext-diff（GIT_AUDIT 两段式 flags）
+        const gitArgs = GIT_AUDIT_C_FLAGS.concat(['diff', ...GIT_AUDIT_DIFF_FLAGS, range, '--', ...pathspec]);
         const { lines: diffLines, oversized, spillFile } = readDiffLines(gitArgs, cwd, path);
 
         files.push({ path, status, oldPath, lines: diffLines, ...(oversized ? { oversized: true } : {}), ...(spillFile ? { spillFile } : {}) });
       }
     }
   } catch (err) {
+    // spill 路径 git 失败 = 内容验不了——原样上抛走引擎崩溃（退出码 4），不许降级为「范围无效」告警
+    if ((err as NodeJS.ErrnoException)?.code === SPILL_FAILURE_CODE) throw err;
     // git diff 失败——非 git 仓库或无提交记录
     // v1.3.8 P1-B5：产品化提示（[sofagent] 前缀）替代 raw git stderr 透传；
     // 技术细节只在 SOFAGENT_DEBUG=1 时输出
@@ -358,8 +416,8 @@ export function parseStagedDiff(): DiffFile[] {
   }
 
   try {
-    // 获取 staged 文件列表
-    const output = execFileSync('git', ['-c', 'core.quotePath=false', 'diff', '--cached', '--name-status'], {
+    // 获取 staged 文件列表（v1.4.8 F-14: GIT_AUDIT 两段式 flags 锁死 textconv/ext-diff）
+    const output = execFileSync('git', GIT_AUDIT_C_FLAGS.concat(['diff', ...GIT_AUDIT_DIFF_FLAGS, '--cached', '--name-status']), {
       encoding: 'utf-8',
       maxBuffer: 10 * 1024 * 1024,
     });
@@ -409,7 +467,8 @@ export function parseStagedDiff(): DiffFile[] {
         // 否则 git 无法配对 rename，R100 纯改名会被当成全新文件输出全量 diff
         // v1.3.9（十二）：溢出走 spill 落盘读回——内容不跳过（与 parseDiff 同机制）
         const pathspec = (status === 'renamed' && oldPath) ? [oldPath, path] : [path];
-        const gitArgs = ['-c', 'core.quotePath=false', 'diff', '--cached', '--', ...pathspec];
+        // v1.4.8 F-14: staged 内容 diff 同样走 GIT_AUDIT 两段式 flags
+        const gitArgs = GIT_AUDIT_C_FLAGS.concat(['diff', ...GIT_AUDIT_DIFF_FLAGS, '--cached', '--', ...pathspec]);
         // parseStagedDiff 不收 cwd（沿用 v1.3.8 前行为：在当前目录跑 git）
         const { lines: diffLines, oversized, spillFile } = readDiffLines(gitArgs, undefined, path);
 
@@ -417,7 +476,13 @@ export function parseStagedDiff(): DiffFile[] {
       }
     }
   } catch (err) {
-    console.error('无法执行 git diff --cached:', (err as Error).message);
+    // spill 路径 git 失败 = 内容验不了——原样上抛走引擎崩溃（退出码 4），不许降级为告警
+    if ((err as NodeJS.ErrnoException)?.code === SPILL_FAILURE_CODE) throw err;
+    // fail-closed（v1.4.9 审 F02）：git 失败不再吞成空 files——staged 内容验不了 = 拒审。
+    // 同样带 SPILL_FAILURE_CODE：穿透上层一切「范围无效」宽容 catch，走引擎崩溃退出码 4。
+    const failure = new Error(`[sofagent] ⚠️ 读取 staged diff 失败（${(err as Error)?.message ?? String(err)}）——拒绝以空内容过审。常见原因：index.lock 被占 / 浅克隆缺对象；可先处理锁文件后重试（重试仍失败请带本行上报）`);
+    (failure as NodeJS.ErrnoException).code = SPILL_FAILURE_CODE;
+    throw failure;
   }
 
   return files;

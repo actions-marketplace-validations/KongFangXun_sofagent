@@ -15,12 +15,20 @@ describe('runInspectors', () => {
   let isoDir: string;
   let tmpDir: string;
   const prevData = process.env.SOFAGENT_DATA;
+  const prevHome = process.env.SOFAGENT_HOME;
 
   beforeEach(() => {
     // v1.3.5 阶段五隔离：audit-trail/data-sovereignty 等 inspector 无隔离时
     // 会扫真实 ~/.sofagent（5MB+ history）——SOFAGENT_DATA 指向 tmp
     isoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sofagent-iso-'));
     process.env.SOFAGENT_DATA = isoDir;
+    // v1.4.9 P1-14：knowledge 系巡检（conflict-check / knowledge-health /
+    // knowledge-freshness / ontology-coverage）改经 resolveKnowledgeDir() 读
+    // {SOFAGENT_HOME}/data/knowledge——该解析器**不认 SOFAGENT_DATA**（认 overrideHome
+    // 与 SOFAGENT_HOME），只隔离 DATA 会读/写**开发机真实知识库**
+    // （checkKnowledgeHealth 会 append health-report.md = 真实目录被测试写入）。
+    // 故此处一并隔离 HOME。
+    process.env.SOFAGENT_HOME = isoDir;
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sofagent-insp-test-'));
     fs.mkdirSync(path.join(tmpDir, '.sofagent'), { recursive: true });
   }, 90_000);
@@ -29,15 +37,16 @@ describe('runInspectors', () => {
     // 环境变量还原（防泄漏到后续测试文件——审查报告 #73 断言泄漏项）
     if (prevData === undefined) delete process.env.SOFAGENT_DATA;
     else process.env.SOFAGENT_DATA = prevData;
+    if (prevHome === undefined) delete process.env.SOFAGENT_HOME;
+    else process.env.SOFAGENT_HOME = prevHome;
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best-effort */ }
     try { fs.rmSync(isoDir, { recursive: true, force: true }); } catch { /* best-effort */ }
   }, 90_000);
 
-  it('返回全部 12 项巡检结果（执行数组与注册清单一致）', { timeout: 90_000 }, () => {
+  it('返回全部注册巡检结果（v1.4.8 起 runInspectors 走注册表单源——24 执行 = 25 注册 - 1 disabled）', { timeout: 90_000 }, () => {
     const results = runInspectors(tmpDir);
-    // 12 = audit-history/conflict/doctor/knowledge-freshness/knowledge-health/
-    //      skill-staleness/warnings/audit-trail/workspace-summary/data-sovereignty×3
-    expect(results).toHaveLength(12);
+    expect(results).toHaveLength(24);
+    expect(results.some((r) => r.name === 'audit-trail')).toBe(true); // 漂移修复：audit-trail 首次进活路径
   });
 
   it('每项结果结构完整（name/triggered/message/severity 契约）', { timeout: 90_000 }, () => {

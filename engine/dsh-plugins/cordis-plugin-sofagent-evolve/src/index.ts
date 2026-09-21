@@ -1,92 +1,100 @@
-// ============================================================
-// cordis-plugin-evolve · DSH 反向插件（v1.4.0 交付五）
-// ============================================================
-// 每个插件干一件事、可独立安装渐进采用——只引对应 @public API 子集。
-// seam 挂载：任务结束 hook
-// 版本同步：sofagent v1.4.3 → 各 plugin v0.1.0（DSH Cordis 协议 breaking change 时 bump major）
+// cordis-plugin-sofagent-evolve · DSH 反向插件（v1.5.0：98 行样板收敛到 @sofagent/dsh-plugin-kit）
+// seam 挂载：session/event    # 语义：会话事件流中的 Turn 结束（turn/end）→ 经验沉淀（think.md 反思）
+// 清单生成源 = engine/dsh-plugins/plugins.json（生成 package.json 的 description/sofagent/dsh 段与 cordis.patch.yml）；本文件的 seam 字面量由生成器 --check 与之对账。
 
-/** 插件元数据（DSH profile/注册表消费） */
-export const pluginMeta = {
-  id: 'cordis-plugin-sofagent-evolve',
-  version: '0.1.0',
-  description: '经验沉淀——think.md 反思 + Dream Cycle + skillopt + instinct→skill + refine（seam: 任务结束 hook）',
-  seam: '任务结束 hook',
-} as const;
+import {
+  createSofagentPlugin,
+  seamHelpers,
+  type SeamHandler,
+  type SeamHelpers,
+} from '../../plugin-kit/dist/index.js';
 
-/** 依赖的 sofagent 能力说明（供 DSH skill 引导链展示） */
-export const capability = '进化引擎（经验自动沉淀）';
+/** 一次性日志表（接线自证 / 降级提示只打一次） */
+const logged = new Set<string>();
+function logOnce(helpers: SeamHelpers, key: string, message: string): void {
+  if (logged.has(key)) return;
+  logged.add(key);
+  helpers.log(message);
+}
 
-/**
- * 调用对应的 sofagent @public API（懒加载 + 降级不抛）。
- * 包装层职责：把 sofagent 能力暴露成 DSH 可调用的插件函数。
- */
-export async function invoke<T = unknown>(...args: unknown[]): Promise<T> {
+const errMsg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** 项目根：会话 header 的 cwd 优先，缺省进程工作目录 */
+function cwdOf(session: unknown): string {
+  const cwd = (session as { header?: { cwd?: unknown } } | null | undefined)?.header?.cwd;
+  if (typeof cwd === 'string' && cwd !== '') return cwd;
+  return process.env.SOFAGENT_PROJECT_ROOT ?? process.cwd();
+}
+
+/** 数据目录：交给 @sofagent/core 自己的解析（与 MCP/CLI 同源） */
+async function resolveDataDir(helpers: SeamHelpers): Promise<string | undefined> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const m = await import('@sofagent/think');
-    const fn = m.generateThinkEntry;
-    if (typeof fn !== 'function') {
-      throw new Error('generateThinkEntry 不是可调用函数（@sofagent/think 公共 API）');
-    }
-    return await (fn as (...a: unknown[]) => unknown)(...args) as T;
+    const dir = await helpers.call('@sofagent/core', 'getDataDir');
+    return typeof dir === 'string' && dir !== '' ? dir : undefined;
   } catch (err) {
-    // 依赖未装/能力不可用时降级返回错误信息（不抛——插件可独立安装，缺依赖时优雅提示）
-    throw new Error('cordis-plugin-evolve 依赖 @sofagent/think 不可用：' + (err instanceof Error ? err.message : String(err)));
+    helpers.log(`数据目录解析不可用（交引擎默认值）：${errMsg(err)}`);
+    return undefined;
   }
 }
 
-
 /**
- * DSH Cordis 插件契约（v1.4.0 品牌化）：默认导出 apply(ctx) 把能力注册为 ctx 服务（sofagent.evolve）。
- * 插件被挂进 DSH profile（dsh.bundle + cordis.patch.yml）后由 Cordis loader 调用。
+ * seam 事件处理器（v1.5.0 章十）——`turn/end` 的**实现**（此前只有声明）。
+ *
+ * 🔴 订阅点是 `session/event`，不是 `turn/end`：宿主把 `turn/end` 作为**会话事件
+ *    类型**发布（`session.append('turn/end', { turn, reason })` → 广播到
+ *    `session/event`，listener 收到 `(session, event)`），仓内/宿主均无 ctx 级
+ *    `turn/end` 派发点——`ctx.on('turn/end')` 会订阅到一个永不触发的事件名。
+ *    故 seam 名与订阅名都写真实可订阅的 `session/event`，收尾语义由过滤条件承载。
+ *
+ * 判定逻辑零改动：diff 取数 / 规则运行 / 沉淀写入全部是既有 @public API
+ * （`parseDiff` → `runRules` → `generateThinkEntry`），插件只做串联。
+ * 空 diff 即返回（`generateThinkEntry` 自身也判空）——工作区干净时零副作用。
  */
-export default {
-  apply(ctx: unknown): void {
-    const c = ctx as {
-      provide?: (name: string, service: Record<string, unknown>) => unknown;
-      [key: string]: unknown;
-    };
-    const service = { invoke, meta: pluginMeta, capability };
-    if (typeof c.provide === 'function') {
-      c.provide('sofagent.evolve', service);
-    } else {
-      const cur = (c.sofagent ?? {}) as Record<string, unknown>;
-      c.sofagent = { ...cur, evolve: service };
-    }
-    // v1.4.0 批量：注册为 dynamicCordisRunner 动态插件（Plugin list 可见加载状态）
+const seamHandlers: Record<string, SeamHandler> = {
+  'session/event': async (...args: unknown[]) => {
+    const helpers = seamHelpers(args);
+    const [session, event] = args;
+    const e = event as { type?: unknown } | null | undefined;
+    if (e?.type !== 'turn/end') return; // 收尾过滤：其余会话事件不参与沉淀
     try {
-      const runner = c.dynamicCordisRunner as { define?: (r: Record<string, unknown>) => unknown } | undefined;
-      if (runner && typeof runner.define === 'function') {
-        const res = runner.define({
-          name: 'sofagent-evolve',
-          purpose: '经验沉淀——think.md 反思 + Dream Cycle + skillopt（品牌色 #16B8F3）',
-          code: {
-            host: [
-              'module.exports = {',
-              '  async main(ctx, args) {',
-              '    return { ok: true, source: "sofagent-evolve", message: "经验沉淀——think.md 反思 + Dream Cycle + skillopt" };',
-              '  }',
-              '};',
-            ].join('\n'),
-          },
-          plugin: { kind: 'new', idPrefix: 'soga' },
-          sessionId: 'profile-boot',
-        });
-        console.error('[sofagent-evolve] dynamicCordisRunner.define 成功:', JSON.stringify(res));
-      }
+      const root = cwdOf(session);
+      const diffFiles = await helpers.call('@sofagent/core', 'parseDiff', 'HEAD', root);
+      if (!Array.isArray(diffFiles) || diffFiles.length === 0) return; // 无变更不沉淀
+      const results = await helpers.call('@sofagent/audit', 'runRules', {
+        diffFiles,
+        silent: true,
+      });
+      await helpers.call(
+        '@sofagent/think',
+        'generateThinkEntry',
+        diffFiles,
+        results,
+        process.env.SOFAGENT_TASK,
+        { dataDir: await resolveDataDir(helpers) },
+      );
+      logOnce(helpers, 'turn-end-sedimented', 'Turn 收尾经验沉淀已执行（think.md 反思条目）');
     } catch (err) {
-      console.error('[sofagent-evolve] define 失败:', err instanceof Error ? err.message : String(err));
-    }
-    // v1.4.0 批量：注册 settings namespace（Plugin configuration 数据层可见）
-    try {
-      const settings = c.settings as { register?: (ns: string, schema: unknown, opts?: Record<string, unknown>) => unknown } | undefined;
-      if (settings?.register) {
-        const s = require('@deepseek-ai/schemastery') as { object: (s: Record<string, unknown>) => unknown; boolean: () => unknown; string: () => unknown };
-        settings.register('sofagent-evolve', s.object({ enabled: s.boolean(), brandColor: s.string() }), { base: { enabled: true, brandColor: '#16B8F3' } });
-        console.error('[sofagent-evolve] settings.register 成功');
-      }
-    } catch (err) {
-      console.error('[sofagent-evolve] settings.register 失败:', err instanceof Error ? err.message : String(err));
+      logOnce(helpers, 'turn-end-unavailable', `经验沉淀不可用（本次跳过，不影响 Turn 收尾）：${errMsg(err)}`);
     }
   },
 };
+
+/** 插件声明（本文件唯一手写处；适配层红线由 kit 承担：ctx 鸭子类型 + 宿主 API 缺席降级不抛） */
+const kit = createSofagentPlugin(
+  {
+    id: 'cordis-plugin-sofagent-evolve',
+    seam: 'session/event',
+    seamSemantics: '会话事件流中的 Turn 结束（turn/end）→ 经验沉淀（think.md 反思）',
+    capability: '进化能力（经验自动沉淀）',
+    bridgePkg: '@sofagent/think',
+    bridgeApi: 'generateThinkEntry',
+    description: '经验沉淀——think.md 反思 + Dream Cycle + evolve + instinct→skill + refine',
+    seamHandlers,
+  },
+  require('../package.json') as { version?: string },
+);
+
+export const pluginMeta = kit.pluginMeta; // 插件元数据（DSH profile/注册表消费）
+export const capability = kit.capability; // 依赖的 sofagent 能力说明（DSH skill 引导链展示）
+export const invoke = kit.invoke; // 桥接 @sofagent/* 公共 API（懒加载 + 降级不抛）
+export default kit.plugin; // DSH Cordis 插件契约（apply 三段式由 kit 提供）

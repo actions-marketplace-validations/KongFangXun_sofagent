@@ -39,25 +39,47 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # ── 参数检查 ──────────────────────────────────────────────────
+# 参数位置无关解析：--dry-run / -n 可出现在任意位置（实测踩坑：写成
+# `bump --dry-run 1.4.9 1.5.0` 时 --dry-run 被当版本号报「格式无效」，
+# 而错误信息完全没提示是参数顺序问题——排查走弯路）。
 DRY_RUN=false
-if [[ "${3:-}" == "--dry-run" ]]; then
-  DRY_RUN=true
-fi
+POSITIONAL=()
+for _arg in "$@"; do
+  case "$_arg" in
+    --dry-run|-n) DRY_RUN=true ;;
+    --help|-h)
+      echo "用法: $0 <旧版本> <新版本> [--dry-run]"
+      echo "  例: $0 0.94 0.95"
+      echo "  例: $0 0.94 0.95 --dry-run   # 参数顺序无关，--dry-run 放哪都行"
+      echo "  --dry-run / -n  只打印可替换处，不修改任何文件"
+      exit 0
+      ;;
+    *)
+      if [[ "$_arg" == -* ]]; then
+        echo -e "${RED}错误:${NC} 未知选项: '$_arg'（支持: --dry-run / -n / --help）"
+        exit 1
+      fi
+      POSITIONAL+=("$_arg")
+      ;;
+  esac
+done
 
-if [[ $# -lt 2 ]] || [[ $# -gt 3 ]]; then
+if [[ ${#POSITIONAL[@]} -lt 2 ]] || [[ ${#POSITIONAL[@]} -gt 2 ]]; then
   echo -e "${RED}用法:${NC} $0 <旧版本> <新版本> [--dry-run]"
   echo -e "  例: $0 0.94 0.95"
-  echo -e "  例: $0 0.94 0.95 --dry-run"
+  echo -e "  例: $0 0.94 0.95 --dry-run   # --dry-run 位置无关"
+  [[ ${#POSITIONAL[@]} -eq 1 ]] && echo -e "${RED}提示:${NC} 只收到 1 个版本参数 '${POSITIONAL[0]}'——需要 <旧版本> <新版本> 两个"
   exit 1
 fi
 
-OLD_VERSION="$1"
-NEW_VERSION="$2"
+OLD_VERSION="${POSITIONAL[0]}"
+NEW_VERSION="${POSITIONAL[1]}"
 
 # 验证版本号格式（2 段或 3 段，数字+点号）
 for v in "$OLD_VERSION" "$NEW_VERSION"; do
-  if ! echo "$v" | grep -qE '^[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+  if ! grep -qE '^[0-9]+\.[0-9]+(\.[0-9]+)?$' <<< "$v"; then
     echo -e "${RED}错误:${NC} 版本号格式无效: '$v'（期望如 0.94 或 0.94.0）"
+    echo -e "${YELLOW}提示:${NC} 若你想传 --dry-run，它可放在任意位置且不会触发本错误"
     exit 1
   fi
 done
@@ -337,13 +359,15 @@ while IFS= read -r ts; do
   [[ "$ts" == *.test.ts ]] && continue
   [[ "$ts" == */dist/* ]] && continue
   # 只处理文件头前 10 行的注释（文件头版本号声明区域）
-  # v1.3.7 修复：豁免功能溯源标记行（「vX.Y.Z 新增/增强/基础版/补上/交付/升级」是
-  # 功能引入版本的历史叙述，不是当前版本锚点——历史误伤的根源，check-version [12/14] 已同步豁免）
+  # 豁免功能溯源标记行：「vX.Y.Z 新增/增强/基础版/补上/交付/升级/引入/首次」是
+  # 功能引入版本的历史叙述，不是当前版本锚点——历史误伤的根源，check-version [12/14] 已同步豁免。
+  # 「条目」同属 CHANGELOG 历史档案锚（任务表行号），永不随 SSOT 抬号——
+  # 误抬会击穿 acceptance S407（三形态定位边界锚「v1.4.8 条目 10」）类锚定场景。
   ts_head=$(head -10 "$ts")
   ts_rest=$(tail -n +11 "$ts")
   ts_head_new=$(echo "$ts_head" | awk -v OLD3="$OLD_3SEG" -v NEW3="$NEW_3SEG" -v OLD2="$OLD_2SEG" -v NEW2="$NEW_2SEG" '
     {
-      if ($0 ~ /新增|增强|基础版|补上|交付|升级|引入|首次/) { print; next }
+      if ($0 ~ /新增|增强|基础版|补上|交付|升级|引入|首次|条目/) { print; next }
       gsub(OLD3, NEW3)
       gsub(OLD2 "([^0-9.]|$)", NEW2 "\\1")
       print
@@ -375,14 +399,26 @@ echo -e "${BOLD}[5/13] index.ts 版本引用${NC}"
 INDEX_TS="$PROJECT_ROOT/engine/audit/src/index.ts"
 if [[ -f "$INDEX_TS" ]]; then
   idx_content=$(cat "$INDEX_TS")
-  # 替换 vOLD 为 vNEW（注意不能误伤 vOLDx 这种）
+  # 行级豁免（与 [4/13] 同语义）：含溯源/历史档案标记的行整行跳过——
+  # 「新增/交付/升级/条目」是功能引入版本或 CHANGELOG 任务表锚，不随 SSOT 抬号。
+  # 历史事故：本通道无豁免时把「vX.(N-1) 条目 7」等历史锚抬成当前版，
+  # 击穿 acceptance S407 且制造同锚两套口径（index.ts vs driver.ts）。
+  # awk 双通道替换：3 段格式无脑 gsub；2 段格式带尾边界防误伤 vOLDx。
+  idx_awk_replace() {
+    awk -v OLD3="$OLD_3SEG" -v NEW3="$NEW_3SEG" -v OLD2="$OLD_2SEG" -v NEW2="$NEW_2SEG" '
+      /新增|增强|基础版|补上|交付|升级|引入|首次|条目/ { print; next }
+      {
+        if (USE3) { gsub("v" OLD3, "v" NEW3) } else { gsub("v" OLD2 "([^0-9.])", "v" NEW2 "\\1"); gsub("v" OLD2 "$", "v" NEW2) }
+        print
+      }' USE3="$1"
+  }
   if $PATCH_ONLY; then
-    idx_new=$(sed "s/v$OLD_3SEG/v$NEW_3SEG/g" "$INDEX_TS")
+    idx_new=$(idx_awk_replace 1 < "$INDEX_TS")
   else
-    idx_new=$(sed "s/v$OLD_2SEG/v$NEW_2SEG/g" "$INDEX_TS")
+    idx_new=$(idx_awk_replace 0 < "$INDEX_TS")
     # 2 段没匹配到，试 3 段格式
     if $HAS_PATCH && [[ "$idx_new" == "$idx_content" ]]; then
-      idx_new=$(sed "s/v$OLD_3SEG/v$NEW_3SEG/g" "$INDEX_TS")
+      idx_new=$(idx_awk_replace 1 < "$INDEX_TS")
     fi
   fi
   if [[ "$idx_new" != "$idx_content" ]]; then
@@ -727,6 +763,38 @@ done < <(find "$PROJECT_ROOT/engine" -maxdepth 3 -name "package.json" -not -path
 # v1.3.3 发版时 is-network-error@1.3.3 幽灵版本即属此情况（已被 git restore 修复）。
 TOTAL_CHANGED=$((TOTAL_CHANGED + BUMP_INTERNAL_DEPS_COUNT))
 
+# 9c. git hook 头版本（engine/audit/hooks/ 三文件）
+# 🔴 为何必须独立成段：hook 文件无 `.sh` 扩展名，[6/13] 的 glob（engine/scripts/*.sh + install.sh）
+#    与 `VERSION="X"` 替换模式双双不匹配 ⇒ 曾整段落空（三 hook 中仅 pre-commit 漏改，靠
+#    check-template-drift 断言一/三 在 pre-push 才拦到）。hook 是随包发布的唯一源，头版本须随 SSOT。
+#    替换模式 = 头注释行 `# sofagent <name> hook v<OLD>`——行首锚定 + hook 名逐字，不碰正文历史注记行。
+HOOK_COUNT=0
+for hook_name in pre-commit post-commit commit-msg; do
+  hook_file="$PROJECT_ROOT/engine/audit/hooks/$hook_name"
+  [[ -f "$hook_file" ]] || continue
+  hook_content=$(cat "$hook_file")
+  if $PATCH_ONLY; then
+    hook_new=$(sed "s/^# sofagent ${hook_name} hook v${OLD_3SEG}/# sofagent ${hook_name} hook v${NEW_3SEG}/" "$hook_file")
+  else
+    hook_new=$(sed "s/^# sofagent ${hook_name} hook v${OLD_2SEG}/# sofagent ${hook_name} hook v${NEW_2SEG}/" "$hook_file")
+    if [[ "$hook_new" == "$hook_content" ]] && $HAS_PATCH; then
+      hook_new=$(sed "s/^# sofagent ${hook_name} hook v${OLD_3SEG}/# sofagent ${hook_name} hook v${NEW_3SEG}/" "$hook_file")
+    fi
+  fi
+  if [[ "$hook_new" != "$hook_content" ]]; then
+    echo -e "  ${GREEN}✓${NC} ${hook_name} hook 头 v$OLD_2SEG → v$NEW_2SEG"
+    if ! $DRY_RUN; then
+      printf '%s\n' "$hook_new" > "$hook_file"
+    fi
+    HOOK_COUNT=$((HOOK_COUNT + 1))
+  fi
+done
+if [[ $HOOK_COUNT -eq 0 ]]; then
+  echo -e "  ${YELLOW}(no match)${NC}"
+fi
+echo ""
+TOTAL_CHANGED=$((TOTAL_CHANGED + HOOK_COUNT))
+
 # 10. 汇总
 echo -e "${BOLD}[13/13] 完成${NC}"
 echo ""
@@ -761,5 +829,10 @@ if ! $DRY_RUN; then
   echo "    7. docs/HANDBOOK.md「已经能替你干的事」是否已更新版本号 + 补新能力？"
   echo "    8. docs/HANDBOOK.md「现在还干不了的事」是否已移除本版交付的能力？"
   echo "    9. docs/DEVELOPMENT.md 正文中的测试数声称是否同步？（grep 'XX 测试'）"
+  echo ""
+  echo -e "  ${YELLOW}⚠️  生成式产物重生成（唯一生产方不是本脚本，须显式跑）：${NC}"
+  echo "    10. node tools/gen/gen-plugin-manifests.mjs —— cordis.patch.yml 头版本 + 桥包 optionalDependencies"
+  echo "        兄弟依赖属生成段，本脚本十三步只换版号字面量不覆盖它们；漏跑 = check-template-drift"
+  echo "        断言五/六 报漂移（v1.4.9 实锤：8 文件留旧版）。跑完 git diff 复核后随 bump 同 commit。"
   echo ""
 fi

@@ -1,5 +1,5 @@
 // ============================================================
-// fde-quantify.ts · MCP tool：fde_quantify（v1.4.3 章八 · 引擎三）
+// fde-quantify.ts · MCP tool：fde_quantify（v1.5.0 章八 · 引擎三）
 // ============================================================
 //
 // 量化四字段计算 + ROI 排序（quantification.json）——公式复用
@@ -87,7 +87,7 @@ export async function fdeQuantifyTool(args: FdeQuantifyArgs): Promise<FdeQuantif
         aiAnnualCost: n.ai_annual_cost,
         ...(n.one_time_investment !== undefined ? { oneTimeInvestment: n.one_time_investment } : {}),
       })),
-      plans as never, // 局部最小读集（nodeId/tag）——完整 NodePlan 由引擎侧消费方忽略其余字段
+      plans as never, // 局部最小读集（nodeId/tag）——完整 NodePlan 由约束层侧消费方忽略其余字段
     );
 
     const top = file.ranked[0];

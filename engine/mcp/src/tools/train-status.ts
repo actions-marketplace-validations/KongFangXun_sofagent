@@ -1,5 +1,5 @@
 // ============================================================
-// train-status.ts · MCP tool：train_status（v1.4.3 第一章）
+// train-status.ts · MCP tool：train_status（v1.5.0 第一章）
 // ============================================================
 //
 // 训练任务进度查询——status / step / loss / reward 曲线 / 日志尾部。
@@ -71,7 +71,7 @@ export async function trainStatusTool(args: TrainStatusArgs): Promise<TrainStatu
   }
 
   try {
-    const orch = await import('@sofagent/orchestrator');
+    const orch = await import('@sofagent/train');
     const dataDir = getDataDir();
 
     // 受守卫读取（跨企业拒绝——train-job 的隔离面）

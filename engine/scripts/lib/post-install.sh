@@ -34,7 +34,7 @@ print_completion_summary() {  # 安装完成 · 使用说明（按平台）
     echo "  ║  sofagent Lite · 安装完成！              ║"
     echo "  ╚══════════════════════════════════════════╝"; echo ""
     echo "  已部署：宪法（SKILL.md）+ 反思区（think.md）+ 规则（fde.md）"
-    echo "  跳过：编排引擎 / Hook / 断路器 / daemon / 配套脚本"; echo ""
+    echo "  跳过：编排模块 / Hook / 断路器 / daemon / 配套脚本"; echo ""
     echo "  降 80% 复杂度，保 60% 价值。非交互式平台推荐先用 Lite 体验核心约束。"; echo ""; exit 0
   fi
   echo ""; echo "  ╔══════════════════════════════════════════╗"
@@ -54,7 +54,7 @@ print_completion_summary() {  # 安装完成 · 使用说明（按平台）
     openclaw)
       echo "  已部署文件："
       echo "    宪法文件:      $TARGET/skills/sofagent/fde.md（宪法内联在 SKILL.md）"
-      echo "    Skill 文件:     $TARGET/skills/sofagent/（6 核心 + 4 数据模板）"
+      echo "    Skill 文件:     $TARGET/skills/sofagent/（SKILL.md + 分层 rules/ + harness 约束骨架与 agents 子 Skill，以 SKILL/ 目录实际清单为准）"
       echo "    加载链 Hook:    $TARGET/hooks/sofagent-load-chain/（HOOK.md + handler.ts）"
       echo "    配套脚本:       $TARGET/scripts/{task-record,cleanup,audit}.sh"
       echo "    断路器:         ${CONFIG_FILE:-未配置}（tools.loopDetection）"
@@ -62,7 +62,7 @@ print_completion_summary() {  # 安装完成 · 使用说明（按平台）
       echo "  ┌──────────────────────────────────────────┐"
       echo "  │  OpenClaw: 完整就绪                       │"
       echo "  │  三层加载链自动注入 + Hook 强制加载        │"
-      echo "  │  + 编排引擎 + 脚本 + 断路器，全部可用      │"
+      echo "  │  + 编排模块 + 脚本 + 断路器，全部可用      │"
       echo "  └──────────────────────────────────────────┘" ;;
     claude|codex|hermes)
       echo "  已部署文件："
@@ -75,7 +75,7 @@ print_completion_summary() {  # 安装完成 · 使用说明（按平台）
       echo "  └──────────────────────────────────────────┘" ;;
     workbuddy)
       echo "  已部署文件："
-      echo "    Skill 文件:     $TARGET/skills/sofagent/（6 核心 + 4 数据模板）"
+      echo "    Skill 文件:     $TARGET/skills/sofagent/（SKILL.md + 分层 rules/ + harness 约束骨架，以 SKILL/ 目录实际清单为准）"
       echo "    数据目录:       $SOFAGENT_DATA"; echo ""
       echo "  ┌──────────────────────────────────────────┐"
       echo "  │  WorkBuddy: 仅基础约束生效                │"
@@ -87,12 +87,41 @@ print_completion_summary() {  # 安装完成 · 使用说明（按平台）
   echo "  │  下一步                                   │"
   echo "  └──────────────────────────────────────────┘"
   echo ""
-  echo "  1. 验证安装：bash engine/scripts/verify.sh"
-  echo "  2. 在你的 git 项目初始化审计：sofagent-audit --init"
-  echo "  3. 体验效果：cd 你的 git 项目 && git commit（hook 自动触发）"
-  echo "  4. 5 分钟入门：cat docs/HANDBOOK.md"
+  # v1.4.5 (T5/R4): 按安装形态分流指路——原「bash engine/scripts/verify.sh」与
+  # 「cat docs/HANDBOOK.md」是仓库相对路径，仅在 git clone install.sh 形态下成立。
+  # npm 全局安装形态（install.sh 内 npm install -g @sofagent/audit 分支）下
+  # CWD 无 engine/ 与 docs/ 目录，指路断链。判定：安装产物目录里有 verify.sh
+  # 则给仓库内相对路径；否则给全局命令形态（sofagent-core verify / npm docs）。
+  if [ -f "${SOFAGENT_HOME}/bin/sofagent" ] && command -v sofagent-core >/dev/null 2>&1; then
+    # npm 全局形态：CLI 已入 PATH
+    echo "  1. 验证安装：sofagent-core verify"
+    echo "  2. 在你的 git 项目初始化审计：sofagent-audit --init"
+    echo "  3. 体验效果：cd 你的 git 项目 && git commit（hook 自动触发）"
+    echo "  4. 5 分钟入门：npm docs @sofagent/audit（或访问仓库 docs/HANDBOOK.md）"
+  else
+    # 仓库形态兜底：git clone 形态（SCRIPT_DIR = 仓库根）给绝对路径，任何 CWD 均有效；
+    # bootstrap（curl | bash）形态磁盘上无 engine/（临时目录只有 install.sh + lib），
+    # 相对路径必断链，按 verify.sh 存在性分流，改指全局命令 + PATH 修复提示（v1.4.8 修复）
+    if [ -f "${SCRIPT_DIR:-}/engine/scripts/verify.sh" ]; then
+      echo "  1. 验证安装：bash \"${SCRIPT_DIR}/engine/scripts/verify.sh\""
+      echo "  2. 在你的 git 项目初始化审计：sofagent-audit --init"
+      echo "  3. 体验效果：cd 你的 git 项目 && git commit（hook 自动触发）"
+      echo "  4. 5 分钟入门：cat \"${SCRIPT_DIR}/docs/HANDBOOK.md\""
+    else
+      echo '  1. 验证安装：npm install -g @sofagent/core && sofagent-core verify（bootstrap 形态只装 @sofagent/audit，core 属按需可选包；若 command not found，先: export PATH="$HOME/.local/bin:$PATH"，步骤 2 的 sofagent-audit --init 同样依赖此 PATH）'
+      echo "  2. 在你的 git 项目初始化审计：sofagent-audit --init"
+      echo "  3. 体验效果：cd 你的 git 项目 && git commit（hook 自动触发）"
+      echo "  4. 5 分钟入门：npm docs @sofagent/audit（或访问仓库 docs/HANDBOOK.md）"
+    fi
+  fi
   echo ""
-  echo "  如需卸载：删除 ~/.sofagent/、~/.sofagent-key 及 .git/hooks/commit-msg 中的 sofagent hook 即可（保留你的项目数据）"
+  echo "  如需卸载：删除 ~/.sofagent/、~/.sofagent-key 即可（保留你的项目数据）"
+  echo '  卸载审计 hook（--install-hook 安装了三个，需全部删除）：'
+  echo '    rm -f "$(git rev-parse --git-path hooks)/pre-commit"'
+  echo '    rm -f "$(git rev-parse --git-path hooks)/commit-msg"'
+  echo '    rm -f "$(git rev-parse --git-path hooks)/post-commit"'
+  echo '  ⚠️ 若安装前仓库已有自有 hook（--install-hook 会将其保存为 <hook>.pre-sofagent 并链式调用），先还原再删，否则自有 hook 将被孤儿化：'
+  echo '    for f in pre-commit commit-msg post-commit; do [ -f "$(git rev-parse --git-path hooks)/$f.pre-sofagent" ] && mv "$(git rev-parse --git-path hooks)/$f.pre-sofagent" "$(git rev-parse --git-path hooks)/$f"; done'
   echo "  历史拦截：全新安装，审计历史将从第一次提交开始记录。"
   echo ""
   echo "  ✅ sofagent 已就绪，下次 git commit 自动生效"
@@ -111,7 +140,7 @@ print_completion_summary() {  # 安装完成 · 使用说明（按平台）
     echo "  ⚠️  Hook 未注册 → 约束层不会自动加载"
     echo "     在 ${HOOK_CONFIG} 的 hooks.internal.entries 添加："; echo '     {"sofagent-load-chain":{"enabled":true}}'
   fi
-  echo "  💡 运行 verify.sh 验证安装是否完整。"
+  echo '  💡 运行 `sofagent-core verify` 验证安装是否完整。'
 }
 # v1.2.2 F-09: 关键组件部署校验——安装后自检
 verify_component_integrity() {

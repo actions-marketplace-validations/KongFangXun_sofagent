@@ -72,7 +72,7 @@ describe('sofagent-load-chain handler', () => {
     const skillsDir = path.join(process.env.OPENCLAW_STATE_DIR as string, 'skills', 'sofagent');
     const rulesDir = path.join(skillsDir, 'rules');
     fs.mkdirSync(rulesDir, { recursive: true });
-    fs.writeFileSync(path.join(rulesDir, 'core-rules.md'), '# 核心铁律\n4 底线 + 7 铁律\n');
+    fs.writeFileSync(path.join(rulesDir, 'core-rules.md'), '# 核心铁律\n4 底线 + 9 铁律\n');
     const event = makeEvent(dir);
     await handler(event as LoadChainEvent);
     const pushed = event.context.bootstrapFiles.map((f) => f.name);
@@ -82,7 +82,7 @@ describe('sofagent-load-chain handler', () => {
     expect(pushed.some((n) => n === 'sofagent-SKILL.md')).toBe(false);
     const core = event.context.bootstrapFiles.find((f) => f.name === 'sofagent-core-rules.md');
     expect(core?.content).toContain('sofagent 第 1 层');
-    expect(core?.content).toContain('4 底线 + 7 铁律');
+    expect(core?.content).toContain('4 底线 + 9 铁律');
   });
 
   it('v1.3.8 老安装升级 → 无 rules/ 时 fallback SKILL.md 全文（升级连续性）', async () => {

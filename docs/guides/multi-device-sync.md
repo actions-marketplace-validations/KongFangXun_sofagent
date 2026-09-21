@@ -32,13 +32,13 @@ sofagent 做的事情：
 ```bash
 # 移动现有内容
 mkdir -p ~/Library/Mobile\ Documents/com~apple~CloudDocs/sofagent
-cp -r ~/.sofagent/knowledge ~/Library/Mobile\ Documents/com~apple~CloudDocs/sofagent/
-cp ~/.sofagent/think.md ~/Library/Mobile\ Documents/com~apple~CloudDocs/sofagent/
+cp -r ~/.sofagent/data/knowledge ~/Library/Mobile\ Documents/com~apple~CloudDocs/sofagent/
+cp ~/.sofagent/data/think.md ~/Library/Mobile\ Documents/com~apple~CloudDocs/sofagent/
 
 # 替换为符号链接（sofagent 仍然读写原路径，实际落在 iCloud）
-rm -rf ~/.sofagent/knowledge ~/.sofagent/think.md
-ln -s ~/Library/Mobile\ Documents/com~apple~CloudDocs/sofagent/knowledge ~/.sofagent/knowledge
-ln -s ~/Library/Mobile\ Documents/com~apple~CloudDocs/sofagent/think.md ~/.sofagent/think.md
+rm -rf ~/.sofagent/data/knowledge ~/.sofagent/data/think.md
+ln -s ~/Library/Mobile\ Documents/com~apple~CloudDocs/sofagent/knowledge ~/.sofagent/data/knowledge
+ln -s ~/Library/Mobile\ Documents/com~apple~CloudDocs/sofagent/think.md ~/.sofagent/data/think.md
 ```
 
 2. 在另一台 Mac 上做同样的符号链接。
@@ -64,18 +64,18 @@ mkdir -p /volume1/sofagent-team/knowledge
 # macOS
 mkdir -p /Volumes/sofagent-team
 mount_smbfs //user@nas.local/sofagent-team /Volumes/sofagent-team
-ln -s /Volumes/sofagent-team/knowledge ~/.sofagent/knowledge
-ln -s /Volumes/sofagent-team/think.md ~/.sofagent/think.md
+ln -s /Volumes/sofagent-team/knowledge ~/.sofagent/data/knowledge
+ln -s /Volumes/sofagent-team/think.md ~/.sofagent/data/think.md
 
 # Linux
 mkdir -p /mnt/sofagent-team
 mount -t cifs //nas.local/sofagent-team /mnt/sofagent-team -o username=user
-ln -s /mnt/sofagent-team/knowledge ~/.sofagent/knowledge
+ln -s /mnt/sofagent-team/knowledge ~/.sofagent/data/knowledge
 ```
 
 3. 把挂载命令写入 `/etc/fstab`（Linux）或「登录项」（macOS 设置 → 通用 → 登录项），开机自动挂载。
 
-**⚠️ 离线场景**：设备离开局域网后 `~/.sofagent/knowledge` 会变空（NAS 断连）。daemon 的 `weekly-report` / `lessons-extract` 会跳过（检测目录为空不运行），不会写脏数据。
+**⚠️ 离线场景**：设备离开局域网后 `~/.sofagent/data/knowledge` 会变空（NAS 断连）。daemon 的 `weekly-report` / `lessons-extract` 会跳过（检测目录为空不运行），不会写脏数据。
 
 ## 方案三：Dropbox / Google Drive（跨平台）
 
@@ -89,10 +89,10 @@ ln -s /mnt/sofagent-team/knowledge ~/.sofagent/knowledge
 ```bash
 # Dropbox 示例
 mkdir -p ~/Dropbox/sofagent
-mv ~/.sofagent/knowledge ~/Dropbox/sofagent/
-mv ~/.sofagent/think.md ~/Dropbox/sofagent/
-ln -s ~/Dropbox/sofagent/knowledge ~/.sofagent/knowledge
-ln -s ~/Dropbox/sofagent/think.md ~/.sofagent/think.md
+mv ~/.sofagent/data/knowledge ~/Dropbox/sofagent/
+mv ~/.sofagent/data/think.md ~/Dropbox/sofagent/
+ln -s ~/Dropbox/sofagent/knowledge ~/.sofagent/data/knowledge
+ln -s ~/Dropbox/sofagent/think.md ~/.sofagent/data/think.md
 ```
 
 3. 其他设备同样操作。云盘客户端自动同步。
@@ -111,14 +111,16 @@ mkdir ~/sofagent-shared && cd ~/sofagent-shared
 git init
 mkdir knowledge
 
-# 作为 submodule 加入你的主项目
-cd ~/my-project
-git submodule add ~/sofagent-shared .sofagent/knowledge
+# 知识库真实落点 = {SOFAGENT_HOME}/data/knowledge（不是项目目录下的 .sofagent/）
+# submodule 需要父目录本身是 git 仓库——先把 data 目录初始化为仓库，再嵌入 shared
+mkdir -p ~/.sofagent/data && cd ~/.sofagent/data
+git init
+git submodule add ~/sofagent-shared knowledge
 ```
 
 设备 B clone 时加 `--recurse-submodules`。
 
-**冲突处理**：`git merge`（人工 resolve）。`relations` 字段冲突由 ontology 合并引擎自动处理。
+**冲突处理**：`git merge`（人工 resolve）。`relations` 字段冲突由 ontology 合并逻辑自动处理。
 
 ## 同步内容清单
 
@@ -132,21 +134,21 @@ git submodule add ~/sofagent-shared .sofagent/knowledge
 
 1. 设备 A 上 Agent 完成一个任务，写了一条 think.md：
 ```bash
-cat ~/.sofagent/think.md | tail -5
+cat ~/.sofagent/data/think.md | tail -5
 ```
 
 2. 设备 B 上等 30 秒（云盘同步延迟），检查：
 ```bash
-cat ~/.sofagent/think.md | tail -5
+cat ~/.sofagent/data/think.md | tail -5
 # 应该能看到设备 A 刚写的那条
 
-ls ~/.sofagent/knowledge/shared/ | head -20
+ls ~/.sofagent/data/knowledge/shared/ | head -20
 # 应该能看到 lessons-missteps 周报等共享文件
 ```
 
-3. 设备 B 跑一次 daemon 的 lessons-extract：
+3. 设备 B 等一轮知识沉淀跑完（v1.1.7 起由 daemon 的 Dream Cycle 6 阶段 pipeline 承接；原 `weekly-report` / `lessons-extract` 脚本已退役）：
 ```bash
-sofagent-daemon lessons-extract
+sofagent-daemon knowledge status
 # 输出的 lessons 应包含「设备 A 本周踩过的坑」
 ```
 
@@ -186,7 +188,7 @@ A：v1.1.x 轻量版 = 文件级别的异步同步（你负责传输，sofagent 
 **安全边界**：
 - 只绑定本机/内网接口（默认 127.0.0.1，跨机需显式配置 + TLS）
 - 共享 token 走带外交换（对齐联邦通道 federation.token 的语义，不落环境变量）
-- 触发与查询全程进审计（decision-log 记 `kind=REMOTE_API` 决策留痕）
+- 触发与查询全程进审计（decision-log 留痕，kind 以实现为准）
 - 与联邦通道共用同一跨机器帧协议基座（IV‖tag‖ciphertext 密文帧）
 
-**双设备联调记录（v1.4.0 验收）**：E2E 脚本已固化入仓（`FORGE/playbook/federation-e2e.mjs`，10 断言全 PASS）；远程 API 通道的跨机实测依赖真实双设备环境，单机环境标注「依赖真实双设备，单机跳过」（技术选型 OpenClaw / DSH 通道留白，不锁死）。
+**双设备联调记录（v1.4.0 验收）**：E2E 脚本已固化入仓（`playbook/federation-e2e.mjs`，10 断言全 PASS）；远程 API 通道的跨机实测依赖真实双设备环境，单机环境标注「依赖真实双设备，单机跳过」（技术选型 OpenClaw / DSH 通道留白，不锁死）。

@@ -1,21 +1,31 @@
 # sofagent 行业印证与生态定位 · Validation
 
-> v1.4.3 · 2026-09-01 · 孔放勋
+<p align="center"><img src="assets/sofagent.png" alt="sofagent" width="96" /></p>
+
+> v1.5.0 · 2026-09-19（UTC）· ✅ 已发版 · 孔放勋
 
 > **本文档从四个维度回答一个问题：行业有没有独立验证 sofagent 的直觉？**
->
 > - **§一 方法论**——行业研究怎么印证"约束层是刚需"（Harness 范式 / 确定性迁移 / Verifier 瓶颈 / 治理缺口代价）
 > - **§二 生态位**——sofagent 在 Agent 生态三层模型中的位置（约束基础设施，不碰平台、不碰框架）
 > - **§三 架构**——行业框架怎么独立复现 sofagent 的架构选择（Ontology / Apache Ossie / 五层骨架 / AOS / Palantir OAG）
 > - **§四 市场**——这些技术判断有没有被市场买单（FDE 经济账 / SMB 断层 / 产品化四条 / 价值度量翻转）
->
 > 四个维度共同指向同一结论：**不管你的 Agent 怎么搭、在哪跑，它需要一个独立的约束层。**
+
+---
+
+## 目录
+
+- [一、方法论印证：行业研究怎么验证 sofagent 直觉](#一方法论印证行业研究怎么验证-sofagent-直觉)
+- [二、生态位：Agent 三层模型与 sofagent 的位置](#二生态位agent-三层模型与-sofagent-的位置)
+- [三、架构印证：行业框架独立复现 sofagent 的选择](#三架构印证行业框架独立复现-sofagent-的选择)
+- [四、市场印证：行业判断被市场买单](#四市场印证行业判断被市场买单)
+- [五、研报视角的边界提示](#五研报视角的边界提示)
 
 ---
 
 ## 一、方法论印证：行业研究怎么验证 sofagent 直觉
 
-> 这一节不是新理论，而是把跨批行业研读（Palantir Ontology / 五层骨架 / Stage 渐进 / Loop / FDE 边界 / 王阳明 / 红杉闭门会 / Cloudflare / Loop Engineering 等）里反复出现、能**直接印证** sofagent 已有直觉的结论落到纸面。它们不替代正文，只是给「我们一直这么干」补上行业证据。有公开来源者已标注出处。
+> 这一节不是新理论，而是把跨批行业研读（Palantir Ontology / 五层骨架 / Stage 渐进 / Loop / FDE 边界 / 王阳明 / Cloudflare / Loop Engineering 等）里反复出现、能**直接印证** sofagent 已有直觉的结论落到纸面。它们不替代正文，只是给「我们一直这么干」补上行业证据。有公开来源者已标注出处。
 
 **▍概念层——行业对「约束」的独立论证（骨架 / 确定性迁移 / Verifier / 治理缺口等，逐条印证约束层为什么是刚需）**
 
@@ -78,7 +88,7 @@ Harness 的另一价值点是**「不依赖 AI 也能守门」**。当 LLM 不�
 这与 sofagent 底层定位同频：**约束层 = 管住 Agent 行为的那一层**（River 比喻里的约束层）。a16z 七法则中 Loops / 100X / 冗员 / Evals / 转型 五条，sofagent 已原生具备对应物。完整映射见下方表格；其中最关键的三条：
 
 - **空转 Loops → guard edge**：`graph.ts` 的 `retryCount<3` 条件路由天然防 loops 失控——这是 Loops 治理的工程化答案。
-- **考核 Evals → Reality Anchor**：审计引擎 A1-A11、A14-A23 + E1-E2/E4（共 24 条）把「可评估性」硬编码为真实 git diff，而非 Agent 自报完成。
+- **考核 Evals → Reality Anchor**：审计模块 A1-A11、A14-A23 + E1-E2/E4（共 24 条）把「可评估性」硬编码为真实 git diff，而非 Agent 自报完成。
 - **万亿转型 → FDE 卖转型**：FDE = Services-as-Software，交付「装进 Agent 的常驻 FDE Harness」而非工具包；ROADMAP 已有 4 条市场信号互证。
 
 **a16z 十项映射（七法则 + 三项规模化缺口）完整映射**（a16z 概念 → sofagent 对应 → 现状 → 落地版本 → 说明）：
@@ -98,23 +108,10 @@ Harness 的另一价值点是**「不依赖 AI 也能守门」**。当 LLM 不�
 
 ### 红杉 Neo-Lab / Sovereign AI 四层主权
 
-> 📐 来源：红杉美国合伙人 Sonya Huang 创始人闭门分享（2026-08-18 流传视频转写）——「Every AI application company will become a neo-lab」+ Sovereign AI 四层主权框架。
-
 - **「主权是光谱不是开关」**——红杉说绝大多数公司该待在中间档（开源基座微调 + 核心场景自有模型 + 长尾外调），别一上来就搞最重的全量训练。这与 sofagent 的「通用模型路由不自研——企业挂第三方 model router，只保留数据主权路由 + 注册/灰度/退役」（v1.3.6 已定）完全同构。
 - **「先建评测集，再谈微调」**——红杉的落地顺序与 sofagent 的 Benchmark 先行 + `define_acceptance` 机器可判定验收一致：没有业务评测的微调全是瞎调。
 
-**四层主权 → sofagent 落点**（商业侧定位详见 [v1.4.0](./changelog/v1.4/v1.4.0.md) / [v1.4.7](./changelog/v1.4/v1.4.7.md)）：数据主权 = ontology + 审计（已具备）；模型适配 = 训练引擎 v1.4.x；评测迭代 = Benchmark + MLflow；部署 = 本地权重 + 灰度切换 + 审计 + 回滚——「权重 ≠ 主权」，「能跑模型」不等于「能管住模型」。
-
-### 专家判断力的工程化：新护城河与训练信号（红杉闭门会）
-
-> 📐 来源：红杉闭门会（80 位 SaaS 创始人 + AI 负责人，2026-08 流传分享转写）——核心议题「AI 应用层反攻模型层」+ Harvey 法律 AI 团队数据。行业分享吸收口径，非官方公开报告。
-
-- **古典 SaaS 逻辑断裂**：两个致命陷阱——① 毛利陷阱（传统软件边际成本趋零，AI 每生成一个 Token 都烧钱，规模越大毛利越崩，已有大公司 CFO 叫停 AI 功能，不是不好用而是太贵算不过来账）；② 复刻陷阱（护城河 = 几十人干几个季度的代码，AI 几分钟就能秒级复刻）。**灵魂拷问：如果产品能轻易被抄、模型又是租来的，你到底真正拥有什么？**
-- **新护城河不是数据，是「专家级判断力的工程化」（Evil）**——不是存了多少份合同，而是一眼能看出合同里致命问题的本事。Harvey 的做法：不直接喂几百万份法律文件，而是**先构建高难度 benchmark（故意埋设商业陷阱）→ 让模型做尽调 → 用自建严苛规则打分**；仅用 1800 个金标任务做后训练，特定企业法任务成绩从 4.7% 拉升到 26.63%。
-- **普通公司最聪明的打法（分阶段）**：前期借力闭源 API 找 PMF → 后期用开源/开放权重底座构建**持续学习闭环**——**AI 每干一次活，都要留下高价值训练信号**（客户改了报告三处为什么改？老板选了第二个候选人为什么选？销售把报价调高 20% 为什么调？）→ 沉淀为企业专属 institutional context。
-- **价值中枢迁移**：上半场拼通用智商，下半场拼行业落地能力；模型公司坐拥知识，应用公司手握工作——价值不可逆地向应用端流动。
-
-> 💡 **对 sofagent 的三点印证**：① 「先构建 benchmark 埋商业陷阱 + 自建规则打分」= sofagent Benchmark 评测（v1.3.1，隔离执行 + HMAC 链）+ golden set + `define_acceptance` 机器可判定验收——Harvey 用 1800 金标任务把专业成绩从 4.7% 拉到 26.63%，正是「评测集即护城河」的实证；② 「AI 每干一次活留下高价值训练信号」= sofagent 语料导出四源（decision-log / llm-calls / evaluation-log / runtime-audit，v1.4.4 训练语料导出三件套）+ worklog（v1.3.9 落盘）——把「客户为什么改了三处」这类信号结构化留存，正是审计 + worklog 的采集面；③ 「分阶段：先借闭源 API 后建自有闭环」= v1.3.6 模型注册 + 灰度切换 + 数据主权路由——前期挂第三方模型快速跑，后期企业自有权重 + 评测 + 回滚，同一套路径。
+**四层主权 → sofagent 落点**（商业侧定位详见 [v1.4.0](./changelog/v1.4/v1.4.0.md) / [v1.4.7](./changelog/v1.4/v1.4.7.md)）：数据主权 = ontology + 审计（已具备）；模型适配 = 后训模块 v1.4.x；评测迭代 = Benchmark + MLflow；部署 = 本地权重 + 灰度切换 + 审计 + 回滚——「权重 ≠ 主权」，「能跑模型」不等于「能管住模型」。
 
 ### 硅基员工论：Org Graph 与 Ontology Runtime
 
@@ -130,11 +127,11 @@ Harness 的另一价值点是**「不依赖 AI 也能守门」**。当 LLM 不�
 3. 事件驱动（主动接活）
 4. 结果负责（对产出后果负责）
 
-**结果负责三要素**（与审计 / 回溯引擎对齐）：可观测（行为留痕）/ 可归因（责任到人 · Agent 身份）/ 可回滚（出错能退）。
+**结果负责三要素**（与审计 / 回溯能力对齐）：可观测（行为留痕）/ 可归因（责任到人 · Agent 身份）/ 可回滚（出错能退）。
 
 ### 测量者转型：从「月底审计报表」到「每次 AI 行动留日志」（Cloudflare 实证）
 
-> 📖 来源：Andrew Ng《AI-Native Software Development Needs Generalists》（deeplearning.ai The Batch）+ Cloudflare CEO Matthew Prince《How I Choose Which Cloudflare Employees to Replace With AI》（WSJ，2026-06）
+> 📖 来源：Cloudflare CEO Matthew Prince《How I Choose Which Cloudflare Employees to Replace With AI》（WSJ 一手访谈，2026-06）
 
 Cloudflare 2026-05 裁撤超 1100 人（约 20%）并转向「agentic AI-first operating model」——CEO Matthew Prince 不按部门分人，而把工作角色分成三类：
 
@@ -144,11 +141,11 @@ Cloudflare 2026-05 裁撤超 1100 人（约 20%）并转向「agentic AI-first o
 | **Seller 销售者** | 理解客户、建立信任、促成收入 | 相对安全 |
 | **Measurer 测量者** | 记录、汇总、审查、协调、报告 | **最先被 AI 逼近** |
 
-**核心洞察（对 sofagent 最值钱的一句）**：判断工作安全度不看岗位名称，看承担的角色——被 AI 重新定价的不是整个岗位，而是**输入完整、标准清楚、结果可验证的具体任务**。这与 sofagent 审计引擎的判定哲学同构：我们不审「Agent 是谁」，审「这个 diff 是否满足确定性标准」——输入（git diff）完整、标准（24 条规则）清楚、结果（PASS/FAIL）可验证。
+**核心洞察（对 sofagent 最值钱的一句）**：判断工作安全度不看岗位名称，看承担的角色——被 AI 重新定价的不是整个岗位，而是**输入完整、标准清楚、结果可验证的具体任务**。这与 sofagent 审计模块的判定哲学同构：我们不审「Agent 是谁」，审「这个 diff 是否满足确定性标准」——输入（git diff）完整、标准（24 条规则）清楚、结果（PASS/FAIL）可验证。
 
 **测量者的反常识转型**：测量类岗位减少，但「测量」这件事不会减少，反而无处不在——当 AI 智能体可以查数据、发邮件、改价格、调用预算，企业必须知道：**它读过什么、做过什么、花了多少钱、有没有越权、出问题能不能撤回**。以前是月底一张审计报表，以后是**每次 AI 行动都留日志**，每个团队实时看成本、质量、安全和权限。
 
-> 💡 **这就是 sofagent 审计引擎 + daemon + worklog 的行业定位印证**：把「测量、合规、安全、成本控制做进系统里」，让常规动作自动通过、少数异常准确找到专家——「强中台」的测量者形态正是约束层（Harness）的工程化。吴恩达把 AI 打破各环节「速度比」后的瓶颈称为「法务合规瓶颈」（legal compliance bottleneck）——强中台不是养庞大测量者队伍，是把测量做进系统，对应 sofagent 不做「审计人员外包」、做「审计引擎基建」。
+> 💡 **这就是 sofagent 审计模块 + daemon + worklog 的行业定位印证**：把「测量、合规、安全、成本控制做进系统里」，让常规动作自动通过、少数异常准确找到专家——「强中台」的测量者形态正是约束层（Harness）的工程化。吴恩达把 AI 打破各环节「速度比」后的瓶颈称为「法务合规瓶颈」（legal compliance bottleneck）——强中台不是养庞大测量者队伍，是把测量做进系统，对应 sofagent 不做「审计人员外包」、做「审计模块基建」。
 
 **▍厂商实证——Harness 品类被多方独立验证（DeerFlow / DeepSeek / OpenAI / Omnigent / DataFlow / OpenFDE，逐家印证「约束层」是行业共识）**
 
@@ -185,7 +182,7 @@ DeepSeek 2026-08-13 开源 [DeepSeek Harness](https://github.com/deepseek-ai/dee
 | 权限模型 | 两旋钮正交：沙箱（文件效果边界）× 审批（决策通道，fail-closed） | v1.3.7 场景驱动权限（设计轴对齐） |
 | 审计入口 | `tools/result` 观察不可变权威结果 | git diff 24 条规则（提交时） |
 
-**给我们的背书**：① 模型厂商把「模型之外的能力全拆成插件」——Harness 与模型解耦不是创业公司的一厢情愿，是头部模型厂商的路线判断；② Cordis 论文（[时空可组合性](https://github.com/cordiverse/paper)）「自进化的难点是修改后的可恢复与可协调，不是生成能力」与 sofagent「进化必须以可撤销为前置条件」同构；③ DSH 任务面板缺验收标准、修改流程缺回归声明（生态级 Eval 缺口）——sofagent 审计引擎正是补这个缺口的插件候选（v1.4.0 `@sofagent/cordis-plugin`）。
+**给我们的背书**：① 模型厂商把「模型之外的能力全拆成插件」——Harness 与模型解耦不是创业公司的一厢情愿，是头部模型厂商的路线判断；② Cordis 论文（[时空可组合性](https://github.com/cordiverse/paper)）「自进化的难点是修改后的可恢复与可协调，不是生成能力」与 sofagent「进化必须以可撤销为前置条件」同构；③ DSH 任务面板缺验收标准、修改流程缺回归声明（生态级 Eval 缺口）——sofagent 审计模块正是补这个缺口的插件候选（v1.4.0 `@sofagent/cordis-plugin`）。
 
 > 📖 来源：[deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 官方仓库 docs/（architecture + cordis-tutorial，2026-08-15 核验），MIT
 
@@ -194,6 +191,8 @@ DeepSeek 2026-08-13 开源 [DeepSeek Harness](https://github.com/deepseek-ai/dee
 OpenAI 2026-08-19 全面开源 [Codex Harness](https://github.com/openai/codex)（Apache-2.0，107k+ stars）——驱动 Codex App/CLI/IDE 的底层执行框架（对话状态、工具调用、沙箱执行、流式输出、人工审批）。开源的是**三层集成接口**而非模型：`codex exec`（轻量非交互 CLI）+ Codex SDK（TS 程序化编排，支持任意 OpenAI 兼容端点模型切换）+ `app-server`（持久会话产品层，官方原话 "your application owns product context, business rules, and tools; Codex app-server provides the agent loop"）。
 
 **给我们的背书——官方量化「Harness 决定 Agent 表现」**：OpenAI 在 ARC-AGI-3 基准上仅对 Harness 做两项调整（保留推理 + 上下文压缩），GPT-5.6 Sol 得分从 **13.3% → 38.3%**，输出 token 消耗**降 6 倍**——「模型能力 × Harness 设计 = Agent 最终表现」被头部模型厂商官方数据实证，正是 sofagent「模型给 90% 智力、约束层补 10% 可靠执行」叙事的最强外部锚点。
+
+> ⚠️ **量纲限定**：该数据证明的是 **Harness 设计显著影响表现**——而这里的「表现」是**能力型**的：保留推理 + 上下文压缩提升的是**任务得分与 token 效率**。sofagent 主张的是**治理型**约束层提升**可靠性**（该做的事都做、不该做的不做、做错退得回）。**两者非同一量纲**，故本数据仅作**方向性信号**（「Harness 这个层很重要」），**不得**读作可靠性收益的量化依据；与既有「厂商自测只作量级参照」纪律一致。
 
 **与 sofagent 的工程同构点（仓库源码核验，2026-08-22）**：
 | 维度 | Codex Harness | sofagent |
@@ -208,6 +207,35 @@ OpenAI 2026-08-19 全面开源 [Codex Harness](https://github.com/openai/codex)�
 
 > 📖 来源：[openai/codex](https://github.com/openai/codex) 官方仓库（2026-08-22 源码核验）+ [Codex as a platform](https://developers.openai.com/blog/codex-as-a-platform)（openai.com，2026-08-19），Apache-2.0
 
+### OpenAI Agents API 公测：Harness 托管商品化与治理壁垒收窄（2026-09-10）
+
+OpenAI 2026-09-10 把驱动 Codex 的 Harness 通过 [Agents API](https://openai.com/index/introducing-the-agents-api/) 公测开放——"Build and run cloud agents with the Codex harness, fully managed by OpenAI"。这是继 2026-08-19 开源 Codex Harness 后的第三个独立数据点：**模型厂商不仅开源 Harness，还把 Harness 托管做成零平台费的基础设施**（无额外费用，只收 token/工具/容器钱）。
+
+**关键架构事实**：Harness（循环/会话/压缩/子Agent）永远 OpenAI 托管；Environment（执行沙箱）可选 OpenAI 托管/自托管/9 家伙伴（Cloudflare、Modal、E2B 等，支持 VPC 内部署）——**自托管的只是执行环境，控制平面与执行平面在架构上分离**。四大能力全是过去开发者自造的轮子：自动上下文压缩（跨多窗口，无需自建 compaction）、tool search（按需加载工具定义降 token 保 cache）、programmatic tool calling（代码并行/链式/过滤，只回传关键结果）、multi-agent 原生（subagent 各自独立上下文）。
+
+**对我们的意义——两条战略判断被官方一手源实证**：
+
+1. **编排层护城河在消失**：loop 管理、上下文压缩、工具编排、多 Agent 编排正在变成免费绑定的 API 能力（得到大脑解读：企业差异化收窄到「业务上下文、可信数据、actions、权限控制、人工审批」——这份清单几乎逐字就是 sofagent 能力面）。壁垒表述随之收窄：**不在 harness 工程，在治理工程**（24 规则 / HMAC 链 / 本体数据 / 审批流）——与 Codex ARC 数据的量纲限定同理（能力型表现 ≠ 治理型可靠性），治理壁垒不会被基础设施商品化覆盖。
+2. **压缩不是审计记录**（compaction 后原始内容不可恢复）——印证审计证据链必须独立落盘的设计：sofagent HMAC 链 + runs/ 产物从不依赖模型上下文作证据。推论：若业务 Agent 跑在托管 harness 上，审计接入点必须在 event 流层（router_exporter / trajectory 采集），不能依赖平台会话存储。
+
+客户证言数字（官方博客 8 条之一）：Ciridae 评分 0.71→0.85、subagent 流程 4 倍延迟降低；SafetyKit 每案成本 −60%；Hypha harness/沙箱分离后失败响应 −86%。第三方分析口径：仅美国数据驻留、不支持 ZDR——中国企业客户硬门槛，一体机私有部署（27B 稠密）的官方背书市场缝隙。
+
+> 📖 来源：[Introducing the Agents API](https://openai.com/index/introducing-the-agents-api/)（openai.com，2026-09-10 · 官方博客 · A 级源）+ 得到大脑视频解读（2026-09-15，第三方表述框架）
+
+### Anthropic 产品真相收敛：运行的生产代码是产品最可靠的事实来源
+
+Anthropic 设计负责人 Joel 分享的产品方法论判断：产品文档会过期、设计稿会过期、在线文档会过期——**真正运行的生产代码里存着此刻真实的功能规则、设计系统和产品逻辑**，因此产品、设计、研发的边界会围绕真实运行的系统重新组织。对 sofagent 的印证价值：审计模块「不看 Agent 说什么，看 git diff 留下什么」正是这一判断的治理面工程化——把「产品真相」锚定在运行系统的一手输出而非任何转述层，与 PHILOSOPHY 证据链（一手信息优先、二手声明不进证据链）同源。附带印证：AI 时代「生产能力不再稀缺、选择能力开始变贵」（供给暴涨而需求注意力不变，价值落差靠判断去填）——与「判断力上移」这一既有命题（执行可外包、判断不可外包）及 90/10 价值分层同构，不另立命题。
+
+> 📖 来源：Anthropic 产品设计负责人 Joel 访谈（得到大脑解读，2026-09-14，第三方表述框架——一手访谈出处未核验，按单源第三方对待）
+
+### Codex Guardian 模块：审查结论的失效语义（2026-09-16 源码核验）
+
+codex-rs 深处有个此前未研究过的 [guardian/](https://github.com/openai/codex/tree/main/codex-rs/core/src/guardian) 模块（约 340KB，测试过半）——「宿主审批决策 + 隔离的同步审查者」。模块文档一句设计哲学值得引用：*"The extension chooses policy and evidence; core enforces permissions and mandatory review requirements"*（扩展选策略与证据，核心强制权限与强制审查——与 sofagent「插件定义规则、引擎统一执行」同构）。
+
+**对我们最有价值的是一套此前没有的语义——审查结论何时失效**（`GuardianReviewReason` 枚举）：`FreshRequired`（需新鲜结论）/ `StaleScore`（分数过期）/ `AuthorizationChanged`（授权变更即失效）/ **`IncompatibleCompaction`（压缩与审查结论不兼容即作废重审）** / `ElevatedRisk` / `ScoringFailure`。sofagent 现状：审计结论与 HITL 授权一经产生即视为永久有效，无失效条件。`IncompatibleCompaction` 是「压缩不是审计记录」的**工程化背书**——官方把 compaction 明确列为审查结论的作废条件，比叙事判断更硬。配套语义：审批粒度 `Granular`（五类开关，关闭即**自动拒绝而非静默吞**——fail-closed 不打扰人）与按 host 粒度的网络出口审批（`NetworkApprovalContext{host, protocol}`——管进也要管出）。
+
+> 📖 来源：[openai/codex guardian/](https://github.com/openai/codex/tree/main/codex-rs/core/src/guardian)（2026-09-16 源码核验，mod.rs + approvals.rs + protocol.rs），Apache-2.0
+
 ### Omnigent：meta-harness 把策略强制在基础设施层
 
 [Omnigent](https://github.com/omnigent-ai/omnigent)（Databricks 系团队开源，Apache-2.0，alpha，31 天 7091 star）自称 **meta-harness**——坐在 Claude Code / Codex / Pi 等 harness 之上的一层。它把我们的「Harness 中间件」判断又往前推了一步，给了两个可引用的硬证据：
@@ -219,13 +247,13 @@ OpenAI 2026-08-19 全面开源 [Codex Harness](https://github.com/openai/codex)�
 
 **给我们的演进启示（已登记 ROADMAP）**：① 运行时审计可借 LangGraph middleware 的 wrapToolCall 接入点（咱们已用 createReactAgent）；② 密钥边界可借 bubblewrap/seatbelt + egress proxy 模式；③ 控制平面成本/路由层可借 LiteLLM。详见 [ROADMAP · 行业印证](./ROADMAP.md#行业印证)。
 
-> 📖 来源：Databricks blog《Introducing Omnigent》(2026-06) + 技术解析（techtimes / chatforest / aixq.cc），GitHub omnigent-ai/omnigent
+> 📖 来源：[Databricks blog《Introducing Omnigent》(2026-06)](https://www.databricks.com/blog/introducing-omnigent)（官方一手源）· GitHub omnigent-ai/omnigent
 
 ### DataFlow：顶尖高校独立用「Harness」命名
 
 [DataFlow](https://github.com/OpenDCAI/DataFlow)（论文 [arXiv:2607.16617](https://arxiv.org/abs/2607.16617)，HuggingFace Paper of the day）来自**北京大学 DCAI**团队——与 DeerFlow 2.0（字节）、Omnigent（Databricks）**同月**，再次以独立开源项目用「Harness」一词命名其 Agent 约束层。这是**第三个、且来自顶尖高校的第三方独立佐证**：Harness 作为 Agent 工程化品类的共识已非孤证。
 
-它治理的是「数据流水线」（从噪声源生成 / 精炼 / 评估 / 过滤高质量 AI 数据），与 sofagent 治理「企业 AI 数字员工（装进 Agent 的 FDE Harness）业务流」对象不同，但**约束范式同源**：Agent 经 MCP server 作业而非自由写脚本、受控变异走 Request-Validate-Commit、用 DataFlow-Skills 结构化约束而非裸提示词——每一条都独立复现了 sofagent 的 scoped tool-gate / SKILL 约束层 / audit 判断。
+它治理的是「数据流水线」（从噪声源生成 / 精炼 / 评估 / 过滤高质量 AI 数据），与 sofagent 治理「企业 AI 数字员工（装进 Agent 的 FDE Harness）工作流」对象不同，但**约束范式同源**：Agent 经 MCP server 作业而非自由写脚本、受控变异走 Request-Validate-Commit、用 DataFlow-Skills 结构化约束而非裸提示词——每一条都独立复现了 sofagent 的 scoped tool-gate / SKILL 约束层 / audit 判断。
 
 其**独特点**是可借鉴方向：① **可视化 DAG 画布 + 双模态共享状态**（会话 Agent 与 DAG 画布实时同步同一 pipeline 表示）——补 sofagent Dashboard 缺的「workflow 可视图」，建议 v2.x 引入；② **MCP server 集成**（暴露算子注册表 / serving / pipeline 状态给 Agent）——印证「对外 MCP 暴露 ontology/audit」是合理路线，建议 v2.x+；③ **Validation Engine（DAG 无环 + schema 兼容）**——印证 ontology 从目录级升级为带 JSON Schema 校验的约束图，建议 v2.x 硬化节点 I/O。以上可借鉴项已落入 [ROADMAP · 行业印证](./ROADMAP.md#行业印证)。
 
@@ -235,11 +263,11 @@ OpenAI 2026-08-19 全面开源 [Codex Harness](https://github.com/openai/codex)�
 
 ### OpenFDE：FDE 术语同源佐证
 
-[OpenFDEAI/ChatDemo](https://github.com/OpenFDEAI/ChatDemo)（OpenFDEAI 组织，MIT）以 **Forward Deployed Engineer** 命名其「边聊边出 Demo」的售前业务流——FDE 坐在客户对面，边聊边把需求变成可点的 Demo，散会时客户手里已有一个能点的 Demo + 一页可确认的需求清单。它和 sofagent 的**「前线部署工程师 / Forward Deployed Engineer」同源、同英文写法、来自同一 Palantir 脉络**——印证我们 FDE 术语的正统性：把工程师部署到客户现场、用一套纪律化交付流程、把经验沉淀为可复用资产，本就是行业共识的 FDE 内核。进一步佐证来自 OpenFDE **主仓**：它把 **INDUC 显式成 FDE Loop 的一个阶段、产出可开关的 Judgment Unit**（专家判断资产化、规则可开可关可版本化）——与我们「蓄水池/知识库 → A1-A23 判定层」同源，但它把知识归纳提升为 Loop 的一等公民阶段。
+[OpenFDEAI/ChatDemo](https://github.com/OpenFDEAI/ChatDemo)（OpenFDEAI 组织，MIT）以 **Forward Deployed Engineer** 命名其「边聊边出 Demo」的售前工作流——FDE 坐在客户对面，边聊边把需求变成可点的 Demo，散会时客户手里已有一个能点的 Demo + 一页可确认的需求清单。它和 sofagent 的**「前线部署工程师 / Forward Deployed Engineer」同源、同英文写法、来自同一 Palantir 脉络**——印证我们 FDE 术语的正统性：把工程师部署到客户现场、用一套纪律化交付流程、把经验沉淀为可复用资产，本就是行业共识的 FDE 内核。进一步佐证来自 OpenFDE **主仓**：它把 **INDUC 显式成 FDE Loop 的一个阶段、产出可开关的 Judgment Unit**（专家判断资产化、规则可开可关可版本化）——与我们「蓄水池/知识库 → A1-A23 判定层」同源，但它把知识归纳提升为 Loop 的一等公民阶段。
 
 但两者**范围差一个数量级、且互补**：ChatDemo 的 FDE 是售前 POC 共创工具（Claude Code Skill + localhost 控制台，回合制 start/turn/wrap），散会即结束、无常驻员工；sofagent 的 FDE 是售后常驻部署+治理方法论（四阶段十二步→交付离场→sustain）。它做"漏斗前端"（拿 POC），我们做"漏斗后端"（常驻、可审计、受治理的硅基员工）——定位不冲突。
 
-其**独特点**是可借鉴方向（已登记 [ROADMAP · 行业印证](./ROADMAP.md#行业印证)）:① 回合制协议 + FDE 控节拍（人控 Agent 不抢跑，我们已有同判断、它执行更细）；② **spec-first 硬禁令**（transcript 永不直接驱动代码——补我们"触发直驱工件"的明文铁律，最高优先）；③ **decisions.jsonl 判断时刻日志**（{kind, moment, why, spec_ref} 现场即时记，会后喂 FDE Loop→INDUCE→Judgment Unit——补 A1-A23 缺的"决策理由链"，最高优先）；④ 分级降级梯队（console→TUI、ASR→手敲、dev 挂→走 spec，workflow never stops——为 7×24 常驻员工补分级降级 SOP，最高优先）；⑤ 开源优先阶梯 + 预验证画廊 + 双引擎无状态 + 数据敏感度分层 + 一键启动器品牌化模板。
+其**独特点**是可借鉴方向（已登记 [ROADMAP · 行业印证](./ROADMAP.md#行业印证)）：① 回合制协议 + FDE 控节拍（人控 Agent 不抢跑，我们已有同判断、它执行更细）；② **spec-first 硬禁令**（transcript 永不直接驱动代码——补我们"触发直驱工件"的明文铁律，最高优先）；③ **decisions.jsonl 判断时刻日志**（{kind, moment, why, spec_ref} 现场即时记，会后喂 FDE Loop→INDUCE→Judgment Unit——补 A1-A23 缺的"决策理由链"，最高优先）；④ 分级降级梯队（console→TUI、ASR→手敲、dev 挂→走 spec，workflow never stops——为 7×24 常驻员工补分级降级 SOP，最高优先）；⑤ 开源优先阶梯 + 预验证画廊 + 双引擎无状态 + 数据敏感度分层 + 一键启动器品牌化模板。
 
 **给我们的背书**：① FDE 作为"前线部署工程师"的方法论术语，已被 OpenFDE 以 Forward Deployed Engineer 独立命名并工程化，与我们同源、互为第三方佐证；② "约束 Agent 经受控接口"的同源判断在售前侧也成立（ChatDemo 约束在"何时/权限/来源"）；③ 我们的差异化仍在——ChatDemo **无 A1-A23 运行时行为审计、无 7×24 常驻 FDE Harness 层、无控制平面治理、让 Agent 直接写应用代码**，这些是我们的地盘。
 
@@ -247,13 +275,15 @@ OpenAI 2026-08-19 全面开源 [Codex Harness](https://github.com/openai/codex)�
 
 ---
 
+**▍跨域实证——eval/记忆/训练基建/Skill 形态的独立佐证（OpenAI 方法论 / 记忆综述 / Agent RL / Omarchy，主题超出「Harness 品类命名」范围的后续小节归此）**
+
 ### OpenAI：build-prove-generalize 三段循环
 
 [OpenAI 官方业务页](https://openai.com/business/the-openai-deployment-company/) 把 FDE 的工作方式写成一条公开方法论：「与其从一个通用产品出发，FDE 团队直接与客户合作解决一个**具体**问题，验证影响，然后识别出可规模化的**模式**」——这个循环被官方命名为 **build, prove, generalize**，作用是「把部署与产品开发连接起来」。
 
-它与 sofagent 进化引擎的经验回流路径逐字对位，也与 YC FDE Playbook（Bob McGrew）的「碎石路 → 高速公路」是同一循环的两种命名。真正有增量的是 `prove` 的落法：在 John Deere 案例中，OpenAI 与领域专家复盘数百个真实样例后**构建了定制评估系统度量准确率**，再谈规模化（结果：农户化学品用量降 70%，客户互动提升 6 倍）。
+它与 sofagent 进化模块的经验回流路径逐字对位，也与 YC FDE Playbook（Bob McGrew）的「碎石路 → 高速公路」是同一循环的两种命名。真正有增量的是 `prove` 的落法：在 John Deere 案例中，OpenAI 与领域专家复盘数百个真实样例后**构建了定制评估系统度量准确率**，再谈规模化（结果：农户化学品用量降 70%，客户互动提升 6 倍）。
 
-**对我们的意义**：`prove = 建定制 eval`，这句把审计引擎从「成本项」重新定义为**产品化的前置条件**——先能度量，才谈得上泛化。三段式命名也比比喻更适合对外沟通，可直接用作交付 SOP 的阶段划分。
+**对我们的意义**：`prove = 建定制 eval`，这句把审计模块从「成本项」重新定义为**产品化的前置条件**——先能度量，才谈得上泛化。三段式命名也比比喻更适合对外沟通，可直接用作交付 SOP 的阶段划分。
 
 > 📖 来源：[The OpenAI Deployment Company](https://openai.com/business/the-openai-deployment-company/)（openai.com，2026）
 
@@ -275,7 +305,7 @@ OpenAI 2026-08-19 全面开源 [Codex Harness](https://github.com/openai/codex)�
 
 **对我们的意义**：这把 Ralph 循环「Agent 失忆，文件不失忆」从工程直觉升维为架构定律。我们一直在做的事——think.md 与审计链的 append-only 契约、Ledger→Views 严格单向派生（Dream Cycle 夜里整理，原始记录一个字不删）、FDE 知识主权归客户——恰好就是综述定义的「笨笨保管」。一句话对位：**模型负责聪明的回忆，约束层负责笨笨的保管——模型在千万 token 里找到那句话，约束层保证那句话十年后还在、还查得到出处。**「写入笨、派生灵活」也由此立得住：写入端（Ledger）绝对不压缩，派生端（Views/knowledge/）可自由整理——这与 PHILOSOPHY §五 think.md 契约的「单向派生」完全同构。
 
-> 📖 来源：唐杰团队等《Memory for Large Language Models》（2026 综述）；应用层「记忆要笨」三原则与死亡测试尺子来自 CT诺团队的工程实证（LoRA 外挂 Ingram 记忆实验）
+> 📖 来源：唐杰团队等《Memory for Large Language Models》（2026 综述）
 
 ### harnessed agentic RL：训练域同行验证「审计按 commit 留痕」
 
@@ -293,19 +323,39 @@ DHH（Rails 之父）的 Omarchy——「有主见」的 Arch Linux 桌面发行
 
 **第一件：SKILL.md 不是小众发明，是正在收敛的 Agent 接口形态。** Omarchy 把带 frontmatter 触发词的 `SKILL.md`（「要编辑 `~/.config/hypr/` 就必须用这个 skill」）随产品安装到用户机器 `/usr/share/omarchy/`，内含安全红线（「`/usr/share/omarchy/` 只读永不编辑」）、命令组速查、决策框架七步——与我们 `SKILL/` 经 install.sh 装到 `~/.sofagent/skills/` 的分发完全同构，且 Claude Code 对 SKILL.md 已是原生支持。当头部开发者的装机量级产品把「约束 AI 别乱改文件」做成随产品分发的 skill，这个形态就从我们的工程选择变成了行业接口。
 
-**第二件：反漂移靠「禁二份」纪律，而非全仓对账。** Omarchy 命令组的权威清单只活在 `bin/omarchy` 的 `GROUP_DESCRIPTIONS` 结构里，AGENTS.md 明文「不要在这里维护第二份清单，以免与路由器漂移」。我们治同一病（工具数声称八处漂移三连发）用的是双招：SSOT 声明 + check-docs §15 全仓扫描对账。两招互补——声明治源头（新文档写前先问权威源在哪），扫描治存量（漂移当场红）。把「任何清单在仓内出现第二处时，一处为权威源、其余必须标注引用」升格为文档分工纪律，成本一行，收益是把「扫出漂移」变成「不产生漂移」。
+**第二件：反漂移靠「禁二份」纪律，而非全仓对账。** Omarchy 命令组的权威清单只活在 `bin/omarchy` 的 `GROUP_DESCRIPTIONS` 结构里，AGENTS.md 明文「不要在这里维护第二份清单，以免与路由器漂移」。我们治同一病（工具数声称曾多次与 registry 实数漂移）用的是双招：SSOT 声明 + check-docs §15 全仓扫描对账。两招互补——声明治源头（新文档写前先问权威源在哪），扫描治存量（漂移当场红）。把「任何清单在仓内出现第二处时，一处为权威源、其余必须标注引用」升格为文档分工纪律，成本一行，收益是把「扫出漂移」变成「不产生漂移」。
 
 **对我们的意义**：三棵文档树（task procedure / reference / user manual，按受众×文体切分）的声明式迁移方向已登记 ROADMAP 探索方向；skill 分发与文档分工纪律两条则即刻可抄——前者已被市场验证，后者已被 35k stars 项目的实践验证。
 
 > 📖 来源：[Omarchy](https://github.com/omacom/omarchy)（DHH，2025-06 建仓，35.3k stars@2026-08-30 实测）；AGENTS.md「禁二份清单」与 SKILL.md 均为仓库原文
 
-### hugozhu：RSI 三层论与数据飞轮瓶颈（Harness 层自进化叙事收敛）
+### 企业 AI 选型框架：「两轴一红线」与「不信可解释性」（2026-09）
 
-hugozhu（《FDE 的 20 个问题》作者）提出 RSI（递归自我改进）三层分层——产出物（Artifacts）/ Harness（Prompt·Memory·Tool·Skill·任务剧本）/ 模型权重——并判断 **RSI 会先从 Harness 层爆发**：Harness 是 Agent 已能读写、改完即可实验验证的代码，而权重改进需要训练设施与可靠奖励信号，两者尚不成熟。其配套判断：自进化的瓶颈不在改进算法，在**有没有足够多、足够高频、足够真实的任务数据**——高频重复运行、真实业务代价、任务同构可比较，三个原料恰是 7×24 自动执行 Agent 的定义性特征（演示型 Agent 产生不了飞轮）。
+企业 AI 选型内容提出一条与约束层哲学直接对位的判定框架：真命题不是「要不要上 Agent」，是**哪部分交给模型、哪部分由人和系统控制**——并给出操作化判据：**语义不确定性 × 路径不确定性**两轴矩阵（两轴都定用函数；语义不定路径定用单次调用/工作流；两轴都不定才上 Agent），加一条压顶红线：**影响大、错了难发现、需明确责任主体的事，必须留给人**。
 
-两点对 sofagent 有直接参照：① 三层分层与 sofagent 现有布局同构——think.md 反思与 skillopt 属产出物层、Skill 沉淀与 FORGE 自迭代属 Harness 层、v1.4.4 语料导出与规则→reward 映射属模型层数据前置；② 「客观性错误归 Harness 闭环、主观性错误归评测+后训练」的分工边界，把审计引擎（FAIL/PASS 客观判定）与 eval 体系（结果质量评估）的职责切分说得很干净。其提出的任务重复运行维度（每日重复执行率/自触发占比/流程持续时长）已收编为 v1.5.0 治理 KPI 面板候选指标。
+对位之一：**「能用规则不用模型判断」与 19/24 纯 git-diff 规则同构**。该框架的总结原则「把控制权交给最不需要 AI 的那层」（能用规则→不用模型判断；能预先编排→不让模型临时决定；能留给人负责→不交给机器），正是确定性引擎的设计动机——审计不看 Agent 说什么，看 diff 里实际改了什么，等于把「语义轴」从判定逻辑里剥掉了。行业五级架构阶梯（L0 纯计算 → L4 自主 Agent，多数企业把 L2 做深就够）也与此同源：**约束层不是反 Agent，是把 L3/L4 的例外处理关进可验收的笼子**。
 
-> 📖 来源：[hugozhu《数字员工的自我进化：从 Harness 开始》](https://mp.weixin.qq.com/s/vXRHrxwdEmKlm1TAXKiJOQ)（2026-09-02）；数据飞轮三数字（95%/93.4%/60%+）为厂商自报口径未独立核验，仅取指标思想；作者与 v1.4.4 第九章《FDE 的 20 个问题》同源
+对位之二：**「不信可解释性」与证据链信任模型互证**。该内容的三管原则——权限边界最小化 + 高影响动作人工审批 + **可信度来源于证据链、规则、审批记录而非推理结论**（解释越漂亮未必越真实）——与审计可拦截（HMAC 链硬证据）+ HITL 终审的设计完全咬合。其 Agent 验收六指标（业务结果正确率 / 越权率 / 人工介入率 / 延迟成本 / 模型替换稳定性 / 失控消耗）全部可从审计链与计量数据派生——**验收不问 Agent 嘴上说没做完，只看机器可查的结果**，这正是「考试式验收」的落地形态，也为商业侧健康度评分服务提供了现成指标骨架。
+
+### 金融风控归因：本体约束的消融级量化实证（2026-09）
+
+金融行业给出「结构化约束放在模型外」的第一组消融数据：汇添富基金的投顾风险异动归因系统以领域本体为语义底座（形式化定义业务实体、归因维度与智能体调度规则），引导 LLM 做可控逻辑推演——LLM 只作本体填充引擎（类定义作指令输入，抽取结果作为待校验断言），域/范围约束硬性拦截误跳步骤，业务规则调整只改本体配置、不改引擎代码。实证：引入本体约束后实体识别 95%、关系抽取 99%，幻觉显著受抑；消融对照显示移除本体约束后关系抽取下降约 30 个百分点。
+
+对位：为「可检查性必须落在模型外」补上量化实证。机制三点——抽取结果待校验、约束硬性拦截、规则调整不改引擎——分别对应审计的「断言待验证」、拦截的「硬边界」、策略外置的「配置不改代码」：本体数据在这里不是装饰性知识图谱，是让 LLM 输出可计量变好的运行时约束。
+
+> 📖 来源：周建军、庄明光、沈琪《基于领域本体约束与大语言模型推理的风险异动归因研究》，《证券信息技术》2026 第 1 卷 63-77 页（汇添富基金，2026-08 公开）；95%/99% 为论文摘要原值（已核验）
+
+### Meta-RSI 三算子与保护面（2026-09）
+
+递归自我改进（RSI）的统一形式化：三个可写面算子（Data-RSI 经验池 / Harness-RSI 五槽位 scaffold / Model-RSI 参数内化）共享一个闭环内核（消费学习信号→提出改动→验证器裁决→回流下一轮），其上加改进调度器（横向编排算子顺序 + 纵向改写算子提案策略）。实测：无外部教师模型，目标模型自演全部角色，自托管 35B 模型四基准平均自提升 10.9 分；六款前沿 API 模型仅走 Harness 路线（不动权重）平均 +7.3 分——**context-space 改进对不可训练的前沿模型同样有效**。对 sofagent 三条判据级启示：① **保护面独立**——评估器与发布门必须在所有可写面之外（eval-gate + audit HMAC 链 + release-gate-loop 的既有架构恰是这个形态）；② **验证差距是自进化的适用边界**——自提升仅在有廉价验证器的域成立（代码/数学），开放式域必须人审兜底；③ **多层写的成本模型**——context 更新「每次推理重付」（租用），权重更新「一次付清」（摊销），prompt/skill/微调三层须有显式晋级判据而非平行堆叠。行业 RSI 分级（弱/中/强）与 sofagent 五层谱系的对位见 [PHILOSOPHY · 自进化五层谱系](./PHILOSOPHY.md#自进化的五层谱系update是分界线)。
+
+> 📖 来源：[MetaRSI/RSI²: A Meta-Recursive Self-Improving System (arXiv 2609.06396)](https://arxiv.org/abs/2609.06396)（CosmosMind，2026-09-06）；[开源 RSI-Harness（Genome 配置层）](https://github.com/CosmosMind-ai/RSI-Harness)（2026-09-08）；验证差距与两 substrate 成本模型综述（Two Substrates of Self-Evolving Agents，2026）
+
+### System One 决策模型：判断与生成分离（Jev · 2026-09）
+
+「判断/生成分离」被做成了一类独立模型：TypeSafe AI（InstructGPT/RLHF 共同作者 Diogo Almeida 创立，$40M 种子）发布 Jev——不生成任何文字，输入状态 + 带类型的问题（Noul 是非/Choice 选项/Score 评级三原语），输出结构化答案 + 校准概率（RLCD 训练：声称 90% 把握就真的对 ~90%）。数字（厂商主张，独立验证仅 Every 一次实测 777 判断 0.7s）：70-500ms 延迟、$0.042/百万输入 token 输出免费、比前沿 LLM 快 20-200 倍便宜 40-400 倍。对 sofagent 四条判据级启示：① **判断面独立成层是行业级印证**——「能用规则不用模型判断」升级为「判断是独立模型类别」，约束层管判断的分工被反向验证；② **校准概率是置信度概念的验收标准**——引擎既有五处置信度（instinct scorer/敏感识别/灰度判定等）皆为未校准的拍脑袋数字，RLCD 点破「概率必须有意义」；③ **类型化输出天然可审计**——choice+概率+置信度的结构化记录是 decision-log/HMAC 链的理想输入，语义判断从不可审查的 LLM 调用变为可审查的分类结果；④ **可被操纵的失灵面决定其架构位置**——数学/日期不可靠、state 内容可诱导答案，故决策模型永不进信任地基，只坐确定性规则之后的语义兜底层（与审计「24 条 git-diff 在前，语义判断在后」同序）。同域学术谱系互证：模型路由侧 RouteLLM（ICLR 2025，偏好数据训练路由器，MT-Bench 省 85% 保 95% 质量）/ FrugalGPT（TMLR 2024，级联先廉后贵按评分升级）/ AutoMix（NeurIPS 2024，自验证置信度决定升级，省 50%+）/ BEST-Route（ICML 2025，联合路由模型与采样数，省 60% 损失 <1%）；语义路由侧 semantic-router（Aurelio，MIT，3.9k star，embedding 相似度路由零 LLM 调用）——三级「规则 <1ms → 语义路由 20-40ms → LLM 900ms」的延迟阶梯与 v1.5.3 判定分层 L0/L1/L2 同构。落地：v1.5.3 第七章 DecisionChannel 通道接口（研究收编，见 changelog）。
+
+> 📖 来源：[TypeSafe AI 官宣](https://typesafe.ai/)（2026-09-15，厂商主张）；[Every 独立实测](https://every.to/)（2026-09-15）；[RouteLLM (arXiv 2406.18665)](https://arxiv.org/abs/2406.18665)（ICLR 2025）；[FrugalGPT (arXiv 2305.05176)](https://arxiv.org/abs/2305.05176)（TMLR 2024）；[semantic-router](https://github.com/aurelio-labs/semantic-router)（MIT）；[Jev-style 开源复现 jev-on-a-laptop](https://github.com/rorshopping/jev-on-a-laptop)（KV cache 广播并行约束解码 + Qwen-2.5-1B-RLCD Apache-2.0 权重）
 
 ---
 
@@ -387,8 +437,6 @@ sofagent 是**跨层约束**——不管企业用 WorkBuddy（L1）还是 LangGr
 > | **治理闭环缺位**——云治理止于「告警」，缺「反思→进化」闭环 | Dream Cycle 闭环：审计→反思→知识沉淀→下一轮优化 |
 >
 > 精确定位：不是"我们也有治理"，是**"我们补巨头补不上的缺口"**——巨头做平台内治理（绑定自家云），sofagent 做平台外治理（不管你用哪个云）。
->
-> 📖 来源：InfoWorld（2025-11，Vertex AI Agent Builder 分析）+ Forrester Charlie Dai + IDC Dhiraj Badgujar
 
 ### 技术选型原则——用什么、不用什么
 
@@ -427,7 +475,7 @@ loop-engineering 对此的处置不是「少用 Agent」，而是：
 3. **自动合并限制在真正平凡的路径**（typo、lint fix、import 排序）
 4. **理解债务不是你欠 AI 的，是你欠未来自己的**
 
-sofagent 的审计引擎已经覆盖了「做了什么」——每次变更都有 git diff 证据。但「为什么这么做」仍需人类判断。这是工具的边界，不是工具的失败。
+sofagent 的审计模块已经覆盖了「做了什么」——每次变更都有 git diff 证据。但「为什么这么做」仍需人类判断。这是工具的边界，不是工具的失败。
 
 > 📖 来源：cobusgreyling/loop-engineering（MIT 开源）— [concepts.md](https://github.com/cobusgreyling/loop-engineering/blob/main/docs/concepts.md) / [failure-modes.md](https://github.com/cobusgreyling/loop-engineering/blob/main/docs/failure-modes.md)（Comprehension Debt Spiral 条目）
 
@@ -456,7 +504,7 @@ Ontology 的本质是「**翻译而非统一**」——在多个异构 Agent / �
 
 > ⚠️ 克制说明：Ossie 仍是 2026 年初生标准（v0.1/v0.2.dev），sofagent 当前以自有 Ontology 层 + Ledger-Views-Policy 承载语义，**不引入 Ossie 依赖**；此处仅作"语义层交换协议"的演进参照记录，待其生态成熟再评估 Adapter 级对接。
 
-> 📖 来源：Apache Ossie 官网 [ossie.apache.org](https://ossie.apache.org/)（2026-07 进 Apache 孵化器）+ 掘金《Apache Ossie 进入 Apache 孵化器：50+ 企业支持的语义数据标准》[juejin.cn/post/7663683553181777947](https://juejin.cn/post/7663683553181777947) + dev.to《Meet Apache Ossie》[dev.to/alexmercedcoder/meet-apache-ossie-the-open-semantic-interchange-finds-its-home-at-the-asf-2mio](https://dev.to/alexmercedcoder/meet-apache-ossie-the-open-semantic-interchange-finds-its-home-at-the-asf-2mio)
+> 📖 来源：Apache Ossie 官网 [ossie.apache.org](https://ossie.apache.org/)（2026-07 进 Apache 孵化器）
 
 ### Notification 事件驱动协作
 
@@ -464,7 +512,7 @@ Ontology 的本质是「**翻译而非统一**」——在多个异构 Agent / �
 
 ### 外层 FORGE 的节奏与护栏
 
-Onyx 四阶段闭环（L1：可见性 → 仿真 → 执行 → 学习）与人类审批双模式（L2：高风险人工确认 / 常规受信自动执行）是 31 篇研读里外层 Loop 的两个关键印证——前者给出闭环叙事节奏，后者给出「按风险分级放行」的 human 节点策略。sofagent 对应落地：外层循环节奏 = SUSTAIN 巡检（`docs/guides/fde-activation-chain.md`）+ `releasing.md` 阶段十二（发版后 SOP 自进化）；human 节点分级 = 审计引擎 critical/warning/crutch 分层 + 危险操作前人工批准钩子。
+Onyx 四阶段闭环（L1：可见性 → 仿真 → 执行 → 学习）与人类审批双模式（L2：高风险人工确认 / 常规受信自动执行）是 31 篇研读里外层 Loop 的两个关键印证——前者给出闭环叙事节奏，后者给出「按风险分级放行」的 human 节点策略。sofagent 对应落地：外层循环节奏 = SUSTAIN 巡检（`docs/guides/fde-activation-chain.md`）+ `releasing.md` 阶段十二（发版后 SOP 自进化）；human 节点分级 = 审计模块 critical/warning/crutch 分层 + 危险操作前人工批准钩子。
 
 > 💡 **协议 Adapter 封装**：中间件应在底层封装 MCP / A2A / ACP 协议差异，上层语义层（Ontology / Action Type）不感知底层协议——对齐 sofagent「合的框架」定位：企业换 Agent 平台，约束与审计不动。
 
@@ -482,7 +530,7 @@ Onyx 四阶段闭环（L1：可见性 → 仿真 → 执行 → 学习）与人�
 |----|--------|----------------|
 | **约束层（Harness / Constraint Layer）** | 四层约束注入链（SKILL.md→fde.md→think.md→knowledge/）+ 审计 / 回溯能力（本质：git snapshot） | 配置 + 指令 + 校验 |
 | **知识层（Knowledge / Ontology）** | knowledge/ + 本体数据（FDE 在客户侧交付的业务资产，见 FDE/GUIDE.md 第三章 本体数据构建） | 知识 |
-| **编排层（Orchestration / Loop）** | 编排引擎 + 进化引擎 + 外层 FORGE | 编排 |
+| **编排层（Orchestration / Loop）** | 编排模块 + 进化模块 + 外层 FORGE | 编排 |
 
 逐层映射：
 
@@ -492,7 +540,7 @@ Onyx 四阶段闭环（L1：可见性 → 仿真 → 执行 → 学习）与人�
 | 知识 Knowledge（知道什么） | 知识知道什么 | 知识层 · knowledge/ + 本体数据（FDE 交付，Harness 只挂载 / 校验） |
 | 指令 Instruction（怎么说） | 指令怎么说 | 约束层 · 四层约束注入链即「指令」载体（prompt 注入 Agent 上下文） |
 | 校验 Validation（对不对） | 校验对不对 | 约束层 · 审计能力 + 约束规则（硬约束，AI 绕不过） |
-| 编排 Orchestration（先干什么后干什么） | 编排先干什么后干什么 | 编排层 · 编排引擎 + 进化引擎 + FORGE |
+| 编排 Orchestration（先干什么后干什么） | 编排先干什么后干什么 | 编排层 · 编排模块 + 进化模块 + FORGE |
 
 **同构点**：五层里**仅指令层直接调 AI**，其余四层为 AI 铺路；sofagent 亦然——只有「知识 / 指令」承载概率性 AI，约束 / 校验 / 编排全部落在确定性引擎。
 
@@ -505,7 +553,7 @@ Onyx 四阶段闭环（L1：可见性 → 仿真 → 执行 → 学习）与人�
 | 数据接口层 | Agent 连接企业库 / 个人 / IoT / 实时数据 | CloudBase / OpenClaw 集成（Gateway 只桥接、不替代）|
 | 上下文理解层 | AI 理解数据背后的业务语义 / 规则 / 偏好 | Ontology（运行时语义层，翻译而非统一）|
 | 权限管理系统 | 身份认证 · 权限控制 · 行为审计 · 安全边界 | 审计能力（git diff 硬证据）+ 约束层（约束注入链）+ entry-gate 风险分级 |
-| Skill 生态 | 开发者输出专项 Skill（类比 App Store） | `/SKILL/` 统一入口 + 引擎层 / 用户层分离 |
+| Skill 生态 | 开发者输出专项 Skill（类比 App Store） | `/SKILL/` 统一入口 + 约束层（官方）/ 用户层分离 |
 
 ### 脑力自动化四阶段 ↔ sofagent 工程谱系映射
 
@@ -516,7 +564,7 @@ Onyx 四阶段闭环（L1：可见性 → 仿真 → 执行 → 学习）与人�
 | 提示词工程 | 教会模型「怎么说」 | Prompt 层（SKILL.md / fde.md 指令载体）|
 | 上下文工程 | 给模型「什么背景」 | Context 层（knowledge/ + Ontology 运行时语义）|
 | 驾驭工程 | 约束模型「不能乱来」 | 约束层（约束注入链 + 审计 + 回溯，七步 Action 管线）|
-| 循环自动化 | 让模型「自己跑闭环」 | Loop / Graph 层（编排引擎 + 进化引擎 + FORGE 外层循环）|
+| 循环自动化 | 让模型「自己跑闭环」 | Loop / Graph 层（编排模块 + 进化模块 + FORGE 外层循环）|
 
 ### 综合行业对标
 
@@ -529,7 +577,7 @@ Onyx 四阶段闭环（L1：可见性 → 仿真 → 执行 → 学习）与人�
 | 底线 | 含义 | sofagent 落点 |
 |------|------|--------------|
 | **零数据权限** | LLM 不直接写 SQL / 连数据库，与原始数据隔离 | 零凭证沙箱 + v1.3.7 虚拟 key 边界注入——LLM 只按按钮，不碰数据 |
-| **全链路留痕** | 每操作步骤有日志，可追踪可回溯可审计 | 审计引擎（git diff 硬证据 + HMAC 链）+ 运行时审计 |
+| **全链路留痕** | 每操作步骤有日志，可追踪可回溯可审计 | 审计模块（git diff 硬证据 + HMAC 链）+ 运行时审计 |
 | **确定性执行** | 工具函数预先写好，参数固定，同样输入同样输出 | 工具审批四模式 + Ontology Action 七步管线——LLM 当翻译官，不当写逻辑的人 |
 
 ### 循环的边界：入场判据与升级判据
@@ -544,11 +592,7 @@ Onyx 四阶段闭环（L1：可见性 → 仿真 → 执行 → 学习）与人�
 
 **升级六信号 → sofagent 落点**：任务需交接（dag-runner 单任务 vs 并行编排波次）/ 需散出汇合（Send API 并行 + MergeQueue，v1.3.1）/ 每步不同模型工具（model-router 路由）/ 需显式可审计角色（StateGraph 四节点）/ 节点失败需隔离（git worktree，v1.2.3）/ 需独立 reviewer（audit + fresh-eyes）。完整对照见 [FORGE §Graph Engineering 视角](./guides/loop-development.md#graph-engineering-视角控制图--stategraph)。
 
-> 📖 来源：Loop Engineering 方法论（2026-08，行业笔记转写吸收）——入场三适合条件（重复发生 / 完成标准清晰 / token 成本可扛）与升级六信号互补成完整边界：三适合管「建不建」，六信号管「升不升」——不满足三适合的任务硬建 Loop 是浪费，满足三适合却停在单 Loop 不升级是欠设计。
-
-### Loop Engineering 四层循环：从 Agent Demo 到可交付 AI 产品
-
-> 📖 来源：Launching《The Art of Loop Engineering》（2026-08，行业文章转写吸收）——「Agent 自己说做完 ≠ 业务真的完成」。
+### Loop 四层循环：从 Agent Demo 到可交付 AI 产品
 
 四层循环不是四个并列技术名词，而是**四个不同时间尺度的控制**——单 Agent Loop 只能算「会连续执行的 Demo」，四层打通才是可交付、可运行、可持续改进的 AI 产品：
 
@@ -561,9 +605,9 @@ Onyx 四阶段闭环（L1：可见性 → 仿真 → 执行 → 学习）与人�
 
 **对 sofagent 的四点印证**：
 
-1. **Fortification Loop = 审计 + 验收的定位一句话**——「把什么叫做完成，从模型的自我判断变成可执行可追责的验收标准」正是 sofagent 审计引擎 + `acceptance-test.sh` 冻结验收 + `define_acceptance` 机器可判定验收的定位（完成定义权的转移，完整论证见上文 [Verifier 才是瓶颈](#verifier-才是瓶颈)）。Fortification Loop 的价值不是让 Agent 多检查一遍，是完成定义权从模型转移到系统。
+1. **Fortification Loop = 审计 + 验收的定位一句话**——「把什么叫做完成，从模型的自我判断变成可执行可追责的验收标准」正是 sofagent 审计模块 + `acceptance-test.sh` 冻结验收 + `define_acceptance` 机器可判定验收的定位（完成定义权的转移，完整论证见上文 [Verifier 才是瓶颈](#verifier-才是瓶颈)）。Fortification Loop 的价值不是让 Agent 多检查一遍，是完成定义权从模型转移到系统。
 2. **Event Driven Loop = daemon + WAL 续跑**——事件驱动不是加个定时器：任务排队（daemon scheduler/cron 三档）、重复事件（幂等）、并发冲突（MergeQueue）、失败重试（退避 + 收敛）、状态恢复（checkpoint 续跑）——sofagent 异步长任务自治逐项对应。
-3. **Hill Climbing Loop = 进化引擎 + FORGE 自迭代**——「分析多次运行留下的 Trace，找到重复出现的问题，再修改产生这些问题的 Harness」：sofagent 进化引擎（think.md 反思 + Dream Cycle 知识蒸馏 + skillopt 优化）消费 audit/eval 轨迹；FORGE fresh-eyes-loop 本身就是一个 Hill Climbing Loop（16 视角审查 → 修复 → 验证 → 系统改 harness）。**关键安全网：Hill Climbing ≠ 让 Agent 随意改自己的 Prompt 然后直接上线**——可靠改进仍需候选版本/离线评测/回归测试/人工审核/小流量验证/回滚，sofagent 的 release-gate-loop + check-version 门禁 + 快照回滚正是这套安全网。
+3. **Hill Climbing Loop = 进化模块 + FORGE 自迭代**——「分析多次运行留下的 Trace，找到重复出现的问题，再修改产生这些问题的 Harness」：sofagent 进化模块（think.md 反思 + Dream Cycle 知识蒸馏 + evolve 优化）消费 audit/eval 轨迹；FORGE fresh-eyes-loop 本身就是一个 Hill Climbing Loop（常规 12 视角 / 全量 23 视角审查 → 修复 → 验证 → 系统改 harness）。**关键安全网：Hill Climbing ≠ 让 Agent 随意改自己的 Prompt 然后直接上线**——可靠改进仍需候选版本/离线评测/回归测试/人工审核/小流量验证/回滚，sofagent 的 release-gate-loop + check-version 门禁 + 快照回滚正是这套安全网。
 4. **自动化不是把人移出循环，是重新安排人的位置**——人不再盯着 Agent 每一步，但在高责任节点保留判断权和否决权：敏感工具（转账/删数据/改数据库）前人工确认、业务取舍/价值判断时担任 Grader、结果发客户或写核心系统前审批、Harness 新版本部署前评审——**这正是 sofagent HITL 钩子 + 工具审批四模式 + 危险操作前人工批准钩子的设计哲学**。
 
 ### 循环系统的鲁棒性：四类故障与六要素
@@ -589,15 +633,13 @@ Palantir Foundry 10 年迭代收敛出 Ontology 的 5 块构建块——**Object
 |---|------|-------------|
 | **Object Type** | 业务实体的 schema 定义（如一口井、一笔订单） | `knowledge/entities/` Markdown frontmatter（实体 + 属性 + 关系） |
 | **Link Type** | 实体间的类型化关系（带命名/方向/权限，非数据库外键） | `relations` frontmatter 字段（实体间语义关系，非技术引用） |
-| **Action Type** | 对 Object/Link 的合法改动定义（入参 + 规则 + 提交条件 + 副作用） | **审计引擎 Action 七步管线**（参数→校验→权限→执行→审计→回滚→副作用） |
+| **Action Type** | 对 Object/Link 的合法改动定义（入参 + 规则 + 提交条件 + 副作用） | **审计模块 Action 七步管线**（参数→校验→权限→执行→审计→回滚→副作用） |
 | **Function** | 派生计算（源变化自动重算，非定时 ETL 快照） | daemon Dream Cycle 知识提取 + think.md 反思自动生成 |
 | **Interface** | 同一份 Ontology 暴露给多类用户（Workshop/API/AIP/OSDK） | MCP Server + CLI + Hook + SKILL.md（同一份约束，多入口访问） |
 
 **合并检验法**——5 块任意两块都不能无损合并：Object↔Link（Link 依附 Object）、Action↔Function（Action 改状态有事务 / Function 算值不改状态）、Function↔Interface（计算 vs 暴露）、Link↔Action（关系 vs 改动）。再加新块也能被现有 5 块吸收（Metric = Function 输出、Workflow = Action 组合、Notification = Action Side Effect、Version = Global Branching）。
 
-**sofagent 印证**：sofagent 的约束层四种能力遵循同一不可合并原则——审计能力（看 diff 不改状态）与回溯能力（改状态有快照）与进化能力（算值不改状态）各有独立职责，合并任两者都会丧失核心能力。Palantir 的「Action 默认 staged，等人工 review 才 commit」与 sofagent 的 human_confirm 节点（[FORGE 四节点状态机](./guides/loop-development.md#四节点状态机v113)）完全同构——LLM 调用 Action 不能直接写库，必须在沙盒里等审批。
-
-> 📖 来源：公众号「AI 风起兮」2026-08-01《Ontology 的五大构建块: Object / Link / Action / Function / Interface》（Palantir Ontology 深度拆解 系列第 2 篇）
+**sofagent 印证**：sofagent 的约束层五种能力遵循同一不可合并原则——审计能力（看 diff 不改状态）与回溯能力（改状态有快照）与进化能力（算值不改状态）各有独立职责，合并任两者都会丧失核心能力。Palantir 的「Action 默认 staged，等人工 review 才 commit」与 sofagent 的 human_confirm 节点（[FORGE 四节点状态机](./guides/loop-development.md#四节点状态机v113)）完全同构——LLM 调用 Action 不能直接写库，必须在沙盒里等审批。
 
 **框架级对等印证**：Pydantic AI（Python Agent 框架，2026-06 V2）独立演化收敛到同一组原语——HITL 工具审批门 = `human_confirm` 节点、Capabilities 可组合能力包 = SKILL.md + registry 动态注册、Evals = `data/eval/` 评分、Graph 编排 = LangGraph StateGraph。跨语言（Python vs TS）、跨范式（runtime 框架 vs harness 约束层）独立收敛到同一组原语，说明 sofagent 的原语选择经受住了独立性检验。
 
@@ -609,7 +651,7 @@ Palantir Foundry 10 年迭代收敛出 Ontology 的 5 块构建块——**Object
 
 | GStark 设计哲学 | sofagent 对应 | 同构关系 |
 |------|------|------|
-| **机械化架构约束**（别跟 AI 讲道理，把护栏焊死） | 审计引擎 24 条规则 + BASELINE_RULE_KEYS 不可 config 关闭 | 完全同构——审计引擎就是焊死的护栏 |
+| **机械化架构约束**（别跟 AI 讲道理，把护栏焊死） | 审计模块 24 条规则 + BASELINE_RULE_KEYS 不可 config 关闭 | 完全同构——审计模块就是焊死的护栏 |
 | **角色级约束**（每个 Skill 开头自检「这活是不是我该干的」） | knowledge-domain include/exclude + SubAgent 角色定义 | 完全同构——knowledge-domain 边界即角色级约束 |
 | **多轮生成再筛选**（AI 跑一次成本趋零 → 多跑几轮挑最好） | A/B 双跑 + fresh-eyes 12 视角独立审查 | 完全同构——FORGE fresh-eyes-loop 即多轮再筛选 |
 | **动手前先搜索**（设计前搜方法论、审查前搜安全清单） | Ontology knowledge/ + search_knowledge MCP tool | 完全同构——知识库 + MCP 搜索即先搜索后动手 |
@@ -618,17 +660,23 @@ Palantir Foundry 10 年迭代收敛出 Ontology 的 5 块构建块——**Object
 
 ### Palantir 落地路径：Red Loop、KLM 范式与「能换模型的对象层」
 
-> 📖 来源：Palantir 官方架构文档（AIP / Foundry / Apollo 三套集成平台）+ 中国企业落地路径拆解（2026-08）。官方事实，非转写。
+> 📖 来源：Palantir 官方架构文档（AIP / Foundry / Apollo 三套集成平台）。官方事实，非转写。
 
 - **Ontology = 可运行的业务契约，不是知识图谱**——官方原话「表达企业彼此关联的复杂**决定**，而不是数据」（决定二字官方斜体强调）；整合 Data + Logic + Action + Security 四维度；核心价值 = **定义业务里有什么、现在是什么状态、人和 Agent 分别可以做什么**（库存不足能不能发起调拨？采购金额超多少必须二次审批？排产修改后哪些下游对象要一起更新？）。**企业学习要点：对象定义必须和动作一起做**——只统一名词、不定义状态/变化/权限/写回，得到的是漂亮标签，不是生产级。
 - **KLM 范式（不用什么智能都压在大模型上）**——一个决定可以同时调用业务规则、预测模型、优化器和 LLM function：缺料判断主要靠库存计算 + 约束优化，大模型只负责读供应商邮件、解释方案。**企业架构假设：从第一天就假设会同时用多个模型，并且随时能替换任何一个 → 把规则、动作、边界放在模型外边**。
 - **Red Loop（真闭环）**——人和 Agent **走同一套接口、受同一套权限**，结果写回业务系统（不是把聊天记录塞回向量库，而是把决定和结果放回业务对象的历史）；**写回必备机制：幂等、回执、补偿、审计、人工接管**（同一条请求重试会不会扣两次库存？ERP 成功但 API 超时怎么对账？审批后供应商状态变了要不要重算？没有这些，所谓闭环就是 Demo）。
-- **Apollo（交付层）**——管软件持续交付（版本怎么进云/本地/边缘/隔离环境、怎么灰度、出问题怎么回滚），**不管 GPU 和模型训练调度**；企业自检：Agent 的提示/工具/规则有没有版本？测试通过后用什么发布？模型换了要不要重考评测？升级失败能不能回退？
+- **Apollo（交付层）**——管软件持续交付（版本怎么进云/本地/边缘/隔离环境、怎么灰度、出问题怎么回滚），**不管 GPU 和后训调度**；企业自检：Agent 的提示/工具/规则有没有版本？测试通过后用什么发布？模型换了要不要重考评测？升级失败能不能回退？
 - **FDE = 容易被忽略的「非软件层」**——工程师嵌入客户现场一起建功能（从战区到工厂车间）；企业自检：「工程师去产线待着」即可复制，不靠采购。
 - **6 个月路线图**——前 3 个月选一个高价值业务决定，接通最小数据链，做出**有人审批、能写回结果、可追踪**的 Action 闭环（验收不看模型多聪明，看业务有没有真的改变、错误能不能发现、失败能不能恢复）；后 3 个月加 Agent，按 KLM 接入至少两种可替换模型，建立真实业务测试集，记录调用轨迹/成本/结果，补齐发布/回滚/权限治理。
 - **两个验收问题**——① 如果明天更换大模型，业务对象、规则、动作、权限和历史还能不能留下？（查 Ontology + KLM）② 这套东西能不能进我的隔离环境？升级失败能不能回滚？边缘节点断了还能不能跑？（查 Apollo + Rubrik）——**答不上来，你买到的可能只是一个更贵的 Demo**。
 
-> 💡 **对 sofagent 的五点印证**：① **Ontology = 可运行业务契约** 与 sofagent 本体数据（Object Type + Property + Link Type + Action + 状态机，FDE/GUIDE 第三章）完全同构——「对象定义必须和动作一起做」正是 sofagent ontology 的 Action 注册表 + validator 三态 + 生命周期（v1.3.1 / v1.3.7）；② **Red Loop 写回机制** = sofagent Durable Execution（checkpoint 续跑 + 副作用幂等，v1.3.1）+ WAL 三态恢复/undo 三档 + HITL 审批 + 审计留痕——「幂等/回执/补偿/审计/人工接管」逐一有对应；③ **KLM 范式** = 智能/控制分离（PHILOSOPHY §一理论锚点）+ 模型注册/灰度切换/路由决策可解释性——「把规则动作边界放在模型外边」正是约束层哲学；④ **Apollo 交付层自检五问** = sofagent 版本同步机制 + check-version 门禁 + 快照回滚 + 模型换后重考评测（Benchmark）；⑤ **两个验收问题** = sofagent「编排层永远不换」（24 条 git diff 规则 + HMAC 链不依赖模型）+ 快照 `--revert` 一键回滚——「换模型对象还在不在」的答案就在约束层与模型解耦的设计里。
+> 💡 **对 sofagent 的五点印证**：
+>
+> 1. **Ontology = 可运行业务契约**——与本体数据（Object Type + Property + Link Type + Action + 状态机，FDE/GUIDE 第三章）完全同构：「对象定义必须和动作一起做」正是本体数据的 Action 注册表 + validator 三态 + 生命周期（v1.3.1 / v1.3.7）。
+> 2. **Red Loop 写回机制** = Durable Execution（checkpoint 续跑 + 副作用幂等，v1.3.1）+ WAL 三态恢复 / undo 三档 + HITL 审批 + 审计留痕——「幂等 / 回执 / 补偿 / 审计 / 人工接管」逐一有对应。
+> 3. **KLM 范式** = 智能 / 控制分离（PHILOSOPHY §一理论锚点）+ 模型注册 / 灰度切换 / 路由决策可解释性——「把规则动作边界放在模型外边」正是约束层哲学。
+> 4. **Apollo 交付层自检五问** = 版本同步机制 + `check-version` 门禁 + 快照回滚 + 模型换后重考评测（Benchmark）。
+> 5. **两个验收问题** = 「编排层永远不换」（24 条 git diff 规则 + HMAC 链不依赖模型）+ 快照 `--revert` 一键回滚——「换模型对象还在不在」的答案就在约束层与模型解耦的设计里。
 
 ### 模型层判断：组合优于单一，本地模型可行
 
@@ -641,12 +689,12 @@ AI 从「程序」（单一模型）走向「协议」（多模型组合）是 S
 
 ### 纳德拉「学习循环」：Token 资本的复利结构（CEO 级背书）
 
-微软 CEO 纳德拉 2026-06 长文《A frontier without an ecosystem is not stable》（2800 万浏览，机器之心全文翻译）提出：企业的未来不取决于挑到最佳模型，而取决于在模型之上构建「人力资本 × Token 资本」学习循环的复利能力——**可以外包一项任务甚至一份工作，但永远无法外包学习过程**。其中「企业需要的架构四要素」与 sofagent 的能力面逐项对齐（以下对齐表为解读性映射，非纳德拉原话）：
+微软 CEO 纳德拉 2026-06 长文《A frontier without an ecosystem is not stable》（2800 万浏览）提出：企业的未来不取决于挑到最佳模型，而取决于在模型之上构建「人力资本 × Token 资本」学习循环的复利能力——**可以外包一项任务甚至一份工作，但永远无法外包学习过程**。其中「企业需要的架构四要素」与 sofagent 的能力面逐项对齐（以下对齐表为解读性映射，非纳德拉原话）：
 
 | 纳德拉架构四要素（原文） | sofagent 对应（解读映射） |
 |------|------|
-| 工作流 + 领域知识 + 积累判断 → 随每次使用不断改进的 AI 系统 | 业务流编排 + 本体数据（knowledge/ 实体关系）+ think.md 反思沉淀 |
-| 私有评估体系（外部基准不够，捕捉企业真正关心的成果进步） | 审计引擎 git diff 硬证据 + eval 体系（`data/eval/`）——不为外部 benchmark 写测试，只为企业的真实底线 |
+| 工作流 + 领域知识 + 积累判断 → 随每次使用不断改进的 AI 系统 | 工作流编排 + 本体数据（knowledge/ 实体关系）+ think.md 反思沉淀 |
+| 私有评估体系（外部基准不够，捕捉企业真正关心的成果进步） | 审计模块 git diff 硬证据 + eval 体系（`data/eval/`）——不为外部 benchmark 写测试，只为企业的真实底线 |
 | 私有强化学习环境（在组织内部真实执行轨迹中变强） | SUSTAIN 进化闭环（audit/eval 轨迹 → 反思 → 经验沉淀 → 下轮执行），模型层角色可替换 |
 | 机构记忆知识库（记忆可查询、Token 使用更高效） | 回溯能力 + 知识库（history.jsonl 审计历史 + knowledge/ 知识沉淀，全量可查询） |
 
@@ -654,7 +702,7 @@ AI 从「程序」（单一模型）走向「协议」（多模型组合）是 S
 
 **生态警告**（原文）：「各行业每家公司都在把价值让渡给少数几个吞噬一切的模型」——若价值被少数模型层攫取，政治经济体系无法容忍。这给独立约束层存在的宏观理由：防价值全被模型层攫取，与治理层/审计层独立于模型厂商同源。
 
-> 📖 来源：纳德拉《A frontier without an ecosystem is not stable》（2026-06，X 长文，2800 万浏览）· 机器之心全文翻译（2026-06-15）· A 级源（微软 CEO 署名）
+> 📖 来源：纳德拉《A frontier without an ecosystem is not stable》（2026-06，X 长文，2800 万浏览）· A 级源（微软 CEO 署名）
 
 ---
 
@@ -668,11 +716,11 @@ SaaStr 创始人 Jason Lemkin 算清了 FDE 模式的单位经济账：FDE 年�
 
 结果是市场两极：Tier 1 企业拿到定制 AI + 嵌入式工程 + 高成功率；Tier 2 中小企业只拿到「预打包方案 + 远程支持 + 培训会」这种无结果承诺的版本。原文结论：**「最需要 AI 转型的企业，可能正被那个能出结果的实施模型的定价排除在外。」**
 
-**这正是 sofagent 的位置**：Lemkin 只给出「SMB 需要另一套剧本——第一天就设计自实施、做行业模板、重 onboarding UX」，却没回答「自实施如何保证结果」。若 FDE 的判断力能固化进一层可复制的 harness（约束 + 审计 + 经验回流），$75K/部署的人力成本才可能摊薄成软件成本。$75K/部署/年是可长期引用的量化锚点。
-
-> 📖 来源：[Forward Deployed Engineer: What It Takes to Make AI Work in B2B](https://www.saastr.com/forward-deployed-engineer-what-it-takes-to-make-ai-work-in-b2b-but-do-they-work-for-smbs/)（saastr.com，2026）
+**这正是 sofagent 的位置**：Lemkin 只给出「SMB 需要另一套剧本——第一天就设计自实施、做行业模板、重 onboarding UX」，却没回答「自实施如何保证结果」。若 FDE 的判断能固化进一层可复制的 harness（约束 + 审计 + 经验回流），$75K/部署的人力成本才可能摊薄成软件成本。$75K/部署/年是可长期引用的量化锚点。
 
 ### 价值度量翻转：FDE vs 传统外包
+
+> 💡 本节量级对比为方向参考（数字未经独立核验），印证 sofagent 商业化判断「卖能力不卖工时」：护城河是可约束的业务 workflow，不是人头。
 
 以「数字员工」重新定义 AI to B 的价值度量：传统外包按人·月计费，FDE 按成果·Token 计费，成本差可达三个数量级。
 
@@ -680,7 +728,7 @@ SaaStr 创始人 Jason Lemkin 算清了 FDE 模式的单位经济账：FDE 年�
 
 | 维度 | 传统外包团队 | 1 个 FDE Harness |
 |------|------|------|
-| 人力 | ~5 人 | 1 FDE（约束层四能力 + FORGE 工具链）|
+| 人力 | ~5 人 | 1 FDE（约束层五能力 + FORGE 工具链）|
 | 周期 | ~3 个月 | ~3 天 |
 | 成本 | ~50 万 | ~500 元 Token |
 
@@ -697,34 +745,29 @@ SMB 断层解释了"为什么需要中间件"，产品化四条回答"中间件�
 3. **open-core 双轨**：内核 MIT 开源（信任 + 分发 + 生态），只卖 dashboard 那层（控制台 / 合规月报 / 告警）。
 4. **能力长在代码里，不长在 prompt 里——对抗「模型吞噬一切」**：skill / prompt engineering / context engineering / 以 skill 形式做的 harness engineering，本质都是**文字形式的约束**。每次注入到模型 = 每次投喂 = 每次训练——模型会训练得越来越强，**必然吞噬文字形式的约束**（今天的 Skill 是差异化优势，明天就是模型的内置能力）。sofagent 对策：把 Skill + Harness 能力**封装进 Subagent**（代码级实现，非文字注入）+ **防投喂机制**（防止输入素材变成大模型训练材料）。生存位：细分业务 workflow 上对业务最终结果的可约束性——这个不会被模型吞噬。
 
+> **五个商业化指标（运行后考核口径）**：行业对 Agent 产品的评估正从「对话有多聪明」转向五个可审计指标——**有效任务数 · 无人工干预完成率 · 单次合格任务成本 · 人工接管率 · 业务结果**。它与 FDE 量化口径（`年节省 = 年薪 × 接管占比`，进场前算账）互补：前者考核**运行后**的数字员工表现，后者估算**进场前**的替代价值。价值证明报告（审计守护周报 / 知识库增长月报 / 无 FDE 对照季报）应按这五项组织数据——「每周完成多少可审计的业务任务」本身就是审计链的直接产出。
+
 ### 市场信号
 
 产品化方向需要市场信号验证可行性：
 
 - **FDE 岗位爆发（量化锚点）**：MIT NANDA 实验室《生成式人工智能的鸿沟》报告指出，全球企业过去三年在生成式 AI 上烧了三四百亿美元，**95% 的项目没能产生能写进财务报表的价值**——与此同时，FDE 岗位发布量一年涨了 **729%**（Indeed 2025 数据；其他机构口径 800%-1165%）。一边是 95% 的阵亡率，一边是一个岗位一年暴涨七倍多的抢手度——**模型不稀缺了，能把模型塞进客户真实业务里的人/工具，才稀缺**。sofagent 的约束层正是这一层的工程化。a16z 的判断更直白：**「软件不再只是帮工人干活，软件自己就是工人。」** Foundation Capital 估计这波浪潮瞄准的是一个 **4.6 万亿美元**量级的市场——一半是企业付给销售/营销/工程的薪酬，一半是 IT 服务与外包支出，**软件的收费对象正在从「工具预算」换成「人力预算」**。
 - **FDE-as-a-Service / Services-as-Software 被资本验证**：Anthropic 收购 Fractional AI、Accenture×Anthropic 3 万人 FDE 受训、Blackstone+H&F+Goldman 共建企业 AI 服务公司、Anthropic 接入 Palantir FedStart。
+- **FDE 赛道被十亿美金级定价（2026 事件级信号）**：资本不止验证「岗位在爆发」，开始给 FDE 两端的公司独立定价——模型端 Fireworks AI（D 轮 $15.05 亿 @ 投后 $17.5B，ARR 破 $1B，95%+ token 来自客户自训模型）验证「企业专属模型」值一个 Fireworks；部署端 Wonderful（C 轮 $5.5 亿 @ $5B，成立 20 个月、650 人 FDE 团队）验证「企业 AI 运行层 + FDE 部署服务」值一个 Wonderful；AWS 2026-06 投 $1B 组建 FDE 组织，从云厂商侧给出同一信号。三个信号同源互证：**FDE 不是过渡性岗位，是被资本市场按基础设施定价的赛道**——把 FDE 能力产品化（而非人力化）的窗口正在打开。
 - **受监管行业规模化交付**：全球 Top-3 SI 将 FDE 能力标准化、规模化交付至强监管场景——TCS×Anthropic 在 56 国为 5 万员工与受监管行业部署 Claude；DXC×Anthropic 联盟（FDE 培训认证规模化）；Anthropic×Infosys 在电信等受监管行业共建 AI Agent。三者同源互证 sofagent「FDE 通用能力化 + Services-as-Software + 受监管行业护城河」定位，且印证「卖能力不卖工时」路线在强监管客户侧已被头部 SI 验证可行。
-- **PE/VC 多企业审计仪表盘**（探索方向）：投后管理场景，所有被投企业 AI 审计数据汇总到一个面板。
-- **WB 企业版竞品对标**（商业化储备）：席位全生命周期管理 + 成本三维核算 + 统一采购合规 + 审计追踪 + 安全沙箱。
-- **🔴 Skill 廉价化危机**：豆包已能自动生成 Skill、Hermes 能给自己生成 Skill → 以 Prompt 形式出现的所有产品形态都将被模型吞噬。引擎层对策见上方第 4 点（能力封装进 Subagent + 防投喂机制）。
-- **私有化部署需求加速**：客户担心数据被用于训练（已有硬件客户代码出现在 AI 输出中）。U 盘交付模式的"龙虾 U 盘"心理价值——插入即用、拔出即停，制造"盾牌般的物理安全感"。核心卖的不是技术实现，是老板的掌控感。
+- **企业版能力对标**（产品化方向）：席位全生命周期管理 + 成本三维核算 + 统一采购合规 + 审计追踪 + 安全沙箱。
+- **Skill 供给自动化趋势**：模型自动生成 Skill 的能力已在头部平台落地（Skill 供给侧自动化）——以纯 Prompt 形态交付的产品需向「能力封装」演进（对策见上方第 4 点：能力封装进 Subagent + 防投喂机制）。
+- **私有化部署需求加速**：客户担心数据被用于训练（已有硬件客户代码出现在 AI 输出中）。U 盘交付模式的"龙虾 U 盘"心理价值——插入即用、拔出即停，物理隔离带来的掌控感是私有化采购决策的关键因素。
 
 > **待落地**：首个 MVP = FDE Harness + 一个引擎 dashboard（进度 / 合规视图）；商业计划（GTM / 定价 / 买家画像 / 竞争象限）独立私有仓维护，不进本 MIT 库。
 
-### 分层落地中型蓝海
-
-商业化切入上，我们倾向「分层落地」而非一刀切：先在中型客户（有真实 workflow、愿为成果付费、但养不起自建 AI 团队）的蓝海市场建立标杆，用 FDE 的「交付企业专有 skill」模式把单点打透，再向大型客户的标准化模块、小型客户的自助模板双向延伸。核心判断是——卖能力不卖工时，控制平面（sofagent 约束层）是底层，业务 workflow 的可约束性才是护城河。
-
-- **按结果付费成头部平台标配（2026-09 事件级信号）**：OpenAI 官宣按结果付费，Salesforce/Cognition 同期入局——「按结果收费」从创业公司尝试（Sierra 激进端 / 约翰迪尔中间形态 / 中国混合制）升级为头部平台标配。这个模式有两道硬门槛：① 可靠性（失败率直接是负债，62% 的 Agentic AI 任务失败率争议是公开辩论焦点）② 归因（审计轨迹证明「这个结果是 AI 干的且过程合规」）。对 sofagent 的意义：审计引擎的归因能力是结果付费的前提设施——约束层降低失败率等于直接抬升厂商毛利率；商业模式从席位经济转向按能力调用计费，控制平面是计费与归因的卡位。
-
 ### 中国市场的 FDE 信号（2026）
 
-§四 前文以美国 VC（Foundation Capital / a16z / SaaStr）与全球薪资调查（Perspective AI）为主，以下两条补充「中国本地」视角，验证「卖能力不卖工时 + 受监管行业护城河」在中国同样被市场与资本确认：
+§四 前文以美国 VC（Foundation Capital / a16z / SaaStr）与全球薪资调查（Perspective AI）为主，以下三条补充「中国本地」视角，验证「卖能力不卖工时 + 受监管行业护城河」在中国同样被市场、资本与政策确认：
 
-- **中国 FDE 人才画像与薪酬（2026）**：知乎《2026 中国 FDE 人才白皮书》解读给出本土 FDE 人才供给与薪酬切片，正好补上全球 Perspective AI 调查（前沿实验室资深中位 $485K / $725K）缺失的中国本地数据。对 sofagent 的意义：中国 GTM 的招聘标准与定价 thesis 需要本土人才成本结构作底——若中国 FDE 人力成本同样高企，「把 FDE 判断力固化进可复制 harness 以摊薄 $75K/部署人力成本」的命题在中国市场同样成立。
+- **中国 FDE 人才画像与薪酬（2026）**：知乎《2026 中国 FDE 人才白皮书》解读给出本土 FDE 人才供给与薪酬切片，正好补上全球 Perspective AI 调查（前沿实验室资深中位 $485K / $725K）缺失的中国本地数据。对 sofagent 的意义：中国 GTM 的招聘标准与定价 thesis 需要本土人才成本结构作底——若中国 FDE 人力成本同样高企，「把 FDE 判断固化进可复制 harness 以摊薄 $75K/部署人力成本」的命题在中国市场同样成立。
 - **中国资本市场视角**：中信证券研报《OpenAI 与 Anthropic 加速布局企业级 AI 市场》从券商研究视角研判 FDE 驱动的企业 AI 布局，是前文美国 VC 视角之外新增的「中国机构级分析」角度。印证方向：中国一/二级市场机构已开始用 FDE 框架重估企业 AI 价值，与 sofagent「企业级 AI 治理控制平面」定位的本土资本共识正在形成。
-
-> 📖 来源：[《2026中国FDE人才白皮书》解读](https://zhuanlan.zhihu.com/p/2045876225479123453)（zhuanlan.zhihu.com，2026）· [中信证券：OpenAI 与 Anthropic 加速布局企业级 AI 市场](https://finance.sina.com.cn/stock/t/2026-05-15/doc-inhxxspq8174672.shtml)（finance.sina.com.cn，2026）· 按结果付费条目：机器之心 2026-09 报道（转述级，数字未独立核验，机制层面参考）
+- **政策双信号：本体入国家级清单，FDE 入地方产业政策**：国家数据局《行业高质量数据集建设实施方案》（国数科基〔2026〕25 号）首次将知识库、知识图谱、本体三件套并列写入国家级行动清单——六专项行动中本体承担三重角色（基础设施点名、语义标注依据、AI-Ready 结构化支撑），行业高质量数据集的瓶颈被明确定位在「语义不可机读」而非数据量。同一时期，《上海市支持先进制造业转型升级三年行动方案》首次将「培育前沿部署工程师（FDE）队伍」写入地方产业政策——FDE 从企业岗位命名进入政府政策语汇；国务院发文首次明确「支持采购大模型、Agent 服务」，叠加工信部等八部门「AI+制造」专项，企业级 AI 在中国从试点期进入政府采购与规模放量阶段。对 sofagent 的意义有二：①「先约束后智能」路线获得政策层背书——政策承认没有语义地基（本体三件套）的模型应用是沙上建塔，与 sofagent 本体数据先行、先约束后执行的架构顺序同构；② 政府采购 Agent 服务必然要求合规与审计归属——「约束 Agent 行为」正从工程实践变成采购语境的隐含刚需，与「按结果付费」条目的两道硬门槛（可靠性 + 归因）在政府采购场景汇合。
 
 ### FDE 组织机制的四件事（OpenAI 实践，2026-09）
 
@@ -735,19 +778,17 @@ OpenAI FDE 负责人 Colin Jarvis 总结过四件「反人性」的事，用来�
 3. **双向收敛**：FDE 必须有两个引力源——向客户交付价值 + 向自身产品沉淀通用能力（field notes 知识库、产品化通道）。国内 FDE 常见的偏差是缺后者：交付能力沉淀在个人身上而非组织资产里。sofagent 的约束层正是「第二个引力源」的机制化——think.md 反思库与 LEDGER 承担 field notes 角色，Skill 沉淀即产品化通道。
 4. **只做难题**：对边缘场景的大单说不——凑合的预算招凑合的人交付凑合的结果，是能力的死循环。
 
-> 📖 来源：温故知新 2026-09-01（OpenAI FDE 实践解读，机制层面参考；数字为转述未独立核验；互证：FDE 田野调查、ABC Legal 案例、OpenAI Deployment Company 验收权分析 2026-08-15）
-
 ### Ontology 赛道开源竞品格局（2026-08 二次深挖）
 
-**Semantica 真身定位——「问责层」而非全栈**：国内独立评测（新浪科技/老刘说智能）拆穿其「开源 Palantir」营销话术——它本质是「AI Agent 的可审计记忆层」：双时态 + PROV-O 溯源 + 决策即节点是 Palantir 没有的独特性，但**无 Action 行动闭环**（只能看不能动手）、规模差数量级、形态是库不是操作系统。对 sofagent 的启示：**不必追全栈 DataOS——「问责层 + 行动闭环（workflow Action）」的组合恰是 sofagent 已有布局**（审计引擎 + workflow 节点），赛道分工上 sofagent 卡住了 Semantica 缺的那一半。
+**Semantica 真身定位——「问责层」而非全栈**：国内独立评测拆穿其「开源 Palantir」营销话术——它本质是「AI Agent 的可审计记忆层」：双时态 + PROV-O 溯源 + 决策即节点是 Palantir 没有的独特性，但**无 Action 行动闭环**（只能看不能动手）、规模差数量级、形态是库不是操作系统。对 sofagent 的启示：**不必追全栈 DataOS——「问责层 + 行动闭环（workflow Action）」的组合恰是 sofagent 已有布局**（审计模块 + workflow 节点），赛道分工上 sofagent 卡住了 Semantica 缺的那一半。
 
-**Palantir 范式开源复刻代表**：OpenBKN（三层架构：业务语义层/业务动力层/治理与证据链层，Go 后端，自称「首个企业级开源本体平台」）与 ontology-driven-platform（六原语闭环：Object/Link/Action/Logic/Governance/Provenance，OWL2 对齐）——两者验证「Ontology 即控制平面 + Agent 跑在 OS 上」范式已被开源复刻，但共识是**差的不是方向是厚度**（connector 广度/治理生产验证/大规模韧性三缺），且「最稀缺的不是本体库是行动闭环——多数项目停在 catalog 或 KG 底座」。这印证 sofagent 的两件不可外包资产：本体建模方法论（FDE 六引擎）+ Action 治理（审计引擎）。
+**Palantir 范式开源复刻代表**：OpenBKN（三层架构：业务语义层/业务动力层/治理与证据链层，Go 后端，自称「首个企业级开源本体平台」）与 ontology-driven-platform（六原语闭环：Object/Link/Action/Logic/Governance/Provenance，OWL2 对齐）——两者验证「Ontology 即控制平面 + Agent 跑在 OS 上」范式已被开源复刻，但共识是**差的不是方向是厚度**（connector 广度/治理生产验证/大规模韧性三缺），且「最稀缺的不是本体库是行动闭环——多数项目停在 catalog 或 KG 底座」。这印证 sofagent 的两件不可外包资产：本体建模方法论（FDE 六引擎）+ Action 治理（审计模块）。
 
 **混合检索实测参考**：Semantica 公开基准——同任务上下文 token 38k→12k（省约 60%）、HotpotQA 准确率 82.1%→89.2%——「向量召回候选 + 图谱遍历精化」两路合一的价值有实测背书。已登记为 sofagent 本体层升级候选（[v1.4.4 第七章](./changelog/v1.4/v1.4.4.md)第十四项，v1.5.0 双时态联动评估）。
 
 **Harness 工程赛道补充（首轮扫描收尾）**：AutoHarness（北卡 UNC AIMING Lab，6/8/14 步治理管线三档 + shadow mode 观察期模式）验证「决策引擎跑在模型上下文之外——提示注入无法覆盖 deny」的工程共识，其 shadow mode（只观察不阻断的灰度上线）与 sofagent「只提示不阻断」审计哲学同源；harness-kit（约束 YAML + doom loop 检测 + 上下文预算 <40% 利用率）的循环检测与 FORGE 重复率熔断同源。两者均为轻量 CLI 形态，与企业级 FDE 部署面无正面重叠。
 
-> 📖 来源：[Semantica 与 Palantir 的技术定位对比](https://www.sina.cn/news/detail/5332269013143443.html)（sina.cn，2026-08）· 老刘说智能《Palantir Ontology+Agent 开源生态盘点》（含 OpenBKN/ontology-driven-platform 评测）· [Semantica GitHub](https://github.com/semantica-agi/semantica)（MIT）· AutoHarness（UNC AIMING Lab，MIT）· [harness-kit](https://github.com/BoxiYu/harness-kit)（MIT）
+> 📖 来源：[Semantica GitHub](https://github.com/semantica-agi/semantica)（MIT）· AutoHarness（UNC AIMING Lab，MIT）· [harness-kit](https://github.com/BoxiYu/harness-kit)（MIT）
 
 ### FDE 是「全环节 AI 化」的入口（软印证）
 
@@ -755,11 +796,27 @@ DeepSeek Harness（DSH）开源后，一线从业者的通行判断是「垂直 
 
 ---
 
-## 五、行业研报印证的新增局限（2026-07）
+## 五、研报视角的边界提示
+
+> 行业研报在给出印证的同时也提示了边界，以下三条与 [LIMITATIONS](./LIMITATIONS.md) 的既有披露互证。
+
+### 约束增益与自进化系列的实验数据汇总（ARCHITECTURE/PHILOSOPHY 引用的数据锚）
+
+以下数据被 ARCHITECTURE（审计轨迹谱系 / 进化保留判据 / 蒸馏精度门槛）与 PHILOSOPHY（约束增益四源 / 进化多样性）以指针方式引用，集中于此：
+
+- **Harness-MU**（[arXiv:2606.21856](https://arxiv.org/abs/2606.21856)）：GPT 基座指令跟随 42.2%→91.2%（+48.9pt；冲突模式 30.9%→78.1%），全部访问控制攻击下隐私零泄露，效用分反升 0.28–0.39，wall-time 反降 11%。
+- **GLM-5.3-Flash 安全涌现**：约束下的编程能力即安全能力（CyberGym 84.5%）。
+- **JitRL**（[arXiv:2601.18510](https://arxiv.org/abs/2601.18510)，ICML 2026 Spotlight，NUS）：轨迹检索为经验、对数概率调制输出分布，权重不动，成本约为梯度微调的 1/30；KL 约束把策略拴在冻结基座附近。
+- **QWM**（[arXiv:2608.17163](https://arxiv.org/abs/2608.17163)，Stanford）：轨迹喂轻量世界模型做决策前树搜索；「Q 搜索（评估状态+动作）显著强于 V 搜索（只评估状态）」。
+- **HarnessDev**（[arXiv:2609.01437](https://arxiv.org/abs/2609.01437)，字节 Seed）：同一 GPT-5 权重仅换 harness，Terminal-Bench 35.2%→49.6%；反馈集 +13.9、held-out 仅剩 +1.43——保留判定须用外部信号。
+- **Aspire**（[arXiv:2608.31111](https://arxiv.org/abs/2608.31111)）：24 个 run 仅 1/12 超基线，继续训练会抹掉此前的改进。
+- **ES vs RL 多样性**（[arXiv:2608.12679](https://arxiv.org/abs/2608.12679)，Cognizant AI Lab × UT Austin）：MATH500/Olympiad Bench 上 ES 相比 RL checkpoint 减少回退、增加前进，失败时保留更高答案熵。
+- **S³Gym**（[arXiv:2608.31100](https://arxiv.org/abs/2608.31100)，字节 Seed）：自评判与环境真值一致率 0.88 但价值估计误差同样 0.88（NMAE），评判准确度与下一步改进几乎零相关（r=-0.23）；蒸馏正例 GPT-5.5/Trust ΔNABA +66.9、反例 GPT-4o/Snake ΔNABA -22.0。
+- **SkillZip**（[arXiv:2608.11079](https://arxiv.org/abs/2608.11079)，阿里×浙大×杜克）：第 1 轮起压缩的技能长度钉在 1.6-1.9 倍，第 8 轮才清理的涨到 2.6 倍追不回。
 
 ### 不要一上来就 Agent 自动闭环
 
-研报的「分阶段风险收敛」警示：存量系统之上的语义接管不可跳步，高风险 Action 必须 human-in-the-loop。这印证 sofagent 的现状——审计 A14 仍是事后审计（非运行时阻断，见 [LIMITATIONS §五](./LIMITATIONS.md#五审计与工程局限)）。五阶段的完整对照（只读对象层 → 统一状态关系 → 挂载 Method → 开放低风险 Action → 高风险 Action）与动态 Agent 组织印证见 [ROADMAP · 行业印证](./ROADMAP.md#行业印证)。
+研报的「分阶段风险收敛」警示：存量系统之上的语义接管不可跳步，高风险 Action 必须 human-in-the-loop。这印证 sofagent 的现状——审计 A14 仍是事后审计（非运行时阻断，见 [LIMITATIONS §四](./LIMITATIONS.md#四成熟度与测试局限)）。五阶段的完整对照（只读对象层 → 统一状态关系 → 挂载 Method → 开放低风险 Action → 高风险 Action）与动态 Agent 组织印证见 [ROADMAP · 行业印证](./ROADMAP.md#行业印证)。
 
 ### 模糊提示下确定性骨架不可替代
 

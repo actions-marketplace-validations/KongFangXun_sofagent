@@ -1,92 +1,61 @@
-// ============================================================
-// cordis-plugin-fde · DSH 反向插件（v1.4.0 交付五）
-// ============================================================
-// 每个插件干一件事、可独立安装渐进采用——只引对应 @public API 子集。
-// seam 挂载：plugin
-// 版本同步：sofagent v1.4.3 → 各 plugin v0.1.0（DSH Cordis 协议 breaking change 时 bump major）
+// cordis-plugin-sofagent-fde · DSH 反向插件（v1.5.0 P2 合并批：并入 -ontology 与 -commons 面）
+// seam 挂载：non-seam:tool-set    # 语义：非宿主事件接入（tool 集）——本体 / FDE / 公地三域工具按需调用
+// 清单生成源 = engine/dsh-plugins/plugins.json（生成 package.json 的 description/sofagent/dsh 段与 cordis.patch.yml）；本文件的 seam 字面量由生成器 --check 与之对账。
+//
+// v1.5.0 P2 合并说明（F2）：
+//   原三薄插件 -ontology（本体查询）/ -commons（能力公地）/ -fde（方法论六 tool）同为
+//   non-seam:tool-set 形态、桥接同一 @sofagent 能力族，拆三包徒增清单与挂载成本。
+//   本插件为合并后的**厚插件**：
+//   · 桥接面（bridges 三包，F1② 多包形态——部分可用即部分成功）：
+//       @sofagent/orchestrator publishCapability（能力公地五环——🔴 P2 修复：原 -commons
+//       错桥 @sofagent/audit::loadConfig，公地真 API 在 orchestrator 公共导出面）
+//       @sofagent/ontology generateOntologyView（本体数据视图——原 -ontology 桥接原样保留）
+//       @sofagent/core restoreSnapshot（core 兜底——原 -rollback 同族桥，作厚插件的能力回溯面）
+//   · 工具面（toolsRoles = ['fde','commons'] 并集 + featureGates 三档分域）：
+//       ontology 档 = entity/concept/知识检索 12 工具；fde 档 = fde_* 七引擎；
+//       commons 档 = commons_* 公地五环。三档默认全开，settings 关档即不注册该域工具。
+//   · 未设档的 fde 角色工具（think/compose/workflow/agent 族——方法论支撑面）常开：
+//       它们不属于「本体/FDE/公地」任一业务域，是三域共用的执行底座。
 
-/** 插件元数据（DSH profile/注册表消费） */
-export const pluginMeta = {
-  id: 'cordis-plugin-sofagent-fde',
-  version: '0.1.0',
-  description: 'FDE 进场方法论桥接——本体数据视图生成（fde_* 六 tool 为规划中形态）',
-  seam: 'plugin',
-} as const;
+import { createSofagentPlugin } from '../../plugin-kit/dist/index.js';
 
-/** 依赖的 sofagent 能力说明（供 DSH skill 引导链展示） */
-export const capability = 'FDE 进场方法论（梳理/判定/量化/派生/蒸馏/部署）';
-
-/**
- * 调用对应的 sofagent @public API（懒加载 + 降级不抛）。
- * 包装层职责：把 sofagent 能力暴露成 DSH 可调用的插件函数。
- */
-export async function invoke<T = unknown>(...args: unknown[]): Promise<T> {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const m = await import('@sofagent/ontology');
-    const fn = m.generateOntologyView;
-    if (typeof fn !== 'function') {
-      throw new Error('generateOntologyView 不是可调用函数（@sofagent/ontology 公共 API）');
-    }
-    return await (fn as (...a: unknown[]) => unknown)(...args) as T;
-  } catch (err) {
-    // 依赖未装/能力不可用时降级返回错误信息（不抛——插件可独立安装，缺依赖时优雅提示）
-    throw new Error('cordis-plugin-fde 依赖 @sofagent/ontology 不可用：' + (err instanceof Error ? err.message : String(err)));
-  }
-}
-
-
-/**
- * DSH Cordis 插件契约（v1.4.0 品牌化）：默认导出 apply(ctx) 把能力注册为 ctx 服务（sofagent.fde）。
- * 插件被挂进 DSH profile（dsh.bundle + cordis.patch.yml）后由 Cordis loader 调用。
- */
-export default {
-  apply(ctx: unknown): void {
-    const c = ctx as {
-      provide?: (name: string, service: Record<string, unknown>) => unknown;
-      [key: string]: unknown;
-    };
-    const service = { invoke, meta: pluginMeta, capability };
-    if (typeof c.provide === 'function') {
-      c.provide('sofagent.fde', service);
-    } else {
-      const cur = (c.sofagent ?? {}) as Record<string, unknown>;
-      c.sofagent = { ...cur, fde: service };
-    }
-    // v1.4.0 批量：注册为 dynamicCordisRunner 动态插件（Plugin list 可见加载状态）
-    try {
-      const runner = c.dynamicCordisRunner as { define?: (r: Record<string, unknown>) => unknown } | undefined;
-      if (runner && typeof runner.define === 'function') {
-        const res = runner.define({
-          name: 'sofagent-fde',
-          purpose: 'FDE 进场方法论桥接——本体数据视图生成（品牌色 #16B8F3）',
-          code: {
-            host: [
-              'module.exports = {',
-              '  async main(ctx, args) {',
-              '    return { ok: true, source: "sofagent-fde", message: "FDE 进场方法论桥接——本体数据视图生成" };',
-              '  }',
-              '};',
-            ].join('\n'),
-          },
-          plugin: { kind: 'new', idPrefix: 'soga' },
-          sessionId: 'profile-boot',
-        });
-        console.error('[sofagent-fde] dynamicCordisRunner.define 成功:', JSON.stringify(res));
-      }
-    } catch (err) {
-      console.error('[sofagent-fde] define 失败:', err instanceof Error ? err.message : String(err));
-    }
-    // v1.4.0 批量：注册 settings namespace（Plugin configuration 数据层可见）
-    try {
-      const settings = c.settings as { register?: (ns: string, schema: unknown, opts?: Record<string, unknown>) => unknown } | undefined;
-      if (settings?.register) {
-        const s = require('@deepseek-ai/schemastery') as { object: (s: Record<string, unknown>) => unknown; boolean: () => unknown; string: () => unknown };
-        settings.register('sofagent-fde', s.object({ enabled: s.boolean(), brandColor: s.string() }), { base: { enabled: true, brandColor: '#16B8F3' } });
-        console.error('[sofagent-fde] settings.register 成功');
-      }
-    } catch (err) {
-      console.error('[sofagent-fde] settings.register 失败:', err instanceof Error ? err.message : String(err));
-    }
+/** 插件声明（本文件唯一手写处；适配层红线由 kit 承担：ctx 鸭子类型 + 宿主 API 缺席降级不抛） */
+const kit = createSofagentPlugin(
+  {
+    id: 'cordis-plugin-sofagent-fde',
+    seam: 'non-seam:tool-set',
+    seamSemantics: '非宿主事件接入（tool 集）——本体 / FDE / 公地三域工具按需调用（v1.4.9 P2 合并原 -ontology 与 -commons 面）',
+    capability: 'FDE 进场与能力流通（本体底座 + 方法论引擎 + 能力公地五环）',
+    bridgePkg: '@sofagent/orchestrator',
+    bridgeApi: 'publishCapability',
+    bridges: [
+      { pkg: '@sofagent/orchestrator', api: 'publishCapability' },
+      { pkg: '@sofagent/ontology', api: 'generateOntologyView' },
+      { pkg: '@sofagent/core', api: 'restoreSnapshot' },
+    ],
+    toolsRoles: ['fde', 'commons'],
+    featureGates: {
+      ontology: [
+        'read_entity', 'read_concept', 'list_entities', 'list_concepts',
+        'create_entity', 'create_concept', 'update_entity', 'delete_entity',
+        'delete_concept', 'validate_ontology', 'ontology_import', 'search_knowledge',
+      ],
+      fde: [
+        'fde_compose', 'fde_interview', 'fde_classify', 'fde_quantify',
+        'fde_derive', 'fde_distill', 'fde_deploy',
+      ],
+      commons: [
+        'commons_publish', 'commons_search', 'commons_invoke',
+        'commons_rate', 'commons_retire', 'commons_harvest_rule',
+      ],
+    },
+    description: 'FDE 进场与能力流通——把企业业务梳理成 AI 能力，并让这些能力在企业内被发布、发现、调用、评价、退役',
   },
-};
+  require('../package.json') as { version?: string },
+);
+
+export const pluginMeta = kit.pluginMeta; // 插件元数据（DSH profile/注册表消费）
+export const capability = kit.capability; // 依赖的 sofagent 能力说明（DSH skill 引导链展示）
+export const invoke = kit.invoke; // 桥接 @sofagent/* 公共 API（懒加载 + 多包部分可用 + 降级不抛）
+export const resolveBridges = kit.resolveBridges; // 桥接解析报告（resolved/failed 双清单——降级可见的自省面）
+export default kit.plugin; // DSH Cordis 插件契约（apply 三段式由 kit 提供）

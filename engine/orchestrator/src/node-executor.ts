@@ -1,5 +1,5 @@
 // ============================================================
-// node-executor.ts · 企业节点执行器（v1.4.3 功能④ 激活链 Phase 3 前半）
+// node-executor.ts · 企业节点执行器（v1.5.0 功能④ 激活链 Phase 3 前半）
 //
 // 包装 createReactAgent + 企业 Agent 配置，为 dag-runner 的
 // run-enterprise 模式提供逐节点执行能力。
@@ -44,6 +44,14 @@ export interface NodeExecutionResult {
   output: string;
   /** 该节点是否成功 */
   success: boolean;
+  /**
+   * v1.4.5 T6：是否降级执行（LLM 不可用时的模拟输出）。
+   *
+   * 原问题：降级路径返回 success:true 但无 degraded 字段——上层把
+   * 「LLM 缺席的模拟成功」当真成功消费，节点级静默降级不可观测。
+   * 显式声明后调用方可区分真成功 vs 降级成功（dag-runner / CLI 打 WARN）。
+   */
+  degraded: boolean;
   /** 错误信息（失败时） */
   error?: string;
   /** 写入的 entity ID 列表（审计用） */
@@ -140,6 +148,7 @@ export async function executeNode(
       agentName: ctx.agentName,
       output: '',
       success: false,
+      degraded: false,
       error: (err as Error).message,
       entitiesWritten,
       durationMs: Date.now() - startTime,
@@ -163,7 +172,7 @@ export async function executeNode(
   let buildPrompt = deps?.buildSystemPrompt;
   if (!buildPrompt) {
     try {
-      const harness = (await import('@sofagent/harness')) as { buildConstrainedSystemPrompt?: unknown };
+      const harness = (await import('@sofagent/inject')) as { buildConstrainedSystemPrompt?: unknown };
       const harnessFn = harness.buildConstrainedSystemPrompt as ((projectRoot: string) => string) | null;
       if (harnessFn) {
         buildPrompt = (projectRoot: string, agentConfig: SubAgentConfig) => {
@@ -235,10 +244,12 @@ export async function executeNode(
       } catch {
         // entity 写入失败不阻塞
       }
+      // v1.4.5 T6：降级显式声明——success:true + degraded:true（上层可观测）
       return {
         agentName: ctx.agentName,
         output,
         success: true,
+        degraded: true,
         entitiesWritten,
         durationMs: Date.now() - startTime,
       };
@@ -275,6 +286,7 @@ export async function executeNode(
       agentName: ctx.agentName,
       output,
       success: true,
+      degraded: false,
       entitiesWritten,
       durationMs: Date.now() - startTime,
     };
@@ -283,6 +295,7 @@ export async function executeNode(
       agentName: ctx.agentName,
       output: '',
       success: false,
+      degraded: false,
       error: err instanceof Error ? err.message : String(err),
       entitiesWritten,
       durationMs: Date.now() - startTime,

@@ -3,7 +3,7 @@ name: release-gate-loop
 description: 发版前自动验证闸门——V 验证 + F 修复循环（verdict FAIL → F 改代码 → 跑 audit → V 重验），最大 3 轮直到 PASS。纯只读验证 + 最小修复。
 emoji: 🚪
 color: "#F59E0B"
-version: 1.4.3
+version: 1.5.0
 ---
 
 # release-gate-loop · 发版闸门循环定义
@@ -39,7 +39,7 @@ V 由 **Node driver**（`FORGE/src/release-gate-driver.mjs`）驱动——每个
 - 主 session（审查/决策 session）：三查 → 修复环境问题 → 产出「交接 prompt」交给用户 → 用户在新 session 粘贴执行 → 等新 session 回报 verdict → 零信任复验。主 session 全程不 spawn driver。
 - 执行 session（用户新开）：粘贴交接 prompt → 按下方「Session 监控协议」启动 driver 并轮询到 verdict → 回报六项终态数据。
 
-**交接 prompt 必含要素**（主 session 生成，自包含）：目标版本号、启动 commit（预期干净树）、启动命令行（含 source env.local）、监控协议要点（120s 轮询 / heartbeat 死亡检测 / 已知降级信号不处理清单）、verdict 产出后的六项回报清单（verdict+stopReason / 四步产物存在性 / usage token 总量 / verdict.md 头 50 行 / status.json 全文 / driver 日志尾 30 行）、异常处置（启动即崩回报不修 / 卡死 15 分钟查 pid）。**交付形式**：直接在对话中输出可复制的 prompt 文本块，禁止落盘成文件——用户复制粘贴到新 session 执行（2026-08-30 用户拍板）。
+**交接 prompt 必含要素**（主 session 生成，自包含）：目标版本号、启动 commit（预期干净树）、启动命令行（含 source ~/.sofagent/env.local）、监控协议要点（120s 轮询 / heartbeat 死亡检测 / 已知降级信号不处理清单）、verdict 产出后的六项回报清单（verdict+stopReason / 四步产物存在性 / usage token 总量 / verdict.md 头 50 行 / status.json 全文 / driver 日志尾 30 行）、异常处置（启动即崩回报不修 / 卡死 15 分钟查 pid）。**交付形式**：直接在对话中输出可复制的 prompt 文本块，禁止落盘成文件——用户复制粘贴到新 session 执行（2026-08-30 用户拍板）。
 
 ## Session 监控协议（CRITICAL · 适用于执行 session）
 
@@ -70,7 +70,7 @@ V 由 **Node driver**（`FORGE/src/release-gate-driver.mjs`）驱动——每个
 
    # sandbox 环境（acceptance-test.sh 预跑会被 kill 时）：
    # 先手动预跑到 /tmp（driver 启动时自动复制到 runDir）：
-   bash FORGE/playbook/acceptance-test.sh > /tmp/acceptance-raw.log 2>&1
+   bash playbook/acceptance-test.sh > /tmp/acceptance-raw.log 2>&1
    # 再加 --skip-acceptance 启动：
    node FORGE/src/release-gate-driver.mjs --target <版本号> --skip-acceptance
 
@@ -85,14 +85,21 @@ V 由 **Node driver**（`FORGE/src/release-gate-driver.mjs`）驱动——每个
    # 🔥 判断层瘦身模式（阶段五 SOP 默认）：
    # 脚本层（acceptance-test.sh + check-version/check-docs/锚点/check-review-system/check-tool-health）
    # 由 session 直跑（零 LLM），全绿后 driver 只跑判断层四步——一次启动直达：
-   node FORGE/src/release-gate-driver.mjs --judgment-only --target <版本号>
+   source ~/.sofagent/env.local && node FORGE/src/release-gate-driver.mjs --judgment-only --target <版本号>
+   # 🔴 env 路径：真实 key 在 **~/.sofagent/env.local**（仓库外，永不进 git）——不是 FORGE/env.local
+   #    （仓内只有 env.local.template 模板）。SOFAGENT_LLM_V/F 为角色占位（非空即过 preflight，
+   #    真模型由 FORGE/models/profile.mjs 决定）；厂商 key（如 GLM_API_KEY）亦从该文件加载。
    # 依据：全流程实测 30.7 万 token 中 61% 花在 acceptance 12 分片 LLM 复核（复核脚本
    # exit 0 的确定性结果，增值≈0）；判断层四步约 9 万 token / 20 分钟，盲审独立性保留在
    # 有判断空间的 regression 语义审查 + 终裁。
    # v1.3.8 交付七：--judgment-only 替代原「--step 四步手工编排」——一次进程串行四步，
    # 无需外层脚本逐步调用。旧 --step 单步模式仍可用于单步调试。
-   # verdict=FAIL 时循环即停（v1.3.8 起 F 修复链默认关闭，无 f-* 产物）；
-   # 修复责任回阶段四主 session。显式 --auto-fix 才进修复链（最多 3 轮）。
+   # verdict=FAIL 时**自动进 F 修复链**（默认启用，无需人工介入）——f-diagnose → f-fix →
+   # f-audit → 下一轮 V，最多 MAX_FIX_ROUNDS 轮，loop 一次跑到底直至收敛。
+   # 🔴 停手边界（唯一需要主 session 介入的两类）：① 修复涉及**对外动作**（版本 bump / git tag /
+   # npm publish）——按对外动作铁律须动作前显式请示；② 需**人裁定口径**（判定标准/范围有分歧）。
+   # 除这两类外一切内部修复（改代码 / 改文档 / 修检查器 / 补场景）由 F 链自主完成，不得停手。
+   # 显式 --no-auto-fix 可关闭自动修复（FAIL 即 loop-end，修复责任回主 session）。
 
    # 全流程模式的 acceptance 抽查化（v1.3.8 交付七）——只审本版新增场景区间：
    node FORGE/src/release-gate-driver.mjs --target <版本号> --acceptance-range S294-S310

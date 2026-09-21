@@ -11,6 +11,8 @@
 #   ⑤ CI workflows 覆盖的脚本/路径引用有效
 #   ⑥ tools/*.sh 新变量头部初始化守卫（set -u 炸弹防复发——
 #      v1.3.7 run-28 同期 fresh-eyes 实查 test-count.sh FLAKY_PKGS 实案）
+#   ⑦ tools/ README 收录对账（每个 git 追踪的脚本文件名须被
+#      tools/README.md 提到——漂移阻断，v1.4.8 第2批由观察期 WARN 升级 FAIL）
 #
 # 设计纪律（与 check-review-system.sh 一致）：
 #   - 清单核对器，不判断好坏；0=全绿 / 1=有 FAIL / 2=脚本自身错误
@@ -42,14 +44,16 @@ WARN=0
 
 ok()   { [ "$QUIET" = false ] && echo -e "  ${GREEN}✅${NC} $1"; PASS=$((PASS + 1)); return 0; }
 bad()  { echo -e "  ${RED}❌${NC} $1"; [ -n "${2:-}" ] && echo -e "    $2"; FAIL=$((FAIL + 1)); return 0; }
-warn() { [ "$QUIET" = false ] && echo -e "  ${YELLOW}⚠️${NC} $1"; WARN=$((WARN + 1)); return 0; }
+# warn 第二参数与 bad 同款：告警必须**列出可操作清单**（门禁报警却不给信息 =
+# 把排查成本全留给人工；v1.4.8 第2批修：此前 warn 只打印第一参数，明细被静默丢弃）
+warn() { [ "$QUIET" = false ] && echo -e "  ${YELLOW}⚠️${NC} $1"; [ -n "${2:-}" ] && [ "$QUIET" = false ] && echo -e "    $2"; WARN=$((WARN + 1)); return 0; }
 
 # ============================================================
 # ① 审查文档路径活性
 # ============================================================
 [ "$QUIET" = false ] && echo -e "\n${BOLD}${CYAN}── ① 审查文档路径活性 ──${NC}"
 
-DOC_SOURCES="FORGE/playbook/regression-checklist.md FORGE/playbook/fresh-eyes-review.md docs/changelog/releasing/07-tool-health.md docs/changelog/releasing/04-review-system.md"
+DOC_SOURCES="playbook/regression-checklist.md playbook/fresh-eyes-review.md docs/changelog/releasing/07-tool-health.md docs/changelog/releasing/04-review-system.md"
 
 DEAD_LINKS=0
 DEAD_LIST=""
@@ -59,10 +63,10 @@ for _doc in $DOC_SOURCES; do
   while IFS= read -r _p; do
     [ -z "$_p" ] && continue
     # 跳过通配/参数化/明显非路径
-    echo "$_p" | grep -qE '[*?{}<>\$]|^/' && continue
+    grep -qE '[*?{}<>\$]|^/' <<< "$_p" && continue
     # 跳过「历史教训正文」里的不存在路径示例——上下文带「不存在/误指向/断链」字样的引用是
     # 在讲这个路径曾经错了，不是活引用（fresh-eyes-review 教训段大量此形态）
-    if [ "$_doc" = "FORGE/playbook/fresh-eyes-review.md" ]; then
+    if [ "$_doc" = "playbook/fresh-eyes-review.md" ]; then
       _ctx=$(grep -B1 -A1 "\`$_p\`" "$_doc" | grep -cE '不存在|误指向|断链|不存在的|已废弃|指向不' || true)
       [ "${_ctx:-0}" -gt 0 ] && continue
     fi
@@ -133,7 +137,7 @@ EOF
 BUMP_RANGE=$(sed -n '/^# 替换范围/,/^# 不处理/p' "$BUMP" | grep -oE '[0-9]+\. .+' || true)
 STRUCT_GAP=0
 while IFS= read -r _line; do
-  echo "$_line" | grep -qE '^\s*$' && continue
+  grep -qE '^\s*$' <<< "$_line" && continue
   # 提取该替换步骤的核心关键词（如 ".ts 文件"→"ts"、"README badge"→"README"）
   _kw=$(echo "$_line" | grep -oE '(README|SKILL|package\.json|index\.ts|MD 文件|\.ts|\.sh|\.ps1)' | head -1 || echo "")
   [ -z "$_kw" ] && continue
@@ -179,13 +183,13 @@ for _yml in "$CI_DIR"/*.yml "$CI_DIR"/*.yaml; do
   [ -f "$_yml" ] || continue
   while IFS= read -r _p; do
     [ -z "$_p" ] && continue
-    echo "$_p" | grep -qE '[*?{<>\$]|^\$|^https?:' && continue
+    grep -qE '[*?{<>\$]|^\$|^https?:' <<< "$_p" && continue
     [ -e "$_p" ] || { CI_DEAD=$((CI_DEAD + 1)); CI_LIST="${CI_LIST}  $_yml → $_p"$'\n'; }
   done <<EOF
 $(grep -oE '(tools|engine|FORGE|docs)/[a-zA-Z0-9_./-]+(\*[a-zA-Z0-9_./-]*)?' "$_yml" | grep -vE '\$\{' | while IFS= read -r _raw; do
   # glob 前缀引用（daemon* / lib/daemon*）是 CI paths 过滤器合法形态——
   # 验证「* 前的父目录」存在且前缀能匹配到至少一个文件；非 glob 原样通过
-  echo "$_raw" | grep -q '\*' || { echo "$_raw"; continue; }
+  grep -q '\*' <<< "$_raw" || { echo "$_raw"; continue; }
   _prefix="${_raw%%\**}"
   _dir="${_prefix%/*}"
   if [ -d "$_dir" ]; then
@@ -222,7 +226,7 @@ for _sh in $(find tools -name '*.sh' -type f | sort); do
     _var=$(echo "$_assign" | grep -oE '[A-Za-z_][A-Za-z_0-9]*="\$\{[A-Za-z_][A-Za-z_0-9]*\}' | grep -oE '^[A-Za-z_][A-Za-z_0-9]*' || echo "")
     [ -z "$_var" ] && continue
     # 自引用确认：赋值行内出现 "${VAR}（任意后缀）——用 -F 匹配 "${VAR 前缀
-    echo "$_assign" | grep -qF '"${'"${_var}"'}' || continue
+    grep -qF '"${'"${_var}"'}' <<< "$_assign" || continue
     # 在该赋值行之前找初始化：VAR= 赋值行（含缩进/local/declare 前缀）或 ${VAR:= / ${VAR:- 兜底
     _init=$(head -n $((_lineno - 1)) "$_sh" | grep -cE "^[[:space:]]*(local |declare [-a-zA-Z]+ )?${_var}=|\${${_var}:-|\${${_var}:=" || true)
     if [ "${_init:-0}" -eq 0 ]; then
@@ -237,6 +241,121 @@ if [ "$GUARD_VIOL" -eq 0 ]; then
   ok "set -u 脚本无「未初始化自引用」炸弹"
 else
   bad "发现 $GUARD_VIOL 处未初始化自引用（set -u 炸弹模式）" "$GUARD_LIST"
+fi
+
+# ── ⑥b 兜底链引用未初始化变量守卫（发版 CI 实案：config.sh
+#    SOFAGENT_X="${SOFAGENT_X:-$SOFA_X}" 在 SOFA_* 赋值前执行——set -u 下
+#    $SOFA_X unbound 直接崩，daemon 双 CI 红。自引用守卫抓不到「VAR 引用
+#    OTHER」形态，此守卫专抓：「${A:-$B}」且 B 无自身兜底（${B:- / ${B:=
+#    均合法）且 B 此前无显式初始化。若 B 由调用方环境保证，行尾加
+#    「# env-guaranteed」注释豁免。扫描范围含 engine/scripts/（发布链脚本）。──
+
+GUARD2_VIOL=0
+GUARD2_LIST=""
+for _sh in $(find tools engine/scripts -name '*.sh' -type f 2>/dev/null | sort); do
+  [ -f "$_sh" ] || continue
+  grep -qE '^\s*set\s+-.*u' "$_sh" || continue
+  while IFS= read -r _hit; do
+    _lineno=$(echo "$_hit" | grep -oE '^[0-9]+' || echo "0")
+    [ "$_lineno" = "0" ] && continue
+    _body=$(echo "$_hit" | sed 's/^[0-9]*://')
+    grep -qF 'env-guaranteed' <<< "$_body" && continue
+    # 提取「:-$B}」形态的裸兜底引用（B 直接闭合、无 ${B:- 二层兜底）
+    _other=$(echo "$_body" | grep -oE '\$\{[A-Za-z_][A-Za-z_0-9]*:-\$[A-Za-z_][A-Za-z_0-9]*\}' | sed 's/^.*:-\$//;s/}$//' | head -1)
+    [ -z "$_other" ] && continue
+    # B 在此行之前有显式初始化（B= 赋值 / ${B:= / ${B:- 自兜底）即合法
+    _init2=$(head -n $((_lineno - 1)) "$_sh" | grep -cE "^[[:space:]]*(local |declare [-a-zA-Z]+ |export )?${_other}=|\${${_other}:-|\${${_other}:=" || true)
+    if [ "${_init2:-0}" -eq 0 ]; then
+      GUARD2_VIOL=$((GUARD2_VIOL + 1))
+      GUARD2_LIST="${GUARD2_LIST}  $_sh:$_lineno → 兜底链引用未初始化 \$${_other}"$'\n'
+    fi
+  done <<EOF
+$(grep -nE '\$\{[A-Za-z_][A-Za-z_0-9]*:-\$[A-Za-z_][A-Za-z_0-9]*\}' "$_sh" | grep -vE '^[0-9]+:\s*#' || true)
+EOF
+done
+if [ "$GUARD2_VIOL" -eq 0 ]; then
+  ok "兜底链守卫：无「${VAR:-\$OTHER} 引用未初始化」形态"
+else
+  bad "发现 $GUARD2_VIOL 处兜底链引用未初始化（set -u 炸弹第二形态）" "$GUARD2_LIST"
+fi
+
+# ============================================================
+# ⑦ tools/ README 收录对账（v1.4.8 第2批：由「不阻断警告」升级为阻断）
+# ============================================================
+# 原理：tools/ 下每个 git 追踪的脚本/数据文件（.sh/.mjs/.json/.html），
+# tools/README.md 必须提到它的文件名——README 未收录 = 漂移（新脚本
+# 落地没登记，或脚本搬家 README 没跟）。
+# v1.4.8 第2批升级阻断：观察期内 3 个文件长期漂移无人修（dependency-direction.sh /
+# check-silent-catch.mjs / silent-catch-baseline.json），「只提示」= 无人处理。
+# 升级前已完成前置：① 3 个文件全部补录进 tools/README.md ② 复跑确认 exit 0。
+# 告警输出必须列出**具体未收录文件路径**（bad 第二参数）——只说「有 3 个未收录」
+# 等于把排查成本全留给人工。
+[ "$QUIET" = false ] && echo -e "\n${BOLD}${CYAN}── ⑦ README 收录对账 ──${NC}"
+
+README_MD="tools/README.md"
+[ -f "$README_MD" ] || { echo "❌ 缺 tools/README.md" >&2; exit 2; }
+
+UNLISTED=0
+UNLISTED_LIST=""
+while IFS= read -r _tf; do
+  [ -z "$_tf" ] && continue
+  _base=$(basename "$_tf")
+  # README 提到该文件名即视为已收录（表格条目/正文引用均可）
+  grep -qF "$_base" "$README_MD" || {
+    UNLISTED=$((UNLISTED + 1))
+    UNLISTED_LIST="${UNLISTED_LIST}  $_tf"$'\n'
+  }
+done <<EOF
+$(git ls-files 'tools/*.sh' 'tools/*.mjs' 'tools/*.json' 'tools/*.html' 'tools/*/*.sh' 'tools/*/*.mjs' 'tools/*/*.json' 'tools/*/*.html' | grep -v 'README.md' | grep -v 'audit-questionnaires/' || true)
+EOF
+if [ "$UNLISTED" -eq 0 ]; then
+  ok "tools/ 全部脚本均被 tools/README.md 收录"
+else
+  bad "有 $UNLISTED 个文件未收录进 tools/README.md（漂移——补录后方可绿）" "$UNLISTED_LIST"
+fi
+
+# ============================================================
+# ⑧ 防线失明自检（故障注入 fail-loud——守卫的守卫补强）
+# ============================================================
+# 原理：守卫依赖的检测引擎（perl 等）故障时，守卫必须报红而非把空输出
+# 当「零违规」产出假绿——「0 处违规但根本没在看」比没有防线更坏。
+# 本步调度专用门禁：PATH 劫持假引擎实测守卫 fail-loud 行为，详见脚本头。
+# 🔴 v1.4.8 第2批修：本段原先调用未定义的 `fail`（只有 bad）——失败分支一旦走到，
+#    只打印 "fail: command not found"，FAIL 计数不增 → exit 0 假绿。
+#    「防线失明自检」自己在失败路径上失明，正好是它要防的那类 bug。
+if [ -f tools/check/check-guard-fail-loud.sh ]; then
+  if bash tools/check/check-guard-fail-loud.sh > /dev/null 2>&1; then
+    ok "防线失明自检：引擎故障注入下守卫全部报红（fail-loud）"
+  else
+    bad "防线失明自检未过——存在引擎故障下仍 exit 0 的守卫（失明不自知）"
+  fi
+else
+  bad "tools/check/check-guard-fail-loud.sh 缺失（失明自检门禁未落地）"
+fi
+
+# ============================================================
+# ⑨ mjs 注释可执行反引号守卫（bash 误跑防线）
+# ============================================================
+# 原理：.mjs/.js 被 bash 误执行时（手滑 bash tools/check/x.mjs / 调度器误派），
+# 注释里的反引号串会被 bash 当**命令替换真执行**——实锤：check-prepush-checklist.mjs
+# 头部注释 '`tools/release/pre-push-check.sh`' 曾让 bash 完整跑了一遍 pre-push
+# 防线（数分钟），且 macOS 下 .mjs 无执行位报 Permission denied、Linux 或带执行位
+# 时则直接以 node 语义执行。判定器独立成 check-mjs-comment-backtick.mjs（本段
+# heredoc 内联 node -e 会反引号转义地狱，独立脚本可自测可复用）。
+if [ "$QUIET" = false ]; then echo -e "\n${BOLD}${CYAN}── ⑨ mjs 注释可执行反引号守卫（bash 误跑防线） ──${NC}"; fi
+# 判定器自带 ✅/❌ 行级输出（违规明细走 stderr），此处按退出码分诊：
+# exit 0 绿 / 1 有违规（明细已由判定器打出）/ 2 引擎故障（fail-loud 拒绝假绿）
+if _bt_out=$(node tools/check/check-mjs-comment-backtick.mjs 2>&1); then
+  [ "$QUIET" = false ] && echo "$_bt_out" | sed 's/^  //'
+  PASS=$((PASS + 1))
+else
+  _bt_rc=$?
+  echo "$_bt_out"
+  if [ "$_bt_rc" -eq 2 ]; then
+    bad "⑨ 反引号守卫引擎故障（node 扫描失败）——fail-loud 拒绝假绿"
+  else
+    bad "⑨ 发现注释内可执行反引号串（bash 误跑会真执行——改单引号，明细见上）"
+  fi
 fi
 
 # ============================================================

@@ -1,6 +1,8 @@
 # GitHub Action：PR 提交时自动审计
 
 > sofagent-audit 作为 GitHub Action，在每个 PR 上自动检查：AI 有没有跳过测试、有没有乱改不相关的文件、有没有引入安全风险。
+>
+> v1.5.0 · 2026-09-19（UTC）· ✅ 已发版 · 孔放勋
 
 ## 30 秒接入
 
@@ -19,12 +21,12 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
 
       - name: 安装 Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: '22'
 
@@ -47,7 +49,7 @@ jobs:
 
 ## 它检查什么
 
-sofagent-audit 检查 24 条规则（A1-A11、A14-A23 + E1-E2/E4），覆盖安全、边界、追溯：
+sofagent-audit 检查 24 条规则（17 默认 + 7 扩展：A1-A11、A14-A23 + E1/E2/E4），覆盖安全、边界、追溯。下表为**默认规则**，扩展规则与完整清单见 [SECURITY](../../SECURITY.md)：
 
 | 规则 | 内容 | 级别 |
 |------|------|:--:|
@@ -82,7 +84,7 @@ audit:
   lowRiskPatterns: [package-lock.json, yarn.lock, "*.log", "docs/**"]
   testPatterns: [npm test, npm run test, npm run build, pytest, go test]
   carefulModifyThreshold: 0.2  # A3 触发阈值
-  extendedRulesEnabled: false   # E1-E4 扩展规则
+  extendedRulesEnabled: false   # E1/E2/E4 扩展规则
 ```
 
 > 三级 fallback：`${cwd}/.sofagent/config.yml` → `~/.sofagent/config.yml` → 内置默认值。`--ci` = `--silent`（CI 友好输出），需零容忍时加 `--strict`。
@@ -94,7 +96,7 @@ audit:
 | 问题 | 解决 |
 |------|------|
 | 跳过某 PR | commit message 加 `[skip audit]` |
-| "not found" | 确认 `engine/audit/` 子目录存在 + `package-lock.json` 已提交 |
+| "not found" | 本地构建方式：确认 `engine/audit/` 子目录存在 + `package-lock.json` 已提交；npx 方式无需本地目录 |
 | GitHub Enterprise | 支持，零外部 API 依赖 |
 | 审计太慢 | `npm ci`+build ~20 秒，审计 ~2 秒 |
 | 本地测试 | `cd engine/audit && npm ci && npm run build && node dist/index.js --diff main..HEAD --ci` |

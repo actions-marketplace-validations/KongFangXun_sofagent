@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # bootstrap.sh · sofagent 一行安装入口（装在企业跑 AI 节点的设备上）
-# 纯新增独立入口——install.sh（~1325 行）不动，零回归面。
-# 用法：curl -fsSL https://raw.githubusercontent.com/KongFangXun/sofagent/refs/tags/v1.4.3/bootstrap.sh -o bootstrap.sh && bash bootstrap.sh
+# 窗口态纪律：钉值维持上一已发版 tag 值（与 INSTALL_URL 同 tag 自洽），CHANGELOG ⏳ 待发版标注 + checklist 维度 130 窗口态分支消红；v1.4.9 哈希在阶段九打 tag 时回填。install.sh 现约 1601 行。
+# 用法：curl -fsSL https://raw.githubusercontent.com/KongFangXun/sofagent/refs/tags/v1.5.0/bootstrap.sh -o bootstrap.sh && bash bootstrap.sh
 # 离线：./bootstrap.sh --local /path/to/install.sh
 # 透传：curl ... | bash -s -- --base-only
 set -euo pipefail
 # ERR trap 品牌兜底：崩溃时用户看到产品信息而非裸 bash 报错（v1.3.2 P0-B1/P2-37）
 trap 'echo "❌ sofagent bootstrap 失败（exit $?）——请截图此信息到 GitHub Issues（github.com/KongFangXun/sofagent/issues）"' ERR
-# v1.3.5 #31: 锁定已发布 tag（refs/tags/v1.4.3）——main 浮动导致装到的版本不可复现；
+# v1.3.5 #31: 锁定已发布 tag（当前 refs/tags/v1.5.0）——main 浮动导致装到的版本不可复现；
 #   升级时改此 tag 与 README 安装段同步。
-INSTALL_URL="https://raw.githubusercontent.com/KongFangXun/sofagent/refs/tags/v1.4.3/install.sh"
+INSTALL_URL="https://raw.githubusercontent.com/KongFangXun/sofagent/refs/tags/v1.5.0/install.sh"
 # ════════════════════════════════════════════════════════════════════════
 # v1.4.3 P2-f（F-07）：下载完整性校验（curl | bash 信任模型加固）
 # install.sh 是将被 bash 直接执行的代码——下载通道（HTTPS 上的 raw.githubusercontent）
@@ -18,21 +18,26 @@ INSTALL_URL="https://raw.githubusercontent.com/KongFangXun/sofagent/refs/tags/v1
 #   计算命令（在新 tag 打好后执行）：
 #     git show vX.Y.Z:install.sh | shasum -a 256
 #     for f in $LIB_FILES; do git show vX.Y.Z:engine/scripts/lib/$f | shasum -a 256; done
+#   🔴 时序陷阱：回填哈希之后**不得再改**任一被钉文件——改了必须重算重填。
+#      （v1.4.5 实锤：回填在前、config.sh 的 set -u 修复在后，主安装路径
+#        fail-closed 100% 装不上，且用户看到的是「可能被劫持」红色告警。）
+#      机器校验见 tools/check/check-version.sh 第 20 项（lib 哈希逐一对账）。
 #   发布清单同步提醒：docs/changelog/releasing/ 09-tag.md（tag 发布阶段）
 # ════════════════════════════════════════════════════════════════════════
-INSTALL_SHA256="f795e3787d56c5c957846402857a8f0d1bf724895dadf464c65a274282770a41"  # v1.4.3 tag:install.sh
+INSTALL_SHA256="f0709d4a921607c24dd6d365fb05d2d49361e0492ded8212a956e224d06409d3"  # v1.5.0 tag:install.sh
 # v1.3.8 P0-1 兜底：install.sh 依赖同目录 engine/scripts/lib/ 下 6 个模块——
 #   此前 bootstrap 只下载孤立 install.sh，source 立即失败（安装链全断根因）。
 #   现在同时下载 lib 全部文件到同目录结构，让 install.sh 的 source 可达。
-LIB_BASE_URL="https://raw.githubusercontent.com/KongFangXun/sofagent/refs/tags/v1.4.3/engine/scripts/lib"
+LIB_BASE_URL="https://raw.githubusercontent.com/KongFangXun/sofagent/refs/tags/v1.5.0/engine/scripts/lib"
 LIB_FILES="platform-detect.sh file-deploy.sh daemon-register.sh post-install.sh daemon-lib.sh config.sh"
-# lib 文件 sha256（v1.4.3 tag；与 LIB_FILES 顺序一一对应）
-LIB_SHA256S="e1a77f47fd92cbae131e88785079184925dbaf548976bc49d14d5c86e824525a
-dfcb89053f57e794d37a47b369eeff225efccdb0453d4a385fb14ccee5e6cdf3
+# lib 文件 sha256（与 LIB_FILES 顺序一一对应；file-deploy.sh / post-install.sh / config.sh
+# 为 v1.5.0 批次改动——r4 审查修复批与死配置清扫涉及，其余 3 个沿用 v1.4.5 tag 起值）
+LIB_SHA256S="3e9e4c30c2c26b57601e3e39c003e722eb522fae690cdd74311e2ceff3740809
+131cb676bcaae31b79873c8968084fdc6b9b49ce8b91ce9085d5ce4ce1be7f91
 e83cf4dc60d929ed7c085b7d5d93beb37e781fd5085eaa1a138d298eb37933b3
-ab00287c9ce898658d09168baa9b4650aba675bf5337a20d372c19f5271a8cda
+7bb42884f89bfd46b64567849088f096ba15299e8f585ee11d6aefb20aac24a1
 bec93fd676d2524b11abfb44e1ffa4cb6dd536d13e3a05421aebee5c6bcf6fc2
-80f55df80d39a97d506ad925c1e099682efde7e482695208e421000fcbbb1128"
+7d1744e7157d85ff492d1e53f41636f7f94e52f672193432a82af29f4250a29a"
 
 # sha256 工具兼容（macOS shasum / Linux sha256sum，取输出首段哈希）
 _sha256_of() { # $1=文件路径 → stdout 哈希（失败输出空）
@@ -89,8 +94,7 @@ else
   # bash 3.2 兼容：用 set -- 展开列表拿文件个数（不用 declare -A / mapfile）
   set -- $LIB_FILES
   echo "📥 下载运行时依赖 engine/scripts/lib/（$# 个文件）..."
-  LIB_FAIL=0
-  # bash 3.2 兼容：并行遍历文件名与哈希列表（LIB_SHA256S 按行对应 LIB_FILES 顺序）
+  # v1.4.7 批次 M P1-2：任一 lib 下载/校验失败立即 fail-closed（不再引导 clone 自救）
   _expected_list="$LIB_SHA256S"
   for _lib in $LIB_FILES; do
     _expected=$(printf '%s\n' "$_expected_list" | head -1)
@@ -99,15 +103,18 @@ else
       # v1.4.3 P2-f：lib 文件同样校验（同是可执行载荷）
       _verify_or_die "${LIB_TMP_DIR}/${_lib}" "$_expected" "lib/${_lib}"
     else
-      LIB_FAIL=1
-      echo "⚠️  lib/${_lib} 下载失败（install.sh 将尝试 git clone 自救）"
+      echo "⚠️  lib/${_lib} 下载失败——bootstrap 拒绝继续（fail-closed），请重试或到 GitHub Issues 反馈"
+      exit 1
     fi
   done
-  if [ "$LIB_FAIL" = "0" ]; then
-    echo "✅ 运行时依赖下载完成"
-  fi
+  echo "✅ 运行时依赖下载完成"
   SCRIPT="$TMP_FILE"
 fi
+# v1.4.7 批次 M P1-2：向 install.sh 注入已校验的 install.sh 哈希（自锚定链）——
+#   install.sh 内部 clone 自救重入时，对克隆树 install.sh 重算比对（fail-closed），
+#   保证「被校验的 = 被执行的」贯穿整条链（外层校验 → 自救重入 → 二次校验）。
+export SOFAGENT_INSTALL_SHA256="$INSTALL_SHA256"
+
 echo "🚀 启动 sofagent 安装..."
 # v1.3.4 交付 1-E（P0 假绿修复）：`|| INSTALL_RC=$?` 捕获 install.sh 退出码（set -e 下 || 短路
 # 不立即退出），失败打 ❌ 透传退出码，只有 exit 0 才打 ✅。bash 3.2 兼容：空数组先判长度再展开。

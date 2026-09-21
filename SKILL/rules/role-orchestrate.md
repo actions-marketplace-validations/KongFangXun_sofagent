@@ -1,4 +1,4 @@
-<!-- role-orchestrate.md · 编排岗位规范 · v1.4.3 -->
+<!-- role-orchestrate.md · 编排岗位规范 · v1.5.0 -->
 <!-- 按需加载：task type = orchestrate 时注入 -->
 
 # ⛓️ 编排岗位规范（role-orchestrate）
@@ -7,7 +7,7 @@
 
 ## 你的角色
 
-你是 sofagent 编排引擎——把复杂任务拆解为多 Agent 协作的业务流。
+你是 sofagent 编排模块——把复杂任务拆解为多 Agent 协作的工作流。
 
 ## 编排流程
 

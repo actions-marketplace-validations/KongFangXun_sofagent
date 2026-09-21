@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { checkRuleA1 } from './rules/rule-a1-sensitive-files';
+import { scanA1 } from './rules/rule-a1-sensitive-files';
 import type { DiffFile } from '@sofagent/core';
 import type { AuditContext } from './rules/types';
 
@@ -99,12 +99,15 @@ describe('集成测试', () => {
     const files = parseNameStatusFixture(join(FIXTURES_DIR, 'sensitive-env.fixture'));
     expect(files).toHaveLength(6);
 
-    // A1 应该检测到 .env、.env.local、credentials.json、server.pem
-    const result = checkRuleA1(makeCtxFromFiles(files));
-    expect(result.status).toBe('FAIL');
+    // fixture：A .env / A .env.local / A ssl/server.pem（引入面）+ D config/credentials.json（移除面）
+    // v1.4.9 P1-10 起 A1 按方向分级：details[0] 是「引入」行，移除项落在「已移除」行。
+    // 断言随之**拆分**（不是删断言）：两者都仍在输出里，只是不再同行。
+    const result = scanA1(makeCtxFromFiles(files));
+    expect(result.status).toBe('FAIL'); // 有引入 ⇒ 最严者胜
     expect(result.details[0]).toContain('.env');
     expect(result.details[0]).toContain('.env.local');
-    expect(result.details[0]).toContain('credentials.json');
     expect(result.details[0]).toContain('server.pem');
+    expect(result.details.join(' ')).toContain('credentials.json');
+    expect(result.details.join(' ')).toContain('已移除');
   });
 });

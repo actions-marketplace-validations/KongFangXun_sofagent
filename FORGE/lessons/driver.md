@@ -1,5 +1,7 @@
 # 四、Driver 编排规范
 
+> 冻结窗口：driver 跑循环期间主仓目录处于「冻结」状态（commit-msg hook 2.6 段读 `~/.sofagent/internal/fresh-eyes-run.lock` 判 PID 存活 + 命中 driver 源码路径 → exit 1 阻断）。锁文件含 runId+指纹+PID；PID 已死=锁滞留 → WARN 放行。开发新循环时如需同款保护，参照 fresh-eyes-driver 的 acquireRunLock/releaseRunLock 挂点。
+
 > [← 返回索引](./index.md)
 
 ### preflight-check 跑前自检
@@ -41,7 +43,7 @@
 | 审查类（a-check/b-check） | 130 | L2 硬熔断在 100 次工具调用时触发（≈superstep 200），写报告窗口 REVIEW_GRACE_STEPS=80 |
 | 文本处理类（a-consolidate） | 50-100 | 主要做合并/格式化 |
 | 修复类（b-fix） | 100-150 | 每个修复点 Read→Edit→Test 三步 |
-| 验证类（a-verify） | 50-150 | 简单验证给低，复杂验证给高 |
+| 验证类（c-verify） | 50-150 | 简单验证给低，复杂验证给高 |
 | regression（release-gate） | 250-400 | 46 维度 × 批量执行 |
 
 **换算公式**：每次工具调用 = 2 步（model call + tool node）。25 步 ≈ 12 轮工具调用。
@@ -244,7 +246,7 @@ a-consolidate 撞硬熔断（40-60 次调用 vs 全局 45）
 
 **补充（finding-NN 格式铁律）**：result.md **有内容但用分类段落**（`### 🔴 P0 阻塞项`）而非 `### finding-NN` 时，splitFindings 同样切 0 条 → 假绿。修复：① 兜底报告生成器 prompt 强制 result.md 每条用 `### finding-NN`（含 **问题**/**修复方案**/**验证** 三段，禁止分类段落标题）；② 检测扩展：result.md 空占位 **或**（切 0 finding 且含 P0/P1/P2 标记）→ 触发降级重建；无任何 P 标记才视为真干净（避免真干净轮被拖成永不停止）。
 
-**补充（降级标记持久化）**：降级标记（`降级生成` 文本）**不能只写在会被下游覆盖的产物里**——a-verify 会覆盖 result.md（回填 verify 列）把标记抹掉 → 降级轮被误判 isClean=true（R1 实测）。**降级状态必须独立持久化**：writeFallbackFindings 额外写 `roundDir/degraded.flag`，parseStopCondition 优先查 flag（existsSync），文本标记匹配保留做旧 run 数据兼容（取或）。原则：**会被下游覆盖/重写的文件，不能承载跨步骤的判定状态**。
+**补充（降级标记持久化）**：降级标记（`降级生成` 文本）**不能只写在会被下游覆盖的产物里**——验证步骤（现 c-verify）会覆盖 result.md（回填 verify 列）把标记抹掉 → 降级轮被误判 isClean=true（R1 实测）。**降级状态必须独立持久化**：writeFallbackFindings 额外写 `roundDir/degraded.flag`，parseStopCondition 优先查 flag（existsSync），文本标记匹配保留做旧 run 数据兼容（取或）。原则：**会被下游覆盖/重写的文件，不能承载跨步骤的判定状态**。
 
 **修复范式（三层防御）**：防熔断（步骤级预算）→ 兜底格式（裸 LLM 生成器对多产物步骤也输出 `===FILE:` 分隔符 + finding-NN 结构）→ 最后保险（判定产物空占位/格式不符检测 + 降级重建 + isDegraded 强制不干净）。
 
@@ -409,7 +411,7 @@ npx vitest run FORGE/src/driver-base.test.mjs   # 单文件（调试用）
 sandbox kill 窗口 < acceptance 执行时间时，手动预跑日志后跳过：
 
 ```bash
-bash FORGE/playbook/acceptance-test.sh > run-00/acceptance-raw.log 2>&1
+bash playbook/acceptance-test.sh > run-00/acceptance-raw.log 2>&1
 node driver.mjs --target <版本> --skip-acceptance
 ```
 
@@ -527,6 +529,33 @@ node FORGE/src/fresh-eyes-driver.mjs --target <版本> > /tmp/fresh-eyes.log 2>&
 
 ---
 
+### 🔴 守卫 fail-loud：静默失败是最危险的失败模式
+
+**背景**：循环事故复盘发现守卫脚本的「静默死亡」模式——守卫内部变量名拼写错误，检测循环遍历空集，守卫稳定输出「0 处违规」绿通过；同期「修复静默丢失」「分片全灭仍报成功」同根因：**两份真相（守卫输出 vs 实际仓库状态）之间没有自动对账**——人工核对纪律会漏，门禁不会。
+
+**铁律**：
+1. **守卫脚本任何执行路径的失败必须非 0 退出（fail-loud）**——依赖工具（perl/node）缺失、语法错误、内部变量未定义，全部要变成显式失败，禁止吞错后 exit 0
+2. **守卫上线必须配故障注入自检**——在 PATH 前置一个假 perl（行为一：crash exit 3；行为二：silent exit 0），验证门禁两种情况都能抓住：crash 时门禁 exit 1，silent 时门禁对「守卫没在看」报警
+3. **「0 处违规」的可信前提是「守卫活着」**——PASS 比 FAIL 更需要怀疑（FAIL 顶多空跑一轮修复链，PASS 会放过真实违规）
+4. 人工纪律（SOP 条文「记得核对」）升级为自动对账（脚本 diff 两份清单），是消除此类事故的根本路径
+
+> 与「零信任复核」互为镜像：零信任说 **FAIL 不可全信**（检查命令自身可能有缺陷），fail-loud 说 **PASS 尤其不可全信**（守卫本身可能已死）。两个方向都堵上，门禁才可信。
+
+---
+
+### 🔴 冻结窗口锁：driver 跑循环期间防并行会话误改
+
+**背景**：并行会话在 driver 跑 fresh-eyes 循环期间向主仓 commit，会污染「基线快照 vs 当前状态」的对账前提——run 内的快照与实际 HEAD 漂移，守卫与复盘全部失真。
+
+**方案**（pidfile 双信号判定）：
+- driver 开跑 `acquireRunLock(runId)` 写 `~/.sofagent/internal/fresh-eyes-run.lock`（runId + 指纹 + PID），SIGTERM 与正常结束双挂点 `releaseRunLock()`
+- commit-msg hook 读锁：**活锁（PID 存活）且本次 commit 命中 driver 源码路径 → exit 1 阻断**；PID 已死 = 锁滞留 → WARN 放行（锁不成为新的单点故障）
+- 新 loop 需要同款保护时参照 fresh-eyes-driver 的锁挂点实现，勿复制粘贴路径常量
+
+**铁律**：锁的语义是「冻结对账前提」不是「禁一切 commit」——只拦命中循环自身源码的提交；锁滞留必须降级放行，避免一次崩溃把仓库永久锁死。
+
+---
+
 ### 🔴 确定性判定优先：别让 LLM 解读能确定性解析的日志
 
 > **来源**（实录）：acceptance 实际 PASS（241/0/241，exit 0），但 acceptance-consolidate worker 误判 FAIL，F 修复链对假 FAIL 空跑一轮。
@@ -569,7 +598,7 @@ node FORGE/src/fresh-eyes-driver.mjs --target <版本> > /tmp/fresh-eyes.log 2>&
 2. **git add -A 在 monorepo 是核弹**——必须逐文件 add；765 文件进暂存区后审计钩子被规则源码的检测样本触发海量误报，阻断一切 commit
 3. **恢复操作本身是最大风险源**——`cp -R A/. B/` 会静默覆盖 B 的新内容；恢复前必须先确认"哪个是超集"再单向恢复
 
-**救援立功者**：sofagent 自己的回溯引擎 `.sofagent/.git-shadow/snapshots.json`（1370 文件全文快照，commit 钩子自动打点）——1365 文件完整恢复，**审计引擎在审计轨迹本身被毁时救了全场**。Cordis「可撤销效应」的同款价值实证。
+**救援立功者**：sofagent 自己的回溯能力 `.sofagent/.git-shadow/snapshots.json`（1370 文件全文快照，commit 钩子自动打点）——1365 文件完整恢复，**审计模块在审计轨迹本身被毁时救了全场**。Cordis「可撤销效应」的同款价值实证。
 
 **预防**（下次开发 sub-agent 必须遵守）：
 - sub-agent 的 git 写操作白名单化：只允许 `add <显式路径>` / `commit -- <显式路径>`，**禁止 `init` / `add -A` / 裸 `commit -m`（不带文件清单）/ `reset --hard` / `stash`**（在主仓）
@@ -612,6 +641,65 @@ node FORGE/src/fresh-eyes-driver.mjs --target <版本> > /tmp/fresh-eyes.log 2>&
 1. **「全绿」和「无数据」在弱判定逻辑下不可区分**——audit 对空 diff 全绿、worker 对截断输入报盲区、归一化前对语义退出码报 FAIL：全部是把「没证据」当「证据」。每个判定信号先问「这个信号的产生路径在当前条件下还能产生反例吗」，不能 = 信号失效。
 2. **监控端不能只看自报**——两次假 PASS 都是我人工读 verdict 主体 + 数 F 分支 commit 抓出来的。driver 的自报裁决（status.json / LEDGER / 尾部追加段）与权威产物（verdict.md 主体）分层：前者是流程尾巴，后者才是裁决。SOP 已固化「verdict 以 verdict.md 主体 IS_PASS 行为准」。
 3. **修复必须带防复发锁**——本次四件修复全部配了源码级断言测试（clamp 表达式存在性 + 零 commit 校验存在性 + DIM_TIMEOUT_OVERRIDE 覆盖表），撞过的坑要变成 grep 得到的守卫。
+
+## fresh-eyes 循环四连事故：运行窗口冲突 + 修复静默丢失 + 降级滚雪球 + 依赖 API 漂移全灭（实录）
+
+**四起事故、一条主线**：fresh-eyes 长跑循环暴露的四个层级缺陷——执行层（运行窗口被并行收编击穿）、资产层（修复被冲突回退静默洗掉）、判定层（降级产物滚雪球）、依赖层（rc 包 API 漂移整轮全灭）。核心教训：**长跑循环的「运行窗口完整性」是多层的——进程内存态、分支资产态、产物质量态、依赖环境态，每层都可能被第三方无声改写；每层都需要独立的对账机制。**
+
+### ① run 进行中并行收编 driver 改造 → verify 分片全灭
+
+**场景**：driver 主进程常驻跑循环（单轮数小时），期间并行 session 向 main 收编了 driver 自身的步骤改造（worker 步骤改名）——主进程**内存步骤表**仍派发旧步骤名，worker 子进程读**磁盘新代码**查无此键，verify 阶段全部分片报「未知步骤」exit 1 团灭。
+
+**根因**：冻结纪律只约束了执行 session 自己（「跑 loop 时不 commit」），没约束**收编方 session**——「顺手收编」看起来无害（它不知道有 run 在跑）。driver 常驻进程的内存代码与磁盘代码在运行窗口内被第三方改写错位。
+
+**修复（三防线 + 机制锁）**：
+- driver 启动记源码指纹，每次 spawn worker 前比对，错位即 **exit 86** fail-closed（不带病续跑）
+- 主仓 dirty 隔离：启动时工作区不干净即拒绝起跑（防「带着未收编改动起跑，跑完对不上账」）
+- commit-msg hook 冻结窗口锁：run 进行中（pidfile 活锁 + PID 存活）且提交命中 driver 源码路径 → exit 1 阻断；PID 已死 = 锁滞留 → WARN 放行（锁不成为新单点）
+- SOP 补位：收编动作与 run 窗口**错峰**（等 run 收口，或先停 run 再收编再 `--resume` 续跑）——机制拦最高危形态（步骤表错位全灭），纪律管其余（HEAD 变动杀进程树）
+
+### ② b-fix 修复被 re-sync 冲突回退洗掉（静默丢失）
+
+**场景**：loop 在 worktree 分支产出修复并 commit；run 后段 re-sync 遇 `docs/ROADMAP.md` 冲突 → 处置用 `reset --hard` 回退——**分支头上的 7 项修复全部被洗掉**，只残留在孤儿快照分支上，全程无任何告警，靠人工事后追孤儿分支才发现。
+
+**根因**：分支头状态与 main 收编状态是**两份真相**，之间没有自动对账——`git log main..<分支>` 在逐文件 apply 收编下恒非空（历史里永远找得到对应 commit）、`git cherry` 在拆分/合并收编下 patch-id 假阳性，git 原生命令均不可靠。
+
+**修复**：
+- **收编即标记**：把 FORGE 工作分支内容收编进 main 后当场打标（tag `forge-merged-<分支名>` 或分支改名 `-merged-YYYYMMDD`）——判「已收编」唯一依据 = 标记存在
+- `tools/check/check-forge-branches.sh` 对账：diff 分支清单 vs 标记清单，未标记分支列出（INFO 不阻断）
+- run 收口后固定「worktree 收编核对」动作：`git log main..forge/fresh-eyes/<run>` 及各轮 bfix 快照分支，非空即逐 commit 核对是否已收编
+- 收编方法红线：**禁整包 cherry-pick、禁 `git checkout <分支> -- <文件>`**（main 已前进时整文件替换会回退后续改动）——必须逐文件 diff apply 并验证零丢失（blob 哈希逐字节比对）
+
+### ③ fallback 降级链 findings 滚雪球
+
+**场景**：主链路异常走 fallback 降级提取 findings，降级提取器不认识「多视角报同一问题」的形态——A/B 两角色同题各算一条，findings 逐轮 8→16→20 翻倍膨胀，修复量被虚构放大。
+
+**根因**：降级路径的提取器是「保底粗提」，没做跨视角去重——正常路径有归并逻辑，降级路径漏了。
+
+**修复**：fallback 提取加去重器（同题合并）。**通用教训**：**每条降级/兜底路径都要过一遍主路径的质量清单**——降级是「换个方式交付」，不是「放弃质量标准」；主路径有的归并/去重/校验，降级路径逐项问一遍有没有。
+
+### ④ DSH rc 包 API 漂移 → 24 worker 全灭（token 白烧两小时）
+
+**场景**：DSH 依赖从 alpha 升 rc，会话事件 API 从属性形态（`session.events` 数组）改为方法形态（`snapshotEvents()`）——dsh-backend 仍读旧属性拿 `undefined` 进 `for-of`，直接 TypeError。**24 个 perspective worker 全部报废**，每片的报告都是降级占位符，run 跑了约 2 小时有效产出为零。
+
+**根因（两层）**：
+1. 依赖是 rc 版包，API 形态未定型、无迁移通知——属性改方法这类「静默漂移」没有编译期防线
+2. **放大器**：环境级故障被当成 N 个单点故障逐个降级——每个 worker 崩了就写降级占位继续跑，整轮烧完才发现全灭。若首个 worker 崩溃即停，损失是 1/24
+
+**修复**：
+- `snapshotSessionEvents()` 双形态兼容：rc 方法形态优先 / 旧数组形态兜底，**两形态全缺失返回 undefined 且绝不静默**——上层抛 `DshCapabilityMissingError`（fail-fast 带明确修复指引，不再深藏在 for-of TypeError 里）
+- **driver 系统性失败熔断**：worker 失败率 ≥2/3 且绝对数 ≥5（双门阈值）= 环境级故障，中止 run——而不是逐个降级占位继续烧钱
+- 熔断后 LEDGER 留 aborted 行（死因 + 有效产出说明），`--resume` 修好依赖后续跑
+
+### 横向教训（四起事故共性）
+
+1. **长跑进程的「内存态 vs 磁盘态」一致性是运行窗口的根基**——运行窗口内的任何源码改写（driver 自身、worker 代码、共享模块）都是定时炸弹；冻结纪律必须覆盖**所有** session，「不知道有 run 在跑」不是免责理由，机制锁（指纹门禁 + hook 冻结锁）才是兜底
+2. **两份真相必须有自动对账**——分支头 vs main 收编态、守卫输出 vs 仓库实态、driver 自报 vs 权威产物：凡「两个地方各自记录同一事实」的设计，漂移只是时间问题；人工核对纪律（SOP 条文「记得核对」）会漏，对账脚本不会
+3. **环境级故障要熔断不要降级**——失败呈系统性比例（大部分 worker 同款死法）时，继续跑只放大损失；「逐个降级占位」是环境故障的变体放大器
+4. **rc 依赖的兼容层要 fail-fast**——双形态兼容 + 能力缺失显式抛错（带修复指引），让下次漂移在第一个 worker 就炸出明确信号，而不是 24 片同款 TypeError
+5. **事故复盘必须当天沉淀**——四起事故的修复都是一次性的，但教训若不回写 lessons，下次换个 session 还会踩同款（本批教训沉淀距事故发生已隔数日，靠用户提醒才启动——教训回写触发器应挂进发版 SOP 收尾，见 releasing/05 的 lessons 回写节）
+
+---
 
 ## a-verify 静默死亡 + bash3.2 命令替换幽灵污染（工具脚本开发实录）
 

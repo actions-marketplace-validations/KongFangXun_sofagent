@@ -1,6 +1,6 @@
 #!/bin/bash
 # check-cjk-var.sh — shell 变量定界守卫
-# 检测 tools/ 下所有 .sh（含子目录）中 $VAR 后紧跟 CJK 全角标点的模式。
+# 检测 tools/ 下所有 .sh（含子目录）中 $VAR 后紧跟非 ASCII 字符的模式。
 #
 # 根因：bash 在 UTF-8 locale 下把 $TEST_RC， 解析成变量名 "TEST_RC，"
 # （全角逗号 U+FF0C 被拼进变量名），set -u 下报 unbound variable 崩溃。
@@ -12,16 +12,30 @@
 # 等子目录，本守卫 glob 仍扫 tools/*.sh 顶层——19 个子目录脚本全部漏扫，
 # 622 行违规因此未被拦截。改为 find 递归 + SELF 路径同步 + \s 改 POSIX 类。
 #
-# 规则：变量后接 CJK 标点必须写成 ${VAR} 显式定界。
+# 规则：变量后接非 ASCII 字符必须写成 ${VAR} 显式定界。
 # 用法：bash tools/check/check-cjk-var.sh  →  输出违规清单，exit 0=全绿 / 1=有违规
 
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
-# 全角标点集：，）。（：；！？、「」『』
-# 注意：用 perl 而非 grep -P（BSD grep 无 -P）；排除注释行与双引号内误报优先级低——
-# 本守卫宁可误报（人工复核）也不漏报（潜伏地雷代价更高）
-PATTERN='\$[A-Za-z_][A-Za-z_0-9]*[，）。：；！？、]'
+# 判据：$VAR 后紧跟【非 ASCII 字符】即违规，一律改写为 ${VAR} 显式定界。
+# 为什么不列一张「全角标点表」：实测 bash 在 UTF-8 locale 下会把紧跟变量名的
+#   **任何**非 ASCII 字符拼进变量名——全角标点、全角字母数字、CJK 汉字、假名、
+#   谚文、emoji、组合音标、不换行空格、制表符线、★✓ 等符号，无一例外（跨平面
+#   抽检 18 个，仅希伯来字母因书写方向未被本探针复现）。逐个枚举永远补不全，
+#   真正的边界是「ASCII / 非 ASCII」，不是「标点 / 非标点」。
+# 危害形态：变量静默展开为空（无 set -u 时不报错，只在输出里丢值）；且常藏在
+#   「仅失败分支触发」的输出行里，日常全绿时掩盖，一旦触发恰好在最该显示数字的
+#   地方丢数字。该 bug 在 US-ASCII locale 与 zsh 下都不复现，随手一测极易被
+#   误判成误报——判定时必须先确认 locale 与 shell 是 UTF-8 + bash。
+# 修法：$VAR → ${VAR}。已定界的 ${VAR}、引号闭合后的 "$VAR"、后接空格的 $VAR
+#   均不误报。
+# 已知误报面：单引号内的 '$VAR中' 不参与展开，本守卫仍会报——本守卫宁可误报
+#   （人工复核）也不漏报（潜伏地雷代价更高）。
+# 注意：用 perl 而非 grep -P（BSD grep 无 -P）；且必须 -Mutf8 -CSD，否则字符类
+#   按**字节**匹配——覆盖面取决于各字符首字节是否碰巧撞进集合，是随机且不可
+#   预测的漏检（曾出现「（」只因与「）」共享前两字节才被命中的假覆盖）。
+PATTERN='\$[A-Za-z_][A-Za-z_0-9]*[^\x00-\x7F]'
 SELF="tools/check/check-cjk-var.sh"
 
 VIOLATIONS=0
@@ -36,7 +50,11 @@ for f in $ALL_SH; do
   [ "$f" = "$SELF" ] && continue
   FILES=$((FILES + 1))
   # 跳过纯注释行（行首 # 后的 $VAr 讲解不违规）
-  MATCHES=$(grep -vE '^[[:space:]]*#' "$f" | perl -ne "print \"$.: \$_\" if /$PATTERN/" 2>/dev/null)
+  # v1.4.6 修报号错位：此前先 `grep -v` 剔注释再交给 perl，perl 的 $. 取的是
+  #   **过滤后流**里的行号而非文件行号——check-storefront.sh 一处违规被报成
+  #   「49:」而实际在第 77 行，排查时按 49 行看到的是完全无关的代码，已实际
+  #   造成一次误判。改为 perl 直接读原文件、在正则里排注释行，$. 即真实行号。
+  MATCHES=$(perl -Mutf8 -CSD -ne "print \"\$.: \$_\" if /$PATTERN/ && !/^\\s*#/" "$f" 2>/dev/null)
   if [ -n "$MATCHES" ]; then
     echo "✗ $f"
     echo "$MATCHES" | sed 's/^/    /'
@@ -52,10 +70,19 @@ if [ "$PERL_ALIVE" != "HIT" ]; then
 fi
 
 echo ""
-if [ "$VIOLATIONS" -gt 0 ]; then
-  echo "✗ ${VIOLATIONS} 处 CJK 标点紧跟 \$VAR（${FILES} 个文件扫描）——改为 \${VAR} 定界后重跑"
+# 失明必须失声：引擎自身故障与真违规同样阻断——否则「零违规」可能只是「引擎瞎了」，
+# 防线失明时却假装还在岗，比没有这条防线更危险。
+# 输出口径：扫描文件数一律写成「N 个文件扫描」，三条退出路径同一措辞——消费方
+#   （check-guards ④ 扫描范围对账）按这一条 token 提取。同一事实两套措辞曾使提取在
+#   违规分支落空，于是真因被误报为「守卫失明（glob 未跟随目录重组）」，归因完全错。
+if [ "$VIOLATIONS" -gt 0 ] || [ "$GUARDS_VIOL" -ne 0 ]; then
+  if [ "$VIOLATIONS" -gt 0 ]; then
+    echo "✗ ${VIOLATIONS} 处非 ASCII 字符紧跟 \$VAR（${FILES} 个文件扫描）——改为 \${VAR} 定界后重跑"
+  else
+    echo "✗ 0 处违规但守卫自身失明（${FILES} 个文件扫描）——上述引擎故障必须先修复，本次按违规处理"
+  fi
   exit 1
 else
-  echo "✓ $FILES 个 shell 脚本无 CJK 标点变量定界违规"
+  echo "✓ ${FILES} 个文件扫描，无非 ASCII 字符紧跟 \$VAR 的定界违规"
   exit 0
 fi

@@ -1,11 +1,38 @@
 #!/usr/bin/env node
-// orchestrator CLI · v1.4.3
+// orchestrator CLI · v1.5.0
 //
 // loop 子命令 v1.3.7 升级：默认走 LangGraph StateGraph 节点级流转
 // （engineer→audit→reviewer→human_confirm），支持 --resume 从 checkpoint
-// 恢复。旧版串行路径通过 --legacy 保留兼容。
+// 恢复。旧版串行路径（--legacy）已按弃用公告在 v1.5.0 移除。
 
 import { join } from 'path';
+
+// ── 训练模块（v1.5.0 第 7 批 · train 拆包）────────────────────────
+// train 已迁至独立包 @sofagent/train（源码 engine/train/）。orchestrator 对它是
+// **运行期按需加载**、非构建期依赖——若声明为依赖，则 train 依赖本包
+// 的 /fde-compose 窄入口会构成**包级循环**，build 拓扑序无解。
+// 故此处用**非字面量** specifier（模板串）：tsc 不做模块解析（结果 any），
+// 运行时才 resolve。未安装 @sofagent/train 时由运行期抛 MODULE_NOT_FOUND
+// 明确报错，而非静默降级。
+// 类型面：本地声明所需最小结构类型，不从 train 包取（同上避免构建期耦合）。
+const TRAIN_PKG = '@sofagent/train';
+
+/** train 指纹（cli 只消费这四个字段；完整结构由 @sofagent/train 的 schema 兜底校验） */
+type TrainFingerprint = {
+  randomSeed: number;
+  hyperparams: unknown;
+  trainJobId: string;
+  datasetVersion: string;
+};
+
+/** 多基座对比单基座结果（cli 只消费 baseModel/status；完整结构见 @sofagent/train） */
+type CompareBaseResult = {
+  baseModel: string;
+  trainJobId: string;
+  status: string;
+  evalReport: unknown;
+  usage: Record<string, unknown>;
+};
 
 const args = process.argv.slice(2);
 const subcommand = args[0];
@@ -26,7 +53,6 @@ async function main() {
     console.log('       --resolve <checkpointId> --decision approve|reject|aborted');
     console.log('                                  对 awaiting_human 挂起的 HITL 写入人工决策并续跑');
     console.log('       --data-dir <dir>             HITL pending/resolved 根路径（默认 {SOFAGENT_DATA}）');
-    console.log('       --legacy                     使用旧版串行路径（v1.1.3 兼容）');
     console.log('  compare                          编排方案 A/B 对比');
     console.log('  activate [--dry-run] [--node-filter id1,id2]');
     console.log('                                   激活 FDE 交付物 → 注册企业 SubAgent');
@@ -51,6 +77,9 @@ async function main() {
   console.log('                                   （复用 fde_interview 五要素产出，不重复采集）');
   console.log('  train templates [scenario] [--data-dir <dir>]');
   console.log('                                   v1.4.3 四章: 场景模板库（四场景×QLoRA/SFT/DPO + RL 配方）');
+  console.log('  train compare --data <dir> --bases <m1,m2> --algorithm sft|dpo|grpo');
+  console.log('                                   v1.4.4 交付④: 多基座对比训练——同数据并行提交+ROI 排序');
+  console.log('                                   --report-only 训练完成后生成对比报告');
     process.exit(0);
   }
 
@@ -80,7 +109,7 @@ async function main() {
       if (result) {
         console.log(result);
       } else {
-        console.error('❌ sofagent 提示：编排引擎未安装，编排功能暂不可用');
+        console.error('❌ sofagent 提示：编排模块未安装，编排功能暂不可用');
         console.error('   如需使用编排，请确认 @langchain/langgraph 已安装（详见 ARCHITECTURE.md）');
         process.exit(1);
       }
@@ -119,24 +148,13 @@ async function main() {
       break;
     }
     case 'loop': {
-      const legacyMode = args.includes('--legacy');
       const resumeMode = args.includes('--resume');
 
-      if (legacyMode) {
-        // 旧版兼容路径
-        const taskIdx = args.indexOf('--task');
-        const taskDesc = taskIdx !== -1 ? args[taskIdx + 1] : undefined;
-        if (!taskDesc && !resumeMode) {
-          console.error('❌ loop --legacy 需要 --task <描述> 参数');
-          process.exit(1);
-        }
-        const { runLOOPIteration } = await import('./loop-runner');
-        const result = await runLOOPIteration(taskDesc!);
-        console.log('');
-        console.log(`判定: ${result.verdict === 'PASS' ? '✅ PASS' : '❌ FAIL'}`);
-        console.log(`迭代次数: ${result.iterations}`);
-        process.exit(result.verdict === 'PASS' ? 0 : 1);
-        break;
+      // v1.5.0 退役收口：--legacy 已按 v1.4.7 弃用公告移除——显式拒绝（fail-closed），
+      // 不静默吞旗标跑 StateGraph（静默忽略会让旧脚本误以为仍在串行路径）
+      if (args.includes('--legacy')) {
+        console.error('❌ loop --legacy 已于 v1.5.0 移除（v1.4.7 弃用公告，兼容期一个大版本）。当前默认路径为 LOOP StateGraph 节点级流转，直接使用 `loop --task <描述>` 即可。');
+        process.exit(2);
       }
 
       // v1.2.2 P3b：解析 --resolve / --decision / --data-dir
@@ -351,7 +369,13 @@ async function main() {
           });
 
           if (result.success) {
-            console.log(`  ✅ ${graphNode.id} 完成 (${result.durationMs}ms)`);
+            if (result.degraded) {
+              // v1.4.5 T6：降级成功 = LLM 缺席的模拟输出——WARN 可观测
+              // （原实现 success:true 静默通过，节点级降级无人知晓）
+              console.warn(`  ⚠️ ${graphNode.id} 降级完成（LLM 不可用，输出为模拟） (${result.durationMs}ms)`);
+            } else {
+              console.log(`  ✅ ${graphNode.id} 完成 (${result.durationMs}ms)`);
+            }
           } else {
             console.error(`  ❌ ${graphNode.id} 失败: ${result.error}`);
             allSuccess = false;
@@ -426,14 +450,14 @@ async function main() {
       // v1.4.1 块七：train 子命令族（doctor 本波实装；cleanup/reproduce/verify 骨架待接线）
       const trainAction = args[1];
       if (!trainAction) {
-        console.error('❌ train 需要子动作: doctor | cleanup | reproduce | verify | analyze | templates');
+        console.error('❌ train 需要子动作: doctor | cleanup | reproduce | verify | analyze | compare | templates');
         process.exit(1);
       }
       if (trainAction === 'doctor') {
         const wantGpu = args.includes('--gpu');
-        const { snapshotGpuMemory } = await import('./train/process-guard');
+        const { snapshotGpuMemory } = await import(`${TRAIN_PKG}/process-guard`);
         const { loadEnvConfig } = await import('@sofagent/core');
-        const { listTrainJobRecords } = await import('./train/train-job');
+        const { listTrainJobRecords } = await import(`${TRAIN_PKG}/train-job`);
         const { existsSync, readdirSync } = await import('fs');
         const { join } = await import('path');
 
@@ -446,7 +470,7 @@ async function main() {
             console.log(`ℹ️ GPU 显存核对：unsupported（${gpu.note}）`);
           } else {
             const used = gpu.perGpuUsedMiB ?? [];
-            const total = used.reduce((a, b) => a + b, 0);
+            const total = (used as number[]).reduce((a, b) => a + b, 0);
             console.log(`🎮 GPU 显存：${gpu.note}，已用 ${used.join(' / ')} MiB（合计 ${total} MiB）`);
           }
         }
@@ -499,8 +523,8 @@ async function main() {
         }
         const dataDirIdx = args.indexOf('--data-dir');
         const passesIdx = args.indexOf('--passes');
-        const { cleanupEnterpriseTrainData } = await import('./train/cleanup');
-        const { EnterpriseAccessDeniedError } = await import('./train/isolation-guard');
+        const { cleanupEnterpriseTrainData } = await import(`${TRAIN_PKG}/cleanup`);
+        const { EnterpriseAccessDeniedError } = await import(`${TRAIN_PKG}/isolation-guard`);
         const { loadEnvConfig } = await import('@sofagent/core');
         const cleanupDataDir = dataDirIdx !== -1 && args[dataDirIdx + 1] ? args[dataDirIdx + 1]! : loadEnvConfig().dataDir;
         const passes = passesIdx !== -1 ? parseInt(args[passesIdx + 1]!, 10) : undefined;
@@ -527,7 +551,7 @@ async function main() {
           process.exit(report.fullyCleaned ? 0 : 1);
         } catch (err) {
           if (err instanceof EnterpriseAccessDeniedError) {
-            console.error(`❌ 企业隔离拒绝：${err.message}`);
+            console.error(`❌ 企业隔离拒绝：${(err as Error).message}`);
           } else {
             console.error(`❌ cleanup 失败: ${(err as Error).message}`);
           }
@@ -551,12 +575,16 @@ async function main() {
           process.exit(1);
         }
         // 指纹解析（TrainFingerprintSchema 校验——坏文件明确报错）
-        const { TrainFingerprintSchema } = await import('./train/train-fingerprint');
-        let fingerprint: import('./train/train-fingerprint').TrainFingerprint;
+        const { TrainFingerprintSchema } = await import(`${TRAIN_PKG}/train-fingerprint`);
+        let fingerprint: TrainFingerprint;
         try {
           const parsed = TrainFingerprintSchema.safeParse(JSON.parse(readFileSync(fingerprintFile, 'utf-8')));
           if (!parsed.success) {
-            throw new Error(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('；'));
+            throw new Error(
+              parsed.error.issues
+                .map((i: { path: (string | number)[]; message: string }) => `${i.path.join('.')}: ${i.message}`)
+                .join('；'),
+            );
           }
           fingerprint = parsed.data;
         } catch (err) {
@@ -569,11 +597,11 @@ async function main() {
           console.error('❌ train reproduce 需要 --data <当前数据目录>（现场重算 hash 的比对对象）');
           process.exit(1);
         }
-        const { prepareTrainEnv } = await import('./train/train-env');
+        const { prepareTrainEnv } = await import(`${TRAIN_PKG}/train-env`);
         const envReport = await prepareTrainEnv();
         const seedIdx = args.indexOf('--seed');
         const seed = seedIdx !== -1 ? parseInt(args[seedIdx + 1]!, 10) : fingerprint.randomSeed;
-        const { reproduceCheck } = await import('./train/train-fingerprint');
+        const { reproduceCheck } = await import(`${TRAIN_PKG}/train-fingerprint`);
         const result = reproduceCheck(fingerprint, {
           datasetDir,
           envSnapshot: {
@@ -637,7 +665,7 @@ async function main() {
           }
           enterpriseId = candidates[0]!;
         }
-        const { verifyArtifacts } = await import('./train/artifact-verify');
+        const { verifyArtifacts } = await import(`${TRAIN_PKG}/artifact-verify`);
         const report = await verifyArtifacts({ dataDir: verifyDataDir, enterpriseId, trainJobId });
         console.log(`🔐 产物完整性校验（${report.enterpriseId}/${report.trainJobId}）`);
         console.log(`   manifest 完整性: ${report.manifestIntegrity}`);
@@ -691,7 +719,7 @@ async function main() {
         }
         const { loadEnvConfig } = await import('@sofagent/core');
         const analyzeDataDir = flag('--data-dir') ?? loadEnvConfig().dataDir;
-        const { analyzeTrainNeed, saveTrainAnalyzeReport } = await import('./train/train-analyze');
+        const { analyzeTrainNeed, saveTrainAnalyzeReport } = await import(`${TRAIN_PKG}/train-analyze`);
         try {
           const report = analyzeTrainNeed(analyzeDataDir, enterpriseId, nodeId, {
             ...(flag('--base-model') !== undefined ? { baseModel: flag('--base-model') } : {}),
@@ -728,8 +756,20 @@ async function main() {
 
       // ── v1.4.3 第四章：train templates（场景模板库 list——含 RL 配方维度）──
       if (trainAction === 'templates') {
-        // train templates [scenario] [--data-dir <dir>]
-        const { listTrainTemplates, RL_TEMPLATES } = await import('./train/train-templates');
+        // train templates [scenario] [--data-dir <dir>] [--recipes <外部配方目录>]
+        const { listTrainTemplates, listRlTemplates, loadExternalRecipes } = await import(`${TRAIN_PKG}/train-templates`);
+        const recipeDir = ((): string | undefined => {
+          const idx = args.indexOf('--recipes');
+          return idx !== -1 && args[idx + 1] ? args[idx + 1] : undefined;
+        })();
+        if (recipeDir !== undefined) {
+          const loadResult = loadExternalRecipes(recipeDir);
+          console.log(`📂 外部配方装载：${loadResult.dir}`);
+          console.log(`   场景模板 +${loadResult.scenarioTemplatesLoaded} · RL 配方 +${loadResult.rlRecipesLoaded}${loadResult.skipped.length > 0 ? ` · 跳过 ${loadResult.skipped.length} 条（schema 不符）` : ''}`);
+          for (const s of loadResult.skipped) {
+            console.log(`   ⚠️ ${s.file}：${s.reason}`);
+          }
+        }
         const scenarioArg = args[2] && !args[2].startsWith('--') ? args[2] : undefined;
         if (scenarioArg !== undefined) {
           const valid = ['extraction', 'classification', 'generation', 'dialogue'];
@@ -739,19 +779,101 @@ async function main() {
           }
         }
         const templates = listTrainTemplates(scenarioArg);
-        console.log('📚 场景模板库（四场景 × QLoRA/SFT/DPO）');
+        console.log('📚 场景模板库（四场景参考模板 + 外部装载配方）');
         for (const t of templates) {
           console.log(`   ${t.id}`);
           console.log(`      ${t.name} · base_type=${t.base_type} · 数据 ≥ ${t.dataRequirement.minSamples} 条 · 评估 ${t.evalCriteria.metric} ${t.evalCriteria.threshold}`);
         }
-        console.log('📚 RL 配方模板（grpo/dapo/cispo + ScaleRL 四技巧）');
-        for (const t of RL_TEMPLATES) {
+        console.log('📚 RL 配方模板（grpo 参考配方 + 外部装载清单）');
+        for (const t of listRlTemplates()) {
           console.log(`   ${t.id}——${t.name}（${t.scenarios[0]}）`);
         }
+        console.log('   💡 全量配方（SFT/DPO 变体 + dapo/cispo）经 --recipes <dir> 装载外部配方目录');
         break;
       }
 
-      console.error(`❌ 不支持的 train 子动作 "${trainAction}"（可用: doctor | cleanup | reproduce | verify | analyze | templates）`);
+      // ── v1.4.4 交付④：train compare（多基座对比训练——提交 + 回填 + 报告）──
+      if (trainAction === 'compare') {
+        // train compare --data <数据集路径> --bases <m1,m2,...> --algorithm sft|dpo|grpo
+        //   [--enterprise <id>] [--gpu-mib <预算>] [--report-only] [--data-dir <dir>]
+        const val = (flag: string): string | undefined => {
+          const i = args.indexOf(flag);
+          return i !== -1 && args[i + 1] ? args[i + 1] : undefined;
+        };
+        const dataPath = val('--data');
+        const basesRaw = val('--bases');
+        const algorithm = val('--algorithm');
+        const enterpriseId = val('--enterprise');
+        const gpuMib = val('--gpu-mib');
+        const reportOnly = args.includes('--report-only');
+        if (!dataPath || !basesRaw || !algorithm) {
+          console.error('❌ 用法: train compare --data <数据集路径> --bases <m1,m2,...> --algorithm sft|dpo|grpo');
+          console.error('        [--enterprise <id>] [--gpu-mib <显存预算>] [--report-only]');
+          console.error('   同一数据多基座并行提交 → 训练完成后 ROI 排序对比报告');
+          process.exit(1);
+        }
+        if (algorithm !== 'sft' && algorithm !== 'dpo' && algorithm !== 'grpo') {
+          console.error(`❌ algorithm 非法：${algorithm}（可选 sft | dpo | grpo）`);
+          process.exit(1);
+        }
+        const { loadEnvConfig } = await import('@sofagent/core');
+        const dataDir = val('--data-dir') ?? loadEnvConfig().dataDir;
+        const ent = enterpriseId ?? 'default';
+        const bases = basesRaw.split(',').map((s) => s.trim()).filter(Boolean).map((baseModel) => ({ baseModel }));
+
+        const { submitCompareJobs, refreshCompareResults, buildCompareReport } = await import(`${TRAIN_PKG}/train-compare`);
+        const { computeDatasetHash } = await import(`${TRAIN_PKG}/train-fingerprint`);
+
+        if (reportOnly) {
+          // 报告模式：从 job 记录回填（jobId 规约 = compare-<hash8>-<slug>）+ 直接汇总
+          const datasetHash = computeDatasetHash(dataPath);
+          const { loadTrainJobRecord } = await import(`${TRAIN_PKG}/train-job`);
+          const results = bases.map((b): CompareBaseResult => {
+            const jobId = `compare-${datasetHash.slice(0, 8)}-${b.baseModel.replace(/[^a-zA-Z0-9-_.]/g, '-').toLowerCase()}`;
+            const rec = loadTrainJobRecord(dataDir, ent, jobId);
+            return {
+              baseModel: b.baseModel,
+              trainJobId: jobId,
+              // 记录缺席按 failed 呈现（诚实口径：没有产出 = 该基座没跑成）
+              status: rec?.status ?? 'failed',
+              evalReport: null,
+              usage: rec ? { ...rec.usage } : { elapsedMinutes: 0, steps: 0, cost: 0 },
+            };
+          });
+          const report = buildCompareReport({ results, datasetHash });
+          console.log(`📊 多基座对比报告（${report.compareId}，数据 hash ${datasetHash.slice(0, 12)}…）`);
+          for (const r of report.ranking) {
+            console.log(`   第${r.rank}名  ${r.summary}`);
+          }
+          const unfinished = results.filter((r) => r.status !== 'completed');
+          if (unfinished.length > 0) {
+            console.log(`⚠️  ${unfinished.length} 基座未到终态（${unfinished.map((r) => `${r.baseModel}:${r.status}`).join(', ')}）——不参与 ROI 排序`);
+          }
+          break;
+        }
+
+        // 提交模式：多基座并行提交（GPU 预算内）
+        const submitted = submitCompareJobs({
+          dataDir,
+          enterpriseId: ent,
+          dataPath,
+          bases,
+          algorithm,
+          ...(gpuMib ? { gpuTotalMiB: Number.parseInt(gpuMib, 10) || 0 } : {}),
+        });
+        if (!submitted.ok) {
+          console.error(`❌ 对比提交失败：${submitted.issues.join('；')}`);
+          process.exit(1);
+        }
+        const datasetHash = computeDatasetHash(dataPath);
+        refreshCompareResults({ results: submitted.jobs, dataDir, enterpriseId: ent });
+        console.log(`✅ 已提交 ${submitted.jobs.length} 基座（${submitted.jobs.map((j: { baseModel: string }) => j.baseModel).join(' / ')}）`);
+        console.log(`   GPU 队列：${submitted.gpuSnapshot.mode} 模式，占用 ${submitted.gpuSnapshot.allocatedMiB} MiB / 预算 ${submitted.gpuSnapshot.totalBudgetMiB} MiB`);
+        console.log('   全部基座完成后生成报告：train compare --report-only --data <同路径> --bases <同列表> --algorithm <同算法>');
+        break;
+      }
+
+      console.error(`❌ 不支持的 train 子动作 "${trainAction}"（可用: doctor | cleanup | reproduce | verify | analyze | compare | templates）`);
       process.exit(1);
     }
     default:

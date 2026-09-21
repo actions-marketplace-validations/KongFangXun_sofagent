@@ -5,9 +5,11 @@
 // ============================================================
 
 import type { RuleCheck } from './rules/types';
+import { ruleCode } from './rules/assemble';
 import { VERSION, REDACTION_PATTERNS } from '@sofagent/core';
 import { URL } from 'url';
 import { isIP } from 'net';
+import { lookup } from 'dns';
 import { execSync } from 'child_process';
 import { hostname } from 'os';
 import { cwd } from 'process';
@@ -92,8 +94,46 @@ export function isPrivateWebhookUrl(rawUrl: string): boolean {
 }
 
 /**
+ * v1.4.5 T3: DNS 解析复验——公共域名字面量放行后，实际解析到的 A/AAAA
+ * 记录若落在私网段仍拒绝推送。
+ *
+ * 堵的洞：恶意方可控制 DNS 记录（自建域名 A 记录指向 127.0.0.1 /
+ * 169.254.169.254 / 10.x），isPrivateWebhookUrl 只做字面量检查对此全盲——
+ * 「域名看着公共，解析结果内网」的 DNS rebinding 式 SSRF 直接穿透。
+ * pushAuditResult 的 fetch 与本复验仍存在微小 TOCTOU 窗口（两次独立
+ * 解析），但已拦住「配置时刻就指向内网」的静态攻击面；动态 rebind 收敛
+ * 至两次解析窗口（纵深防御增量，非绝对边界）。
+ *
+ * DNS 查询失败（离线/域名不存在）→ 按拒绝处理（fail-closed——
+ * 无法证明安全即不推送；审计推送是附带能力，fail-closed 优于假绿）。
+ */
+export async function verifyWebhookDns(rawUrl: string): Promise<boolean> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  const host = parsed.hostname.replace(/^\[|\]$/g, '');
+  // 只复验「域名」——IP 字面量已被 isPrivateWebhookUrl 完整判定
+  if (isIP(host) !== 0) return true;
+  return new Promise<boolean>((resolve) => {
+    // { all: true }：取全部 A/AAAA 记录，任一命中私网即拒绝（DNS 双记录
+    // 一公一私的混排攻击形态）
+    lookup(host, { all: true }, (err, addresses) => {
+      if (err || !addresses || addresses.length === 0) {
+        resolve(false); // 解析失败 → fail-closed 拒绝
+        return;
+      }
+      const anyPrivate = addresses.some((addr) => isPrivateWebhookUrl(`http://${addr.address}`));
+      resolve(!anyPrivate);
+    });
+  });
+}
+
+/**
  * v1.2.6: 脱敏辅助——webhook 推送到第三方平台前，对审计详情做敏感信息脱敏。
- * 复用 @sofagent/core 的 REDACTION_PATTERNS（与审计引擎内部脱敏口径一致）。
+ * 复用 @sofagent/core 的 REDACTION_PATTERNS（与审计模块内部脱敏口径一致）。
  */
 /**
  * v1.2.9 支持自定义脱敏正则（config.yml sanitizePatterns）
@@ -164,7 +204,7 @@ function buildContent(payload: WebhookPayload, failedRules: RuleCheck[], isPass:
     }
     lines.push(`扫描 ${payload.rules.length} 条规则全部通过`);
     lines.push(tracingLine);
-    lines.push(`审计引擎: sofagent-audit v${version}`);
+    lines.push(`审计模块: sofagent-audit v${version}`);
     return lines.join('\n');
   }
 
@@ -175,11 +215,12 @@ function buildContent(payload: WebhookPayload, failedRules: RuleCheck[], isPass:
     lines.push(`任务：${safeTask}`);
   }
   for (const rule of failedRules) {
-    lines.push(`A${rule.number} ${rule.name}：${rule.details.map((d: string) => redactDetail(d, customPatterns)).join('；')}`);
+    const ruleId = rule.id ?? ruleCode(rule.number, rule.name);
+    lines.push(`${ruleId} ${rule.name}：${rule.details.map((d: string) => redactDetail(d, customPatterns)).join('；')}`);
   }
   lines.push(`详情：exit code ${payload.exitCode}`);
   lines.push(tracingLine);
-  lines.push(`审计引擎: sofagent-audit v${version}`);
+  lines.push(`审计模块: sofagent-audit v${version}`);
   return lines.join('\n');
 }
 
@@ -218,6 +259,16 @@ export async function pushAuditResult(payload: WebhookPayload, customPatterns?: 
   }
   if (allowLocalhost && isPrivateWebhookUrl(payload.url)) {
     console.warn(`[sofagent] 测试豁免模式（SOFAGENT_WEBHOOK_ALLOW_LOCALHOST=1）：放行本机/内网 webhook 推送: ${payload.url}`);
+  }
+
+  // v1.4.5 T3: DNS 解析复验——字面量放行的公共域名，解析到私网 IP 仍拒绝。
+  // 测试豁免模式下同步跳过（localhost mock server 域名常解析不到公网记录）。
+  if (!allowLocalhost) {
+    const dnsOk = await verifyWebhookDns(payload.url);
+    if (!dnsOk) {
+      console.warn(`[sofagent] webhook 域名解析到内网/回环地址（或解析失败），已拒绝推送（SSRF DNS 复验）: ${payload.url}`);
+      return false;
+    }
   }
 
   // v1.1.3: 过滤 FAIL/WARN 规则用于消息构建，但 PASS 也推送

@@ -23,8 +23,11 @@ import { homedir } from 'node:os';
 import { join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
+import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
+
+const require = createRequire(import.meta.url);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -63,6 +66,41 @@ const SOVEREIGNTY_DIR = join(SOFAGENT_DATA, 'audit', 'data-sovereignty');
 const DAEMON_HEALTH = join(SOFAGENT_DATA, 'dashboard', 'daemon-health.json');
 const GRAPH_STATE = join(SOFAGENT_DATA, 'dashboard', 'graph-state.json');
 
+/* ────────────────────────────────
+ * 治理引擎解析（v1.5.0 章一）
+ * 候选链（首中即用，require 缓存保证幂等）：
+ *   1. 仓库态：serve 脚本相对的 engine/audit/dist/public-api.js
+ *   2. 安装态：npm 全局 @sofagent/audit（createRequire.resolve 走 node_modules 解析）
+ *   3. 预留：$SOFAGENT_HOME/packages/audit（一体化部署形态，当前未启用）
+ * 全部失败返回 null（端点降级 503，页面显示降级文案，不崩）
+ * ──────────────────────────────── */
+let __govEngineCache;
+function resolveGovernanceEngine() {
+  if (__govEngineCache !== undefined) return __govEngineCache;
+  __govEngineCache = null;
+  // 候选 1：仓库态相对路径
+  const repoDist = join(__dirname, '../../engine/audit/dist/public-api.js');
+  try {
+    const m = require(repoDist);
+    if (typeof m?.computeGovernanceKpis === 'function') { __govEngineCache = m; return m; }
+  } catch { /* 下一候选 */ }
+  // 候选 2：npm 全局 @sofagent/audit（安装态——sofagent-audit wrapper 同源 dist）
+  try {
+    const resolved = require.resolve('@sofagent/audit/public-api', {
+      paths: [join(SOFAGENT_HOME_INSTALL, 'node_modules'), process.cwd()],
+    });
+    const m = require(resolved);
+    if (typeof m?.computeGovernanceKpis === 'function') { __govEngineCache = m; return m; }
+  } catch { /* 下一候选 */ }
+  // 候选 3：预留一体化形态
+  try {
+    const p = join(SOFAGENT_HOME_INSTALL, 'packages', 'audit', 'dist', 'public-api.js');
+    const m = require(p);
+    if (typeof m?.computeGovernanceKpis === 'function') { __govEngineCache = m; return m; }
+  } catch { /* 全链失败 */ }
+  return null;
+}
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css',
@@ -88,17 +126,21 @@ async function tryRead(filePath) {
  * /api/summary · 复用 bash dashboard 的 jq 聚合口径
  * 与 tools/sofagent-dashboard.sh 的 render_rules / render_sovereignty 同一逻辑
  * ──────────────────────────────── */
+const JQ_CANDIDATES = ['jq', '/opt/homebrew/bin/jq', '/usr/local/bin/jq', '/usr/bin/jq'];
 function runJq(program, input) {
-  try {
-    return execFileSync('/usr/bin/jq', ['-r', '-s', program], {
-      input: input || '',
-      maxBuffer: 64 * 1024 * 1024,
-      timeout: 15000,
-      encoding: 'utf8',
-    }).trim();
-  } catch (e) {
-    return '';
+  for (const jq of JQ_CANDIDATES) {
+    try {
+      return execFileSync(jq, ['-r', '-s', program], {
+        input: input || '',
+        maxBuffer: 64 * 1024 * 1024,
+        timeout: 15000,
+        encoding: 'utf8',
+      }).trim();
+    } catch {
+      // 候选不可用（路径不存在或执行失败）→ 试下一个
+    }
   }
+  return '';
 }
 
 /* 测试记录过滤：fixture 泛化任务名（规则测试的故意违规/故意通过样本）
@@ -107,6 +149,36 @@ function runJq(program, input) {
 const TEST_TASK_RE = /^(add (env|api|code|dependency|config|file|data)( config)?|fix: update README( title)?|update (config|code|file)|remove file|init: project setup|initial commit|test: rules filtering|test: json scenario|test)$/i;
 function isTestRecord(rec) {
   return TEST_TASK_RE.test(String(rec.task || '').trim());
+}
+
+/* ────────────────────────────────
+ * /api/summary 结果缓存
+ * 聚合要全量读 history.jsonl（已 55MB / 万级记录）+ 同步 spawn jq 6 次，单次耗时数秒且阻塞事件循环。
+ * 前端固定 5s 轮询、多客户端（浏览器 + 预览面板）叠加 ⇒ 请求永远追不上 ⇒ 事件循环饱和、全站路由超时（「服务卡死」真身）。
+ * 对策：TTL 缓存 + 并发去重（同一时刻只算一次，其余复用结果）。
+ * 驾驶舱数字为历史累计口径、变化慢，30s TTL 不影响读数正确性。
+ * ──────────────────────────────── */
+const SUMMARY_TTL_MS = 30000;
+let summaryCacheAt = 0;
+let summaryCacheData = null;
+let summaryInFlight = null;
+function getSummaryCached() {
+  const now = Date.now();
+  if (summaryCacheData && now - summaryCacheAt < SUMMARY_TTL_MS) {
+    return Promise.resolve(summaryCacheData);
+  }
+  if (summaryInFlight) return summaryInFlight; // 并发请求复用同一次计算
+  summaryInFlight = (async () => {
+    try {
+      const s = aggregateSummary();
+      summaryCacheData = s;
+      summaryCacheAt = Date.now();
+      return s;
+    } finally {
+      summaryInFlight = null;
+    }
+  })();
+  return summaryInFlight;
 }
 
 function aggregateSummary() {
@@ -394,33 +466,79 @@ function aggregateAiNodes() {
 /* ────────────────────────────────
  * /api/ontology · 本体数据（knowledge/ 目录真实结构）
  * 扫描 ~/.sofagent/data/knowledge/ 下的 entities/ concepts/ relations/ 文件
+ * 返回：三类列表（各截断至 ONTOLOGY_LIST_LIMIT）+ 各类总数 *_Total
  * ──────────────────────────────── */
-function aggregateOntology() {
-  const out = { ok: true, found: false, generatedAt: new Date().toISOString(), entities: [], concepts: [], relations: [], thinkCount: 0, indexPages: 0 };
+const ONTOLOGY_LIST_LIMIT = 24; // §12 列表精简：服务器端截断 + 报总数
+const ONTOLOGY_RECENT_LIMIT = 6;
+// 引擎自动沉淀的 source 前缀——这些是约束层自身产物，不是企业业务本体，展示时与业务实体分列
+const ENGINE_SOURCE_PREFIXES = ['dream-cycle:', 'daemon:', 'evolve:', 'train:', 'auto:'];
+function isEngineSource(src) {
+  const s = String(src || '');
+  return ENGINE_SOURCE_PREFIXES.some((p) => s.startsWith(p));
+}
+function aggregateOntology(full) {
+  const out = { ok: true, found: false, generatedAt: new Date().toISOString(), entities: [], concepts: [], relations: [], entitiesTotal: 0, conceptsTotal: 0, relationsTotal: 0, sources: [], kindTotals: { engine: 0, business: 0 }, recent: [], thinkCount: 0, indexPages: 0 };
   const kbDir = join(SOFAGENT_DATA, 'knowledge');
   try {
     if (!fsDirExists(kbDir)) return out;
-    // entities/ concepts/ relations/ 子目录
+    // entities/ concepts/ relations/ 子目录——全量扫描（只读 frontmatter + mtime，百级文件毫秒级）
+    // 全量用于「来源分组 / 最近更新」；列表本身按 §12 截断，明细走 /api/export-ontology
+    const all = { entities: [], concepts: [], relations: [] };
     for (const sub of ['entities', 'concepts', 'relations']) {
       const subDir = join(kbDir, sub);
-      if (fsDirExists(subDir)) {
-        const files = readdirSync(subDir).filter((f) => /\.(md|yml|yaml|json)$/.test(f)).sort();
-        for (const f of files) {
-          let title = f.replace(/\.(md|yml|yaml|json)$/, '');
-          try {
-            const content = readFileSync(join(subDir, f), 'utf8');
-            const m = content.match(/^(?:#|title:|name:)\s*(.+)$/m);
-            if (m) title = m[1].trim();
-          } catch {}
-          out[sub].push({ file: f, title });
-        }
+      if (!fsDirExists(subDir)) continue;
+      const files = readdirSync(subDir).filter((f) => /\.(md|yml|yaml|json)$/.test(f)).sort();
+      out[sub + 'Total'] = files.length;
+      for (const f of files) {
+        let title = f.replace(/\.(md|yml|yaml|json)$/, '');
+        let source = '';
+        let mtime = 0;
+        try {
+          mtime = statSync(join(subDir, f)).mtimeMs;
+          const content = readFileSync(join(subDir, f), 'utf8');
+          const sm = content.match(/^source:\s*(.+)$/m);
+          if (sm) source = sm[1].trim();
+          const m = content.match(/^(?:#|title:|name:)\s*(.+)$/m);
+          if (m) title = m[1].trim();
+        } catch {}
+        all[sub].push({ file: f, title, source, mtime, engine: isEngineSource(source) });
       }
     }
+    const pick = (list) => (full ? list : list.slice(0, ONTOLOGY_LIST_LIMIT));
+    for (const sub of ['entities', 'concepts', 'relations']) {
+      out[sub] = pick(all[sub]).map((it) => ({ file: it.file, title: it.title, source: it.source, updatedAt: it.mtime ? new Date(it.mtime).toISOString() : null }));
+    }
+    // 来源分组 + 引擎沉淀/业务实体 两类计数（针对实体）
+    const bySource = new Map();
+    let engine = 0;
+    let business = 0;
+    for (const it of all.entities) {
+      const key = it.source || '(未标注来源)';
+      bySource.set(key, (bySource.get(key) || 0) + 1);
+      if (it.engine) engine++;
+      else business++;
+    }
+    out.sources = [...bySource.entries()]
+      .map(([name, count]) => ({ name, count, engine: isEngineSource(name) }))
+      .sort((a, b) => b.count - a.count);
+    out.kindTotals = { engine, business };
+    // 最近更新（按 mtime 倒序）
+    out.recent = all.entities
+      .slice()
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, ONTOLOGY_RECENT_LIMIT)
+      .map((it) => ({ title: it.title, source: it.source, engine: it.engine, updatedAt: it.mtime ? new Date(it.mtime).toISOString() : null }));
     // index.md 知识页面数（表格行）
     const indexFile = join(kbDir, 'index.md');
     try {
       const idx = readFileSync(indexFile, 'utf8');
-      out.indexPages = idx.split('\n').filter((l) => l.trim().startsWith('|') && l.includes('[[')).length;
+      // 口径与前端 parseIndexRow 对齐：兼容 [[双链]]（旧）与纯文本（daemon 现行写入）两种表格行
+      out.indexPages = idx.split('\n').filter((l) => {
+        const t = l.trim();
+        if (!t.startsWith('|')) return false;
+        const name = (t.split('|')[1] || '').trim();
+        return !!name && name !== '页面' && !/^[-:]+$/.test(name);
+      }).length;
     } catch {}
     // think.md 经验教训数
     const thinkFile = join(SOFAGENT_DATA, 'think.md');
@@ -428,7 +546,7 @@ function aggregateOntology() {
       const tk = readFileSync(thinkFile, 'utf8');
       out.thinkCount = tk.split('\n').filter((l) => l.startsWith('## ')).length;
     } catch {}
-    out.found = out.entities.length > 0 || out.concepts.length > 0 || out.relations.length > 0 || out.indexPages > 0;
+    out.found = out.entitiesTotal > 0 || out.conceptsTotal > 0 || out.relationsTotal > 0 || out.indexPages > 0;
   } catch {}
   return out;
 }
@@ -446,7 +564,7 @@ const server = createServer(async (req, res) => {
 
   // /api/summary → bash 同口径聚合
   if (urlPath === '/api/summary') {
-    const s = aggregateSummary();
+    const s = await getSummaryCached();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(s));
     return;
@@ -468,11 +586,80 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // /api/governance → 治理 KPI（v1.5.0 章一 · 复用 audit 包 governance 聚合）
+  if (urlPath === '/api/governance') {
+    const mod = resolveGovernanceEngine();
+    if (!mod) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, message: 'governance 聚合引擎不可用（audit 包未构建或未安装）' }));
+      return;
+    }
+    const gov = mod.computeGovernanceKpis({ dataDir: SOFAGENT_DATA, days: 30 });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, report: gov }));
+    return;
+  }
+
+  // /api/export-governance-weekly → 治理 KPI 周报下载（markdown · v1.5.0 章一）
+  if (urlPath === '/api/export-governance-weekly') {
+    const mod = resolveGovernanceEngine();
+    if (!mod) {
+      res.writeHead(503);
+      res.end('Not available: governance engine');
+      return;
+    }
+    const report = mod.computeGovernanceKpis({ dataDir: SOFAGENT_DATA, days: 30 });
+    const md = mod.formatGovernanceWeekly(report);
+    res.writeHead(200, {
+      'Content-Type': 'text/markdown; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="governance-weekly.md"',
+    });
+    res.end(md);
+    return;
+  }
+
+  // /api/export-dataset-lineage → 数据集 lineage 合规报告下载（markdown · v1.5.0 章一）
+  if (urlPath === '/api/export-dataset-lineage') {
+    const mod = resolveGovernanceEngine();
+    if (!mod) {
+      res.writeHead(503);
+      res.end('Not available: governance engine');
+      return;
+    }
+    const md = mod.buildDatasetLineageReport({ dataDir: SOFAGENT_DATA });
+    res.writeHead(200, {
+      'Content-Type': 'text/markdown; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="dataset-lineage.md"',
+    });
+    res.end(md);
+    return;
+  }
+
   // /api/ontology → 本体数据（knowledge/ 目录真实结构）
   if (urlPath === '/api/ontology') {
     const s = aggregateOntology();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(s));
+    return;
+  }
+
+  // /api/export-ontology → 本体数据完整清单（§12：列表只出前 24，全量走下载）
+  if (urlPath === '/api/export-ontology') {
+    const s = aggregateOntology(true);
+    const payload = {
+      generatedAt: s.generatedAt,
+      totals: { entities: s.entitiesTotal, concepts: s.conceptsTotal, relations: s.relationsTotal },
+      kindTotals: s.kindTotals,
+      sources: s.sources,
+      entities: s.entities,
+      concepts: s.concepts,
+      relations: s.relations,
+    };
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="ontology.json"',
+    });
+    res.end(JSON.stringify(payload, null, 2));
     return;
   }
 
@@ -693,6 +880,20 @@ async function main() {
     console.log('');
     console.log('  数据源：' + SOFAGENT_DATA);
     console.log('  页面源：' + DOCS_DIR);
+    // v1.4.7 批次 M P2-14：安装态无条件优先时，若同仓存在仓库态页面且两者不一致，
+    // 打一行可观测提示——开发者改了仓库态页面却看到旧安装态时能立刻定位（不改判定逻辑）
+    if (IS_INSTALL_MODE) {
+      const repoHtml = join(__dirname, 'dashboard.html');
+      try {
+        if (statSync(repoHtml).isFile()) {
+          const repoBuf = readFileSync(repoHtml);
+          const instBuf = readFileSync(INSTALL_WEB_HTML);
+          if (!repoBuf.equals(instBuf)) {
+            console.log('  ⚠️ 仓库态 dashboard.html 存在但当前服务安装态副本——开发者调试请 SOFAGENT_HOME= node tools/dashboard/serve-dashboard.mjs');
+          }
+        }
+      } catch {}
+    }
     console.log('  API：/api/summary（复用 bash dashboard jq 口径）');
     console.log('');
     console.log('  Ctrl+C 停止');

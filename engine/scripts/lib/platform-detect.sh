@@ -16,12 +16,14 @@ detect_env() {
   echo "$n"
 }
 parse_args() {
-  PLATFORM=""; QUICK_MODE=0; NO_DAEMON=0; LITE_MODE=0; WITH_MEMORY=0  # REMOTE_MODE/ORIGINAL_ARGS/BASE_ONLY 已提前初始化
+  PLATFORM=""; QUICK_MODE=0; NO_DAEMON=0; LITE_MODE=0; WITH_MEMORY=0; POLICY_FILE=""  # REMOTE_MODE/ORIGINAL_ARGS/BASE_ONLY 已提前初始化
   FORCE_MODE=0; MERGE_MODE=0; YES_MODE=0  # v1.2.1: custom/ 升级三策略 flags
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --platform)      PLATFORM="$2"; shift 2 ;;
       --platform=*)    PLATFORM="${1#*=}"; shift ;;
+      --policy)        POLICY_FILE="$2"; shift 2 ;;               # v1.4.8 第一章：企业策略文件（插件来源白名单 + app_tool_policy）
+      --policy=*)      POLICY_FILE="${1#*=}"; shift ;;
       --project-dir)   PROJECT_DIR="$2"; shift 2 ;;
       --project-dir=*) PROJECT_DIR="${1#*=}"; shift ;;
       --no-config-inject) NO_CONFIG_INJECT=1; shift ;;
@@ -43,7 +45,7 @@ parse_args() {
 
 模式说明：
   默认模式         平台无关安装（只写 ~/.sofagent/）+ FDE Skill（企业部署能力）
-  --base-only      仅安装约束底座 + 四引擎（不装 FDE Skill）
+  --base-only      仅安装约束引擎（不装 FDE Skill）
 
 平台说明（默认不探测、不枚举任何平台——平台集成为显式 opt-in）：
   （不传）    通用安装：只写 sofagent 自己的目录 ~/.sofagent/，不碰任何第三方平台目录

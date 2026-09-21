@@ -1,0 +1,41 @@
+{
+  "name": "@sofagent/inject",
+  "version": "1.5.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "description": "sofagent 四层约束加载链 — buildConstrainedSystemPrompt()",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc",
+    "prepublishOnly": "npm run build && find dist -name '*.js.map' -delete && find dist -name '*.d.ts.map' -delete",
+    "test": "vitest run",
+    "check": "tsc --noEmit"
+  },
+  "keywords": [
+    "sofagent",
+    "inject",
+    "constraint"
+  ],
+  "license": "MIT",
+  "author": "KongFangXun",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/",
+    "!dist/**/*.js.map",
+    "!dist/**/*.d.ts.map",
+    "!dist/**/*.test.*"
+  ],
+  "devDependencies": {
+    "@types/node": "^24.13.3"
+  }
+}

@@ -39,9 +39,9 @@ done
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; CYAN='\033[0;36m'; NC='\033[0m'
 
 # ── 检查对象 ──
-CHECKLIST="FORGE/playbook/regression-checklist.md"
-ACCEPTANCE="FORGE/playbook/acceptance-test.sh"
-FRESH_EYES="FORGE/playbook/fresh-eyes-review.md"
+CHECKLIST="playbook/regression-checklist.md"
+ACCEPTANCE="playbook/acceptance-test.sh"
+FRESH_EYES="playbook/fresh-eyes-review.md"
 RELEASING5="docs/changelog/releasing/04-review-system.md"
 
 for _f in "$CHECKLIST" "$ACCEPTANCE" "$FRESH_EYES" "$RELEASING5"; do
@@ -177,7 +177,7 @@ S_DEFINED_RAW=$( (grep -oE 'scenario [0-9]+ "' "$ACCEPTANCE" | grep -oE '[0-9]+'
 REF_MISSING=0
 while IFS= read -r sref; do
   [ -z "$sref" ] && continue
-  if ! echo "$S_DEFINED_RAW" | grep -qx "$sref"; then
+  if ! grep -qx "$sref" <<< "$S_DEFINED_RAW"; then
     bad "checklist 引用的 S$sref 在 acceptance 中不存在" "    checklist 中 grep S$sref 定位引用点，核对场景编号"
     REF_MISSING=$((REF_MISSING + 1))
   fi
@@ -234,11 +234,17 @@ fi
 # 目标：每个交付关键词在 checklist / acceptance 至少出现一次（SOP 阶段五
 # 步骤 3「grep 确认 CHANGELOG 每个交付关键词在审查文档中至少出现一次」）
 # 词形差异（如 devlog「SubAgent 完整沙箱」vs checklist「沙箱五件套」）由
-# 豁免清单处理：FORGE/playbook/.coverage-exempt 每行一个关键词，命中的不报
+# 豁免清单处理：playbook/.coverage-exempt 每行一个关键词，命中的不报
 [ "$QUIET" = false ] && echo -e "\n${BOLD}${CYAN}── ⑥ 交付关键词覆盖率（阶段五零遗漏） ──${NC}"
 
 CUR_VER=$(node -p "require('./engine/audit/package.json').version" 2>/dev/null || echo "")
-EXEMPT_FILE="FORGE/playbook/.coverage-exempt"
+# v1.4.7 修正：版本源滞后——原只取 package.json（SSOT bump 在阶段九、安装入口 bump commit），
+# 待发版期 package.json 仍是上一版，本段校验的便是上一版 devlog，本版交付关键词从未被覆盖校验。
+# 改为优先 CHANGELOG 索引顶行版本（已开发完成即入索引并标「待发版」，发版后两者一致无副作用），
+# 回退 package.json 兜底。CHANGELOG 顶行格式：`- **vX.Y.Z** — ...`。
+CL_TOP_VER=$(grep -oE '^\- \*\*v[0-9]+\.[0-9]+\.[0-9]+\*\*' CHANGELOG.md 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+[ -n "$CL_TOP_VER" ] && CUR_VER="$CL_TOP_VER"
+EXEMPT_FILE="playbook/.coverage-exempt"
 EXEMPTED=$(cat "$EXEMPT_FILE" 2>/dev/null || echo "")
 
 if [ -z "$CUR_VER" ]; then
@@ -247,7 +253,7 @@ else
   # 交付章标题核心词（devlog ## N、 标题，去编号/括号注释）+ CHANGELOG 版本行 `**加粗**` 交付短语
   # 纯数字词（测试数/tool 数等计量值）非交付短语，排除——它们本就不该出现在 checklist/acceptance 正文
   DEVLOG_KW=$(grep -E "^## [一二三四五六七八九十]+、" "docs/changelog/v1.${CUR_VER#1.}/v${CUR_VER}.md" 2>/dev/null | sed -E 's/^## [一二三四五六七八九十一点五]+、//; s/（.*//; s/\(.*//' || true)
-  CHANGELOG_KW=$(grep -E "^\- \*\*v${CUR_VER}\*\*" CHANGELOG.md 2>/dev/null | head -1 | grep -oE '\*\*[^*]+\*\*' | sed 's/\*\*//g' | sed -E 's/[（(].*//' | grep -vE '^[0-9]+$' || true)
+  CHANGELOG_KW=$(grep -E "^\- \*\*v${CUR_VER}\*\*" CHANGELOG.md 2>/dev/null | head -1 | grep -oE '\*\*[^*]+\*\*' | sed 's/\*\*//g' | sed -e 's/（.*//' -e 's/(.*//' | grep -vE '^[0-9]+$' || true)
   ALL_KW=$(printf '%s\n%s\n' "$DEVLOG_KW" "$CHANGELOG_KW" | grep -vE '^[[:space:]]*$' | grep -vE '^[0-9]+$' | sort -u || true)
 
   if [ -z "$ALL_KW" ]; then
@@ -257,7 +263,7 @@ else
     while IFS= read -r _kw; do
       [ -z "$_kw" ] && continue
       # 豁免清单命中（精确行匹配）→ 已知词形差异，不报
-      if echo "$EXEMPTED" | grep -qxF "$_kw"; then continue; fi
+      if grep -qxF "$_kw" <<< "$EXEMPTED"; then continue; fi
       # 命中判定：完整短语 或 任一 ≥4 字核心名词子串（放宽到关键组件名）
       _hit_cl=$(grep -c "$_kw" "$CHECKLIST" 2>/dev/null || true)
       _hit_ac=$(grep -c "$_kw" "$ACCEPTANCE" 2>/dev/null || true)
@@ -303,7 +309,11 @@ DIM_TITLES_CLEAN=$(grep -E "^#### " "$CHECKLIST" | sed 's/^#### [0-9]*\. //; s/�
 # 不经 shell 变量中转（调试实录：命令替换捕获值偶发含上游残留，机制未定位，
 # 数据流单向化根治）。展示循环只读文件，变量全部独立前缀。
 CLUSTER_TMP=$(mktemp /tmp/crs-cluster-XXXX)
-printf '%s\n' "$DIM_TITLES_CLEAN" | LC_ALL="${LC_ALL_UTF8:-en_US.UTF-8}" perl -CSD -ne 'while (/([\p{Han}]{2,}|[A-Za-z]{4,})/g) { my $w = $1; next if $w =~ /^[vV]\d/; print "$w\n" }' 2>/dev/null | sort | uniq -c | sort -rn | awk -v min="$CLUSTER_MIN" '$1 >= min {print $1, $2}' > "$CLUSTER_TMP" || true
+CLUSTER_ALL=$(mktemp /tmp/crs-all-XXXX)
+# 判据分离：原始词表（CLUSTER_ALL）空 = perl 提取失败（真故障）；原始词表非空但过滤后（CLUSTER_TMP）空
+# = 干净态（无 ≥min 聚簇，低信号正是本检查该有的行为）。两态共用空结果 = 旧版把干净态误报成故障的根因。
+printf '%s\n' "$DIM_TITLES_CLEAN" | LC_ALL="${LC_ALL_UTF8:-en_US.UTF-8}" perl -CSD -ne 'while (/([\p{Han}]{2,}|[A-Za-z]{4,})/g) { my $w = $1; next if $w =~ /^[vV]\d/; print "$w\n" }' 2>/dev/null > "$CLUSTER_ALL" || true
+sort "$CLUSTER_ALL" | uniq -c | sort -rn | awk -v min="$CLUSTER_MIN" '$1 >= min {print $1, $2}' > "$CLUSTER_TMP" || true
 
 if [ -s "$CLUSTER_TMP" ]; then
   while IFS= read -r c7_line; do
@@ -323,14 +333,14 @@ if [ -s "$CLUSTER_TMP" ]; then
     [ "$QUIET" = false ] && echo -e "  ↳ 提示非 FAIL：聚簇=归并候选（三判据②），归并/保留人工裁决；「tool/完整性」类通用词多为假信号"
   fi
 else
-  if [ -n "$DIM_TITLES_CLEAN" ]; then
-    # 标题非空但聚簇结果空 = perl 提取失败（如 C locale 退化），不误报"干净"
+  if [ ! -s "$CLUSTER_ALL" ]; then
+    # 原始词表为空 = perl 提取失败（locale 退化 / perl 缺失），不误报"干净"
     warn "聚簇提取结果为空但维度标题非空——perl 提取可能失败（locale？），人工确认"
   else
-    ok "无 ≥${CLUSTER_MIN} 维同主题聚簇（暂无归并候选）"
+    ok "无 ≥${CLUSTER_MIN} 维同主题聚簇（暂无归并候选——干净态低信号，正常）"
   fi
 fi
-rm -f "$CLUSTER_TMP"
+rm -f "$CLUSTER_TMP" "$CLUSTER_ALL"
 
 # ============================================================
 # 汇总

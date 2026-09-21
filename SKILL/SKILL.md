@@ -1,11 +1,11 @@
 ---
 name: sofagent
 slug: sofagent
-version: 1.4.3
+version: 1.5.0
 displayName: FDE Skill
 description: >
   FDE Skill——帮 FDE（前线部署工程师）更好完成企业 AI 落地的方法论 Skill。约束 Agent 行为、审计每次变更、沉淀经验。
-  底层实现叫约束层——一个层四种能力：注入·审计·回溯·进化。FORGE 自迭代工具链是内部开发工具。
+  底层实现叫约束层——一个层五种能力：注入·审计·回溯·沉淀·进化。FORGE 自迭代工具链是内部开发工具。
   内置持续优化模式（sustain），自动读 audit 报告趋势生成优化报告。
 tags:
   - fde
@@ -14,12 +14,17 @@ tags:
   - deployment
   - enterprise
 image: sofagent-fde.png
-triggers: [Agent行为失控, 任务复杂需要拆解, 多文件修改, 部署AI节点, 梳理业务流, 构建知识库, 企业AI落地, FDE进场, 持续优化, 巡检, 高风险任务前加约束, DSH接入, skillhub, 装sofagent插件, 插件分发, cordis插件]
-scenarios: [Agent开始自由发挥偏离目标, 企业要装sofagent, 需要梳理业务流, 连续多个子任务需要编排协调, 刚踩过坑想避免重蹈覆辙, 需要构建知识库, 需要持续优化AI节点, DSH用户要装sofagent插件, 要在DSH生态用约束能力]
+triggers: [Agent行为失控, 任务复杂需要拆解, 多文件修改, 部署AI节点, 梳理工作流, 构建知识库, 企业AI落地, FDE进场, 持续优化, 巡检, 高风险任务前加约束, DSH接入, skillhub, 装sofagent插件, 插件分发, cordis插件]
+scenarios: [Agent开始自由发挥偏离目标, 企业要装sofagent, 需要梳理工作流, 连续多个子任务需要编排协调, 刚踩过坑想避免重蹈覆辙, 需要构建知识库, 需要持续优化AI节点, DSH用户要装sofagent插件, 要在DSH生态用约束能力]
 not_when: [简单闲聊, 单步查询, 纯信息检索]
 metadata:
   openclaw:
     requires: {}
+solves:
+  - Agent 行为失控缺约束（运行时约束 + 提交时审计双闸）
+  - 多文件修改无门禁（快照/回滚 + 审计规则集）
+  - 企业 AI 落地无方法论（FDE 四阶段诊断交付）
+  - 经验不沉淀重复踩坑（think.md 反思 + 知识库 + Dream Cycle）
 ---
 
 # FDE Skill · 唯一主入口（引擎底座 + FDE 方法论合一）
@@ -36,8 +41,8 @@ metadata:
 |------|--------|--------|
 | FDE Skill | 本 skill（方法论 + 约束注入） | ClawHub / SkillHub 分发，`bash install.sh` 装到本地 |
 | 企业底座 | 约束层全套（hooks + 数据 + MCP） | `bash install.sh`（企业设备） |
-| MCP Server | 80 tools 能力面（审计/本体/进化/训练/工作明细） | `bash install.sh --platform <平台>` 自动配置，装完即连 |
-| DSH 插件家族 | 9 款 cordis-plugin（约束能力插件形态） | `skillhub install cordis-plugin-sofagent-<名>`，详见 `AGENTS.md` |
+| MCP Server | 105 tools 能力面（审计/本体/进化/训练/工作明细/PR 协同/设备注册/设备数据面/连接器/模板/session 承接） | `bash install.sh --platform <平台>` 自动配置，装完即连 |
+| DSH 插件家族 | 7 款 cordis-plugin（6 款原子 + 1 款聚合整装） | `skillhub install cordis-plugin-sofagent-<名>`（整套用裸名 `cordis-plugin-sofagent`），详见 `AGENTS.md` |
 | CLI | `sofagent` 命令（审计 / 快照 / 部署 / dashboard） | `bash install.sh` 装到 `~/.sofagent/bin/` |
 | Dashboard | Web 驾驶舱（工作明细 / 图谱 / 健康） | `sofagent web` 起本地服务，读 `data/` 运行时数据 |
 
@@ -47,7 +52,7 @@ metadata:
 
 一、`bash install.sh` 装底座——MCP 自动配置随 `--platform` 落地（workbuddy/claude/cursor 写 mcp.json、codex 写 config.toml），装完即连
 二、DSH 用户按需挂插件——`skillhub install cordis-plugin-sofagent-<名>`（SkillHub 通道，每款独立安装渐进采用）
-三、plugin 经 @public API 调 sofagent 引擎（桥接实况见 `AGENTS.md`「DSH 插件家族」表）
+三、plugin 经 @public API 调 sofagent 约束层（桥接实况见 `AGENTS.md`「DSH 插件家族」表）
 四、审计 / 回滚走 MCP 工具面（`run_audit` / `snapshot_restore` 等）
 
 ---
@@ -63,7 +68,7 @@ metadata:
 3. 不生成有害内容 — 不辩解、不迂回、不提供替代
 4. 不冒充人类 — 标注「AI 生成」、不模仿真人/不声称情感
 
-### 8 则铁律
+### 9 则铁律
 
 0. **知行合一** — 说和做一致，声称必有证据
 1. **目标驱动** — 回到原始意图，不跑偏、不越做越复杂
@@ -72,11 +77,12 @@ metadata:
 4. **存疑即问** — 列出两种以上理解让用户选，不猜
 5. **不藏错误** — 报错、在哪、试了什么，不许吞错静默跳过
 6. **有始有终** — 任务完成主动收工，不确定时问「这样行不行」
-7. **spec-first** — 改代码前先声明「本变更对应哪个 spec」（workflow.yml / fde.md / task 书）；transcript 直出的口头需求先落 spec 再动代码，对话记录本身永远不是改代码的依据
+7. **规范先行** — 改代码前先声明对应哪份规范（workflow.yml / fde.md / task 书）；对话记录本身永远不是改代码的依据
+8. **勿增实体** — 未经确认不建新文件/目录；规则文档只写规则，不堆考古
 
 ### 品牌前缀铁律
 
-所有向用户展示的审计结果，必须保留 `[sofagent]` 前缀，否则视为未审计。如果你执行了审计但不展示结果，等于没审计。展示格式见 `skills/04-deliver.md`。机制化细节（引擎侧代码级签名、加载链硬约束）见 `rules/core-rules.md`。
+向用户展示的审计结果必须保留 `[sofagent]` 前缀——去掉前缀，「审计验证」就退化成「模型自评」。不展示审计结果 = 没审计。展示格式见 `skills/04-deliver.md`，机制化细节见 `rules/core-rules.md`。
 
 ### 渐进式加载
 
@@ -93,7 +99,7 @@ metadata:
 
 | 层 | 文件 | 加载方式 | 读什么 | 不存在时 |
 |:--:|------|---------|------|------|
-| 1 | **本文件** | skill 调用自动注入 | 4 底线 + 8 则铁律 + FDE 身份 | — |
+| 1 | **本文件** | skill 调用自动注入 | 4 底线 + 9 则铁律 + FDE 身份 | — |
 | 2 | `{SOFAGENT_HOME}/data/think.md` | Agent 主动 Read | 反思区（上次踩了什么坑）| 任务完成后创建 |
 | 3 | `~/.openclaw/skills/sofagent/fde.md` | Agent 主动 Read | 企业规范（FDE 制定，最高优先级）| 跳过（未配置）|
 | 4 | `{SOFAGENT_HOME}/data/knowledge/index.md` | Agent 主动 Read | AI 知识库目录（top-3 摘要）| 跳过（空知识库）|
@@ -171,21 +177,24 @@ metadata:
 
 ---
 
-## MCP 工具速查（80 tools · 12 类）
+## MCP 工具速查（105 tools · 13 类）
 
 > 连接 sofagent MCP Server 后可用。未连接时降级为纯文本引导。每类列代表工具，**MCP 协议面暴露规则与 `SOFAGENT_MCP_ROLES` 收窄说明见 `AGENTS.md`**。
 
 | 分类（数） | 代表工具 |
 |------|------|
-| 审计合规（8） | `run_audit` `audit_file` `audit_trail` `hitl_resolve` |
+| 审计合规（9） | `run_audit` `audit_file` `audit_trail` `hitl_resolve` |
 | 反思沉淀（3） | `get_think` `write_think` |
 | 知识库（7） | `search_knowledge` `list_entities` `stats` |
 | 本体数据（7） | `create_entity` `validate_ontology` `ontology_import` |
 | 评估优化（8） | `evaluate_output` `run_ab_test` `promote_ab`（强制人审） |
-| FDE 编排（10） | `fde_interview`（访谈结构化）`fde_classify`（三问判定）`fde_quantify`（量化+ROI）`fde_derive`（本体推导）`fde_distill`（三层沉淀）`fde_deploy`（组装部署）`fde_compose` `sofagent_compose` `activate_workflow` `create_agent` |
-| Workflow/Agent（7） | `workflow_submit` `route_workflow` `agent_identity` |
+| FDE 编排（11） | `fde_interview`（访谈结构化）`fde_classify`（三问判定）`fde_quantify`（量化+ROI）`fde_derive`（本体推导）`fde_distill`（三层沉淀）`fde_deploy`（组装部署）`fde_compose` `sofagent_compose` `activate_workflow` `create_agent` |
+| Workflow/Agent（12） | `workflow_submit` `workflow_create` `workflow_node_add`（定时触发）`workflow_diff_preview` `workflow_gaps`（缺口查询）`route_workflow` `agent_identity` |
 | 能力公地（6） | `commons_publish` `commons_search` `commons_invoke` |
-| 模型训练（12） | `model_register` `model_switch`（灰度）`train_submit` `train_budget`（超预算等人审）`train_doctor`（环境体检）`train_dryrun`（提交前预检）`train_report`（训练报告）`train_status`（进度查询）`train_list`（任务列表）`train_diagnose`（失败诊断）`corpus_export`（训练语料导出三件套） |
+| PR 协同（3） | `pr_submit` `pr_review` `pr_merge`（合并强制 merge_criteria，未过走 HITL） |
+| 后训流水线（16） | `model_register` `model_switch`（灰度）`model_unregister`（模型退役）`train_submit` `train_budget`（超预算等人审）`train_doctor`（环境体检）`train_dryrun`（提交前预检）`train_report`（训练报告）`train_status`（进度查询）`train_list`（任务列表）`train_diagnose`（失败诊断）`corpus_export`（训练语料导出三件套）`train_serve`（推理服务启停）`train_compliance`（合规扫描闸门）`train_deliverable`（FDE 交付包）`train_cloud`（云 VM 执行面） |
 | 验收（2） | `define_acceptance` `check_acceptance` |
-| 运维观测（6） | `health_check` `snapshot_restore`（强制人审）`worklog_query` `cost_query` |
+| 运维观测（17） | `health_check` `snapshot_list` `snapshot_restore`（强制人审）`worklog_query` `cost_query` `daemon_status` `contribution_query` `device_register` `device_list`（G9 设备注册面，v1.4.9）`device_data_query` `device_data_push`（G10/G11 设备数据面，v1.4.9）`connector_register` `connector_list`（G5b 连接器注册面，v1.4.9）`workflow_export` `workflow_import`（G1 模板导出导入+血缘，v1.4.9）`router_session_push`（T7 过站 session 承接面，v1.4.9 批 5）`trace_reconcile`（跨层证据对账：trace / diff / logs 三源四态 + 一致率，v1.5.0） |
 | 浏览器（4） | `playwright_navigate` `playwright_screenshot` |
+
+> 📌 **后训流水线的能力边界**：本仓负责**编排与治理**——任务提交 / 预算门禁 / 环境体检 / 提交前预检 / 失败诊断 / 语料导出 / 合规闸门 / 交付包 / 模型注册与灰度 / 推理服务；**训练本身在外部执行环境进行，本仓不实现训练器**。

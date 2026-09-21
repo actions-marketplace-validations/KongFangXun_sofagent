@@ -1,9 +1,106 @@
 // ============================================================
 // tool-registry.ts · MCP tools/list schema definitions
-// v1.4.3: 从 mcp-server.ts 提取
+// v1.5.0: 从 mcp-server.ts 提取
 // ============================================================
 
 import { VERSION } from '@sofagent/audit';
+// v1.4.9 深模块条目 5：handler 实现 import（查表分发目标——原 mcp-server switch 分发迁入）
+import { runAudit, type WebhookPushFn } from './tools/audit-tools';
+import { auditFile } from './tools/audit-file';
+import { getThink, writeThink, readThinkMd, readLessons } from './tools/think-tools';
+import { searchKnowledge, mergeFederationAsync, readEntity, readConcept, listEntities, stats } from './tools/knowledge-tools';
+import { compose } from './tools/orchestrator-tools';
+import { listCapabilities } from './tools/report-tools';
+import { browserNavigate, browserClick, browserScreenshot, browserAssert } from './tools/browser-tools';
+import { queryDataSovereigntyReport } from './tools/data-sovereignty-report';
+import { createEntity } from './tools/create-entity';
+import { createConcept } from './tools/create-concept';
+import { updateEntity } from './tools/update-entity';
+import { deleteEntity } from './tools/delete-entity';
+import { deleteConcept } from './tools/delete-concept';
+import { validateOntology } from './tools/validate-ontology';
+import { evaluateOutput } from './tools/evaluate-output';
+import { optimizeSkill } from './tools/optimize-skill';
+import { healthCheck } from './tools/health-check';
+import { auditDataChange } from './tools/audit-data-change';
+import { notifySession } from './tools/notify-session';
+import { activateWorkflowTool } from './tools/activate-workflow';
+import { daemonStatus } from './tools/daemon-status';
+// v1.4.9 G9（T1）：设备注册面两 tool——注册（fail-closed 验签）+ 清单（在线态）
+import { deviceRegister } from './tools/device-register';
+import { deviceList } from './tools/device-list';
+import { deviceDataQuery } from './tools/device-data-query';
+import { deviceDataPush } from './tools/device-data-push';
+// v1.4.9 G5b/G1（T4/T5）：连接器注册面 + workflow 模板导出导入
+import { connectorRegister, connectorList } from './tools/connector-list';
+import { workflowExport } from './tools/workflow-export';
+import { workflowImport } from './tools/workflow-import';
+import { worklogQuery } from './tools/worklog-query';
+import { costQuery } from './tools/cost-query';
+import { listAgentsTool } from './tools/list-agents';
+import { listConcepts } from './tools/list-concepts';
+import { hitlResolve } from './tools/hitl-resolve';
+import { listRules } from './tools/list-rules';
+import { agentIdentityTool } from './tools/agent-identity';
+import { loopDebug } from './tools/loop-debug';
+import { evaluate } from './tools/evaluate';
+import { auditTrail } from './tools/audit-trail';
+import { createAgent } from './tools/create-agent';
+import { evalSuite } from './tools/eval-suite';
+import { fdeCompose } from './tools/fde-compose';
+import { routeWorkflowTool } from './tools/route-workflow';
+import { teamCreate } from './tools/team-create';
+import { teamBroadcast } from './tools/team-broadcast';
+import { refine } from './tools/refine';
+import { commonsPublish } from './tools/commons-publish';
+import { commonsSearch } from './tools/commons-search';
+import { commonsInvoke } from './tools/commons-invoke';
+import { commonsRate } from './tools/commons-rate';
+import { commonsRetire } from './tools/commons-retire';
+import { commonsHarvestRule } from './tools/commons-harvest-rule';
+import { runAbTest } from './tools/run-ab-test';
+import { promoteAb } from './tools/promote-ab';
+import { snapshotList } from './tools/snapshot-list';
+import { snapshotRestore } from './tools/snapshot-restore';
+import { workflowSubmit } from './tools/workflow-submit';
+import { ontologyImport } from './tools/ontology-import';
+import { modelRegister, type ModelRegisterArgs } from './tools/model-register';
+import { modelSwitch } from './tools/model-switch';
+import { modelUnregister } from './tools/model-unregister';
+import { trainBudget } from './tools/train-budget';
+import { trainSubmit } from './tools/train-submit';
+import { trainDoctorTool } from './tools/train-doctor';
+import { trainDryrunTool, type TrainDryrunArgs } from './tools/train-dryrun';
+import { trainReportTool, type TrainReportArgs } from './tools/train-report';
+import { trainStatusTool } from './tools/train-status';
+import { trainListTool } from './tools/train-list';
+import { trainDiagnoseTool } from './tools/train-diagnose';
+import { trainDeliverableTool } from './tools/train-deliverable';
+import { fdeInterviewTool, type FdeInterviewArgs } from './tools/fde-interview';
+import { fdeClassifyTool, type FdeClassifyArgs } from './tools/fde-classify';
+import { fdeQuantifyTool, type FdeQuantifyArgs } from './tools/fde-quantify';
+import { fdeDeriveTool, type FdeDeriveArgs } from './tools/fde-derive';
+import { fdeDistillTool, type FdeDistillArgs } from './tools/fde-distill';
+import { fdeDeployTool, type FdeDeployArgs } from './tools/fde-deploy';
+import { corpusExport, type CorpusExportArgs } from './tools/corpus-export';
+import { trainServeTool } from './tools/train-serve';
+import { trainComplianceTool } from './tools/train-compliance';
+import { trainCloud } from './tools/train-cloud';
+import { defineAcceptance, checkAcceptance } from './tools/acceptance';
+import {
+  workflowCreate as workflowCreateTool,
+  workflowUpdate as workflowUpdateTool,
+  workflowNodeAdd as workflowNodeAddTool,
+  workflowDiffPreview as workflowDiffPreviewTool,
+} from './tools/workflow-crud';
+import { workflowGaps } from './tools/workflow-gaps';
+import { onboardPrompt } from './tools/onboard-prompt';
+import { prSubmit, prReview, prMerge } from './tools/pr-tools';
+import { contributionQuery } from './tools/contribution-query';
+import { dataPush } from './tools/data-push-tool';
+// v1.4.9 T7：router 过站 session 承接（伴生 exporter 推送入口——最后一个新 tool）
+import { routerSessionPush } from './tools/router-session-push';
+import { traceReconcileTool, type TraceReconcileArgs } from './tools/trace-reconcile';
 
 /**
  * 工具定义（MCP tools/list 返回的 schema）
@@ -18,10 +115,43 @@ export interface ToolDef {
   };
   /** v1.4.0：角色分层标签——工具所属角色面（一个工具可多面）。缺省 = 始终暴露（动态工具未打标）。 */
   roles?: string[];
+  /**
+   * v1.4.8 深模块条目 5：执行 handler（查表分发目标）。
+   * 🔴 文本 SSOT 硬约束：check-version/check-storefront/check-docs/gen-api-tools
+   * 四个解析器按「name → [roles] → description → inputSchema」正则读本文件，
+   * handler 只能追加在此顺序之后，字段顺序不可变。
+   * ctx 参数（pushAuditWebhook 等）经 rest 传递（需要 ctx 的工具声明双参）。批一骨架阶段可选——无 handler 的工具回退 mcp-server switch（零行为变化）；
+   * 迁移完成后设必填并删除 switch。
+   */
+  handler?: ToolHandler;
 }
 
+/** 工具结果（handler 产出——与 mcp-server sendTool 消费面同构；data 形态对齐 tools/audit-tools 既有 ToolResult 的 unknown 宽面） */
+export interface ToolResult {
+  text: string;
+  data: unknown;
+  /** isError 标记（sendTool 第三参） */
+  isError?: boolean;
+}
+
+/** 工具错误（handler 以 -32602 JSON-RPC error 形式返回——对齐 mcp-server sendTool 的 isToolError 通道） */
+export interface ToolDispatchError {
+  error: string;
+}
+
+/** 工具执行上下文（需要审计 webhook 的 handler 声明第二参消费） */
+export interface ToolHandlerContext {
+  pushAuditWebhook: WebhookPushFn;
+}
+
+/** 工具执行 handler 类型（v1.4.8 条目 5——ctx 可选：无副作用工具免声明） */
+export type ToolHandler = (
+  args: Record<string, unknown>,
+  ctx?: ToolHandlerContext,
+) => ToolResult | ToolDispatchError | Promise<ToolResult | ToolDispatchError>;
+
 /**
- * 完整工具清单——80 个 tool（v1.4.4：corpus_export 新增；v1.4.3：train_status/train_list/train_diagnose 新增；v1.4.2：fde_interview/fde_classify/fde_quantify/fde_derive/fde_distill/fde_deploy 六引擎 + train_doctor/train_dryrun/train_report 新增；v1.4.1：train_submit 新增；v1.4.0：cost_query + browser 4 新增；v1.3.9：worklog_query 新增；v1.3.6：workflow_submit/ontology_import/model_register/model_switch/model_unregister/train_budget/define_acceptance/check_acceptance；v1.3.5：run_ab_test/promote_ab/snapshot_list/snapshot_restore；v1.3.4：commons_publish/search/invoke/rate/retire/harvest_rule；不含 4 个 resource shortcut）
+ * 完整工具清单——105 个 tool（v1.5.0 章八：trace_reconcile 新增——跨层证据对账（104→105：DSH trace vs git diff vs logs 三源比对四态判定 + 模型层回溯链 + 对账结果入 decision-log kind=COVERAGE）；v1.4.9 T7：router_session_push 新增——session 承接面（103→104 终值：97→104 = 批 1 +2、批 2 +2、批 3 +4、批 5 +1；router 伴生 exporter 推送入口，schema 校验 + 本地落盘 + HMAC 挂链 + usage 入 cost 台账）；v1.4.9 G9：device_register/device_list 新增——设备注册面（95→97，T1 设备身份验签 fail-closed + 清单在线态）；v1.4.7：data_push 新增——标准数据推送入口（94→95 终值）；contribution_query 新增——G4 绩效数据导出（93→94）；pr_submit/pr_review/pr_merge 三 tool 新增——G13 PR 生命周期（90→93）；onboard_prompt 新增——上岗 prompt 生成器（89→90）；workflow_gaps 新增——G2 能力缺口查询（88→89）；workflow_create/workflow_update/workflow_node_add/workflow_diff_preview 四 tool 新增——G14 workflow 对象化 CRUD（84→88）；v1.4.6：train_cloud 新增——83→84，云 VM 执行面控制工具；v1.4.5：train_serve/train_compliance/train_deliverable 三件齐——80→83，SKILL.md/ARCHITECTURE 等九处 SSOT 同步收口；v1.4.4：corpus_export 新增；v1.4.3：train_status/train_list/train_diagnose 新增；v1.4.2：fde_interview/fde_classify/fde_quantify/fde_derive/fde_distill/fde_deploy 六引擎 + train_doctor/train_dryrun/train_report 新增；v1.4.1：train_submit 新增；v1.4.0：cost_query + browser 4 新增；v1.3.9：worklog_query 新增；v1.3.6：workflow_submit/ontology_import/model_register/model_switch/model_unregister/train_budget/define_acceptance/check_acceptance；v1.3.5：run_ab_test/promote_ab/snapshot_list/snapshot_restore；v1.3.4：commons_publish/search/invoke/rate/retire/harvest_rule；不含 4 个 resource shortcut）
  */
 export const TOOLS: ToolDef[] = [
   {
@@ -38,6 +168,8 @@ export const TOOLS: ToolDef[] = [
         evolution: { type: 'boolean', description: '附带进化四维趋势', default: false },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => worklogQuery({ ...(args.agentId ? { agentId: args.agentId as string } : {}), ...(args.workflowId ? { workflowId: args.workflowId as string } : {}), ...(args.weeklyTrend !== undefined ? { weeklyTrend: args.weeklyTrend as boolean } : {}), ...(args.evolution !== undefined ? { evolution: args.evolution as boolean } : {}) }),
   },
   {
     // v1.4.0（三）：成本审计查询——预算/实际消耗/超限记录（商业平台 G3 计量接口预留）
@@ -51,6 +183,8 @@ export const TOOLS: ToolDef[] = [
         maxCostPerDay: { type: 'number', description: '查询时临时指定每日成本上限（USD）' },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => costQuery({ ...(args.maxTokensPerRun !== undefined ? { budget: { maxTokensPerRun: args.maxTokensPerRun as number, ...(args.maxCostPerDay !== undefined ? { maxCostPerDay: args.maxCostPerDay as number } : {}) } } : {}) }),
   },
   {
     // v1.4.0（十）：Agentic Browser——Playwright 驱动的浏览器 4 工具（v1.3.9 交付实现，本版注册 MCP 面）
@@ -62,8 +196,9 @@ export const TOOLS: ToolDef[] = [
       properties: {
         url: { type: 'string', description: '目标 URL' },
       },
-      required: ['url'],
     },
+    // v1.4.8 条目 5 首批迁移：查表分发
+    handler: (args, _ctx?) => browserNavigate(args.url as string),
   },
   {
     name: 'playwright_click',
@@ -74,8 +209,9 @@ export const TOOLS: ToolDef[] = [
       properties: {
         selector: { type: 'string', description: 'CSS 选择器' },
       },
-      required: ['selector'],
     },
+    // v1.4.8 条目 5 首批迁移：查表分发
+    handler: (args, _ctx?) => browserClick(args.selector as string),
   },
   {
     name: 'playwright_screenshot',
@@ -87,6 +223,8 @@ export const TOOLS: ToolDef[] = [
         name: { type: 'string', description: '截图文件名（可选）' },
       },
     },
+    // v1.4.8 条目 5 首批迁移：查表分发
+    handler: (args, _ctx?) => browserScreenshot(args.name as string | undefined),
   },
   {
     name: 'playwright_assert',
@@ -97,8 +235,9 @@ export const TOOLS: ToolDef[] = [
       properties: {
         condition: { type: 'string', description: '断言条件（如元素可见/文本存在）' },
       },
-      required: ['condition'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => browserAssert(args.condition as string),
   },
   {
     name: 'run_audit',
@@ -113,6 +252,8 @@ export const TOOLS: ToolDef[] = [
         silent: { type: 'boolean', description: '沉默模式：跳过日志依赖规则，走 diff 启发式回退', default: false },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args, ctx?) => runAudit(args, ctx?.pushAuditWebhook),
   },
   {
     name: 'get_think',
@@ -124,6 +265,8 @@ export const TOOLS: ToolDef[] = [
         count: { type: 'number', description: '返回最近 N 条反思条目（默认 1）', default: 1 },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => getThink(args),
   },
   {
     name: 'write_think',
@@ -137,11 +280,13 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['lesson'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => writeThink(args),
   },
   {
     name: 'sofagent_compose',
     roles: ['fde'],
-    description: '编排引擎——传入任务描述，返回 Sub Agent 编排方案（YAML）。',
+    description: '编排模块——传入任务描述，返回 Sub Agent 编排方案（YAML）。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -151,6 +296,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['task'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => compose(args),
   },
   {
     name: 'audit_file',
@@ -166,6 +313,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['path', 'change_type'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args, ctx?) => auditFile(args, ctx?.pushAuditWebhook),
   },
   {
     name: 'search_knowledge',
@@ -178,6 +327,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['query'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => { const r = searchKnowledge(args); void mergeFederationAsync(args.query as string); return r; },
   },
   {
     name: 'read_entity',
@@ -190,6 +341,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['name'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => readEntity(args),
   },
   {
     name: 'read_concept',
@@ -202,6 +355,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['name'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => readConcept(args),
   },
   {
     name: 'list_entities',
@@ -213,24 +368,32 @@ export const TOOLS: ToolDef[] = [
         domain: { type: 'string', description: 'domain 过滤（可选）' },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => listEntities(args),
   },
   {
     name: 'read_lessons',
     roles: ['fde', 'eval', 'audit'],
     description: '读取踩坑记录（lessons-missteps.md）。',
     inputSchema: { type: 'object', properties: {} },
+    // v1.4.8 条目 5 首批迁移：查表分发
+    handler: (_args, _ctx?) => readLessons(),
   },
   {
     name: 'read_think_md',
     roles: ['fde', 'eval'],
     description: '读取 think.md 完整内容。',
     inputSchema: { type: 'object', properties: {} },
+    // v1.4.8 条目 5 首批迁移：查表分发
+    handler: (_args, _ctx?) => readThinkMd(),
   },
   {
     name: 'stats',
     roles: ['ops'],
     description: '知识库统计（entities/concepts 数 + 最后更新时间）。',
     inputSchema: { type: 'object', properties: {} },
+    // v1.4.8 条目 5 首批迁移：查表分发
+    handler: (_args, _ctx?) => stats(),
   },
   {
     name: 'list_capabilities',
@@ -238,6 +401,8 @@ export const TOOLS: ToolDef[] = [
     // Agent 首次连接拿不到能力地图——S59 回归抓出）。未打标 = 始终暴露（同动态工具机制）。
     description: '返回完整能力清单（tools + resources）——Agent 首次连上时获取能力地图。',
     inputSchema: { type: 'object', properties: {} },
+    // v1.4.8 条目 5 首批迁移：查表分发
+    handler: (_args, _ctx?) => listCapabilities(),
   },
   {
     name: 'data_sovereignty_report',
@@ -249,6 +414,8 @@ export const TOOLS: ToolDef[] = [
         date: { type: 'string', description: '查询日期：today / yesterday / YYYY-MM-DD（默认 today）', default: 'today' },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => { try { return queryDataSovereigntyReport({ date: args.date as string | undefined }); } catch (e) { return { text: `[sofagent] 数据主权审计查询失败：${e instanceof Error ? e.message : String(e)}`, data: { ok: false } }; } },
   },
   {
     name: 'create_entity',
@@ -264,6 +431,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['name', 'domain', 'content'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => { if (!args.name || !args.domain || !args.content) { return { error: 'Missing required argument: name, domain, and content are required' }; } const r = createEntity({ name: args.name as string, domain: args.domain as string, content: args.content as string, ...(args.relations ? { relations: args.relations as string } : {}) }); return { ...r, isError: r.data.isError }; },
   },
   {
     name: 'create_concept',
@@ -277,6 +446,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['name', 'content'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => { if (!args.name || !args.content) { return { error: 'Missing required argument: name and content are required' }; } const r = createConcept({ name: args.name as string, content: args.content as string }); return { ...r, isError: r.data.isError }; },
   },
   {
     // v1.3.1 (交付 5)：Ontology CRUD 补全——字段级更新
@@ -295,6 +466,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['name'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => { if (!args.name) { return { error: 'Missing required argument: name is required' }; } const ur = updateEntity({ name: args.name as string, ...(args.newName ? { newName: args.newName as string } : {}), ...(args.domain !== undefined ? { domain: args.domain as string } : {}), ...(args.description !== undefined ? { description: args.description as string } : {}), ...(args.relations !== undefined ? { relations: args.relations as string } : {}), ...(args.content !== undefined ? { content: args.content as string } : {}) }); return { ...ur, isError: ur.data.isError }; },
   },
   {
     // v1.3.1 (交付 5)：Ontology CRUD 补全——删除 entity，强制人审
@@ -307,8 +480,12 @@ export const TOOLS: ToolDef[] = [
         name: { type: 'string', description: 'entity 名称（不含 .md 后缀）' },
         confirmed: { type: 'boolean', description: '人工确认标志——必须显式 true 才执行删除' },
       },
+      // v1.4.8 条目 5 勘误固化：confirmed 刻意保留在 required（破坏性操作的显式声明），
+      // 但 dispatch 不强制它——confirmed !== true 走「需人工确认」提示的非错误路径（human-confirmed 语义）。
       required: ['name', 'confirmed'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => { if (!args.name) { return { error: 'Missing required argument: name is required' }; } const dr = deleteEntity({ name: args.name as string, confirmed: args.confirmed === true }); return { ...dr, isError: dr.data.isError }; },
   },
   {
     // v1.3.1 (交付 5)：Ontology CRUD 补全——删除 concept，强制人审
@@ -321,8 +498,12 @@ export const TOOLS: ToolDef[] = [
         name: { type: 'string', description: 'concept 名称（不含 .md 后缀）' },
         confirmed: { type: 'boolean', description: '人工确认标志——必须显式 true 才执行删除' },
       },
+      // v1.4.8 条目 5 勘误固化：confirmed 刻意保留在 required（破坏性操作的显式声明），
+      // 但 dispatch 不强制它——confirmed !== true 走「需人工确认」提示的非错误路径（human-confirmed 语义）。
       required: ['name', 'confirmed'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => { if (!args.name) { return { error: 'Missing required argument: name is required' }; } const cr = deleteConcept({ name: args.name as string, confirmed: args.confirmed === true }); return { ...cr, isError: cr.data.isError }; },
   },
   {
     name: 'validate_ontology',
@@ -334,6 +515,8 @@ export const TOOLS: ToolDef[] = [
         fix: { type: 'boolean', description: '是否自动修复可修复的问题（如孤儿实体标记），默认 false' },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => validateOntology({ ...(args.fix !== undefined ? { fix: args.fix as boolean } : {}) }),
   },
   {
     name: 'evaluate_output',
@@ -346,6 +529,8 @@ export const TOOLS: ToolDef[] = [
         verbose: { type: 'boolean', description: '是否输出详细报告', default: false },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => evaluateOutput({ ...(args.golden_set_path ? { golden_set_path: args.golden_set_path as string } : {}), ...(args.verbose !== undefined ? { verbose: args.verbose as boolean } : {}) }),
   },
   {
     name: 'optimize_skill',
@@ -359,6 +544,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['skill_path'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => { if (!args.skill_path) { return { error: 'Missing required argument: skill_path' }; } return optimizeSkill({ skill_path: args.skill_path as string, ...(args.check_only !== undefined ? { check_only: args.check_only as boolean } : {}) }); },
   },
   {
     name: 'health_check',
@@ -371,6 +558,8 @@ export const TOOLS: ToolDef[] = [
         platform: { type: 'string', description: '平台（workbuddy/openclaw/claude/codex/hermes），仅 verify 模式使用' },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => { try { return healthCheck({ ...(args.mode ? { mode: args.mode as 'doctor' | 'verify' } : {}), ...(args.platform ? { platform: args.platform as string } : {}) }); } catch (e) { return { text: `[sofagent] 健康检查失败: ${e instanceof Error ? e.message : String(e)}`, data: { allOk: false, checks: [], mode: args.mode ?? 'doctor' } }; } },
   },
   {
     name: 'audit_data_change',
@@ -384,6 +573,8 @@ export const TOOLS: ToolDef[] = [
         count: { type: 'number', description: '最近 N 次变更（scope 为 recent 时），默认 10' },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => { const r = auditDataChange({ ...(args.scope ? { scope: args.scope as 'recent' | 'entity' | 'concept' | 'all' } : {}), ...(args.name ? { name: args.name as string } : {}), ...(args.count !== undefined ? { count: args.count as number } : {}) }); return { ...r, isError: r.data.isError }; },
   },
   {
     name: 'notify_session',
@@ -400,6 +591,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['audit_type', 'verdict', 'summary'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => { if (!args.audit_type || !args.verdict || !args.summary) { return { error: 'Missing required arguments: audit_type, verdict, and summary are required' }; } return notifySession({ audit_type: args.audit_type as 'code' | 'data' | 'file', verdict: args.verdict as 'PASS' | 'WARN' | 'FAIL', summary: args.summary as string, ...(args.details ? { details: args.details as string[] } : {}), ...(args.think_ref !== undefined ? { think_ref: args.think_ref as boolean } : {}) }); },
   },
   {
     name: 'activate_workflow',
@@ -412,24 +605,32 @@ export const TOOLS: ToolDef[] = [
         node_filter: { type: 'array', items: { type: 'string' }, description: '只激活指定节点（默认全部）' },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => activateWorkflowTool({ ...(args.dry_run !== undefined ? { dry_run: args.dry_run as boolean } : {}), ...(args.node_filter !== undefined ? { node_filter: args.node_filter as string[] } : {}) }),
   },
   {
     name: 'daemon_status',
     roles: ['ops'],
     description: '查询 daemon 运行状态（PID/启动时间/心跳）。只读。',
     inputSchema: { type: 'object', properties: {} },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: () => daemonStatus(),
   },
   {
     name: 'list_agents',
     roles: ['fde', 'agent'],
     description: '列出已注册的 Agent（内置 + 企业 SubAgent）。',
     inputSchema: { type: 'object', properties: {} },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: () => listAgentsTool(),
   },
   {
     name: 'list_concepts',
     roles: ['fde'],
     description: '列出所有 concept。',
     inputSchema: { type: 'object', properties: {} },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: () => listConcepts(),
   },
   {
     name: 'hitl_resolve',
@@ -442,8 +643,9 @@ export const TOOLS: ToolDef[] = [
         decision: { type: 'string', enum: ['approve', 'reject', 'aborted'], description: '人工决策（必填）' },
         comment: { type: 'string', description: '可选备注（如驳回原因）' },
       },
-      required: ['checkpoint_id', 'decision'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => hitlResolve({ checkpoint_id: args.checkpoint_id as string, decision: args.decision as 'approve' | 'reject' | 'aborted', ...(args.comment ? { comment: args.comment as string } : {}) }),
   },
   {
     // v1.3.0 (交付 4)：规则透明化——只读列出规则清单（不暴露实现逻辑）
@@ -456,6 +658,8 @@ export const TOOLS: ToolDef[] = [
         type: { type: 'string', enum: ['tool', 'diff', 'all'], description: '规则类型：tool（运行时）/ diff（提交时）/ all（默认）', default: 'all' },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => listRules({ type: args.type as 'tool' | 'diff' | 'all' | undefined }),
   },
   {
     // v1.3.1 (交付 6)：Agent 独立身份码查询（Ed25519 完整版）
@@ -468,6 +672,8 @@ export const TOOLS: ToolDef[] = [
         agent_id: { type: 'string', description: '目标 Agent 身份码（缺省 = 查自己）' },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => agentIdentityTool({ ...(args.agent_id ? { agentId: args.agent_id as string } : {}) }),
   },
   {
     // v1.3.1 (交付 8)：Onboard Agent L1 调试循环
@@ -483,6 +689,8 @@ export const TOOLS: ToolDef[] = [
         timeout_ms: { type: 'number', description: '超时阈值 ms（默认 120000）' },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { const r = await loopDebug({ ...(typeof args.task === 'string' ? { task: args.task } : {}), ...(typeof args.agent_id === 'string' ? { agent_id: args.agent_id } : {}), ...(typeof args.max_rounds === 'number' ? { max_rounds: args.max_rounds } : {}), ...(typeof args.timeout_ms === 'number' ? { timeout_ms: args.timeout_ms } : {}) }); return { ...r, isError: r.data.isError }; },
   },
   {
     // v1.3.1 (交付 9)：Benchmark 评测
@@ -498,6 +706,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['benchmark_id'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.benchmark_id) { return { error: 'Missing required argument: benchmark_id' }; } const r = await evaluate({ benchmark_id: args.benchmark_id as string, ...(typeof args.case_id === 'string' ? { case_id: args.case_id } : {}), ...(args.query === true ? { query: true } : {}) }); return { ...r, isError: r.data.isError }; },
   },
   {
     // v1.3.1 (交付 7)：跨设备审计轨迹查询
@@ -511,6 +721,8 @@ export const TOOLS: ToolDef[] = [
         include_peers: { type: 'boolean', description: '是否包含跨设备 peer 记录（缺省 false——仅本地）' },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { const r = await auditTrail({ ...(typeof args.agent_id === 'string' ? { agent_id: args.agent_id } : {}), ...(args.include_peers === true ? { include_peers: true } : {}) }); return { ...r, isError: r.data.isError }; },
   },
   {
     // v1.3.2 (交付 5)：一句话需求 → 自动建节点
@@ -525,6 +737,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['requirement'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.requirement) { return { error: 'Missing required argument: requirement' }; } const r = await createAgent({ requirement: args.requirement as string, ...(typeof args.target_dir === 'string' ? { targetDir: args.target_dir } : {}) }); return { ...r, isError: r.data?.isError }; },
   },
   {
     // v1.3.2 (交付 6)：企业专属 eval 套件
@@ -541,6 +755,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['action', 'enterprise_id'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.action || !args.enterprise_id) { return { error: 'Missing required arguments: action and enterprise_id' }; } const er = await evalSuite({ action: args.action as 'instantiate' | 'freeze' | 'run' | 'query', enterprise_id: args.enterprise_id as string, ...(args.industry ? { industry: args.industry as 'finance' | 'manufacturing' | 'supplychain' | 'customerservice' | 'generic' } : {}), ...(args.custom_cases ? { custom_cases: args.custom_cases as any } : {}) }); return { ...er, isError: er.data?.isError }; },
   },
   {
     // v1.3.2 (交付 7右)：FDE 梳理辅助 · v1.4.3 清扫任务三收窄 workflow-only
@@ -555,6 +771,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['action', 'session'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.action || !args.session) { return { error: 'Missing required arguments: action and session' }; } const fr = await fdeCompose({ action: args.action as 'workflow' | 'ontology', session: args.session as any }); return { ...fr, isError: fr.data?.isError }; },
   },
   {
     // v1.3.3 (交付 T01)：入口路由
@@ -569,6 +787,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['task', 'workflow'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => { if (!args.task || !args.workflow) { return { error: 'Missing required arguments: task and workflow' }; } const rr = routeWorkflowTool({ task: args.task as string, workflow: args.workflow as any }); return { ...rr, isError: rr.isError }; },
   },
   {
     // v1.3.3 (交付 T02)：团队协作——建队
@@ -582,6 +802,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['team_yaml'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => { if (!args.team_yaml) { return { error: 'Missing required argument: team_yaml' }; } const tcr = teamCreate({ teamYaml: args.team_yaml as string }); return { ...tcr, isError: tcr.isError }; },
   },
   {
     // v1.3.3 (交付 T02)：团队协作——意图广播
@@ -599,6 +821,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['team_id', 'source', 'intent', 'target'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => { if (!args.team_id || !args.source || !args.intent || !args.target) { return { error: 'Missing required arguments: team_id, source, intent, and target' }; } const tbr = teamBroadcast({ teamId: args.team_id as string, source: args.source as string, intent: args.intent as string, target: args.target as string, ...(typeof args.payload === 'string' ? { payload: args.payload } : {}) }); return { ...tbr, isError: tbr.isError }; },
   },
   {
     // v1.3.3 (交付 T03/T04)：Refine Agent 质量优化循环
@@ -615,6 +839,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['action'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.action) { return { error: 'Missing required argument: action' }; } const rfr = await refine({ action: args.action as 'trigger' | 'query', ...(typeof args.agent_id === 'string' ? { agentId: args.agent_id } : {}), ...(typeof args.task === 'string' ? { task: args.task } : {}), ...(typeof args.team_id === 'string' ? { teamId: args.team_id } : {}) }); return { ...rfr, isError: rfr.isError }; },
   },
   {
     // v1.3.4 (交付 1)：能力发布
@@ -641,6 +867,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['metadata'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => { if (!args.metadata) { return { error: 'Missing required argument: metadata' }; } const mpr = commonsPublish({ metadata: args.metadata as any }); return { ...mpr, isError: mpr.isError }; },
   },
   {
     // v1.3.4 (交付 1)：能力检索
@@ -655,6 +883,8 @@ export const TOOLS: ToolDef[] = [
         kind: { type: 'string', enum: ['skill', 'agent', 'flow'], description: '按类型过滤' },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => commonsSearch({ ...(typeof args.query === 'string' ? { query: args.query } : {}), ...(typeof args.tag === 'string' ? { tag: args.tag } : {}), ...(typeof args.kind === 'string' ? { kind: args.kind as 'skill' | 'agent' | 'flow' } : {}) }),
   },
   {
     // v1.3.4 (交付 2)：能力调用
@@ -670,6 +900,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['capability_id', 'caller_agent_id'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.capability_id || !args.caller_agent_id) { return { error: 'Missing required arguments: capability_id and caller_agent_id' }; } const mir = await commonsInvoke({ capability_id: args.capability_id as string, caller_agent_id: args.caller_agent_id as string, ...(args.input !== undefined ? { input: args.input } : {}) }); return { ...mir, isError: mir.isError }; },
   },
   {
     // v1.3.4 (交付 2)：能力评价
@@ -687,6 +919,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['capability_id', 'rater_id', 'score', 'owner_agent_id'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.capability_id || !args.rater_id || !args.owner_agent_id || typeof args.score !== 'number') { return { error: 'Missing required arguments: capability_id, rater_id, score, owner_agent_id' }; } const mrr = await commonsRate({ capability_id: args.capability_id as string, rater_id: args.rater_id as string, score: args.score as number, owner_agent_id: args.owner_agent_id as string, ...(typeof args.comment === 'string' ? { comment: args.comment } : {}) }); return { ...mrr, isError: mrr.isError }; },
   },
   {
     // v1.3.4 (交付 3)：能力退役
@@ -703,6 +937,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['capability_id', 'action'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.capability_id || !args.action) { return { error: 'Missing required arguments: capability_id and action' }; } const mtr = await commonsRetire({ capability_id: args.capability_id as string, action: args.action as 'retire' | 'restore' | 'scan', ...(args.reason ? { reason: args.reason as 'owner_request' | 'low_invoke' | 'low_rating' | 'manual' } : {}), ...(args.confirmed !== undefined ? { confirmed: args.confirmed as boolean } : {}) }); return { ...mtr, isError: mtr.isError }; },
   },
   {
     // v1.3.4 (交付 5)：规则提炼
@@ -716,6 +952,8 @@ export const TOOLS: ToolDef[] = [
         case_texts: { type: 'array', items: { type: 'string' }, description: '可选：注入的案例文本（FDE delivery-report 格式）' },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { const mhr = await commonsHarvestRule({ ...(args.action ? { action: args.action as 'harvest' | 'full' } : {}), ...(args.case_texts ? { case_texts: args.case_texts as string[] } : {}) }); return { ...mhr, isError: mhr.isError }; },
   },
   {
     // v1.3.5 (交付 1)：A/B 实验发起
@@ -733,6 +971,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['current', 'candidate'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.current || !args.candidate) { return { error: 'Missing required arguments: current and candidate' }; } const abr = await runAbTest({ current: args.current as string, candidate: args.candidate as string, ...(typeof args.eval_set === 'string' ? { eval_set: args.eval_set } : {}), ...(typeof args.promote_threshold === 'number' ? { promote_threshold: args.promote_threshold } : {}), ...(typeof args.previous_wins === 'number' ? { previous_wins: args.previous_wins } : {}) }); return { ...abr, isError: abr.data.isError }; },
   },
   {
     // v1.3.5 (交付 1)：A/B 晋升（强制人审）
@@ -749,6 +989,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['current', 'candidate'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.current || !args.candidate) { return { error: 'Missing required arguments: current and candidate' }; } const pbr = await promoteAb({ current: args.current as string, candidate: args.candidate as string, ...(args.human_confirmed !== undefined ? { human_confirmed: args.human_confirmed === true } : {}), ...(typeof args.comment === 'string' ? { comment: args.comment } : {}) }); return { ...pbr, isError: pbr.data.isError }; },
   },
   {
     // v1.3.5 (交付 2)：快照时间线（只读）
@@ -762,6 +1004,8 @@ export const TOOLS: ToolDef[] = [
         limit: { type: 'number', description: '返回最近 N 条（默认 10，0 = 全量）', default: 10 },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => { const slr = snapshotList({ ...(typeof args.project_dir === 'string' ? { project_dir: args.project_dir } : {}), ...(typeof args.limit === 'number' ? { limit: args.limit } : {}) }); return { ...slr, isError: slr.data.isError }; },
   },
   {
     // v1.3.5 (交付 2)：快照恢复（强制人审）
@@ -778,6 +1022,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['sha'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.sha) { return { error: 'Missing required argument: sha' }; } const srr = await snapshotRestore({ sha: args.sha as string, ...(typeof args.project_dir === 'string' ? { project_dir: args.project_dir } : {}), ...(args.human_confirmed !== undefined ? { human_confirmed: args.human_confirmed === true } : {}), ...(typeof args.comment === 'string' ? { comment: args.comment } : {}) }); return { ...srr, isError: srr.data.isError }; },
   },
   {
     // v1.3.6 (交付 ①)：Workflow 外部提交通道——模型层生成的 workflow 从 MCP 进约束层
@@ -793,6 +1039,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['workflow'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.workflow) { return { error: 'Missing required argument: workflow' }; } const wsr = await workflowSubmit({ workflow: args.workflow as string, ...(args.mode === 'run' ? { mode: 'run' as const } : {}), ...(typeof args.task === 'string' ? { task: args.task } : {}) }); return { ...wsr, isError: wsr.data.isError }; },
   },
   {
     // v1.3.6 (交付 ②)：Ontology 标准注入通道——模型层生成的 ontology 从 MCP 进约束层
@@ -808,6 +1056,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['payload'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.payload) { return { error: 'Missing required argument: payload' }; } const oir = await ontologyImport({ payload: args.payload as string, ...(typeof args.agent_id === 'string' ? { agent_id: args.agent_id } : {}), ...(typeof args.comment === 'string' ? { comment: args.comment } : {}) }); return { ...oir, isError: oir.data.isError }; },
   },
   {
     // v1.3.6 (交付 ④)：模型注册——评测→注册→灰度→晋升→退役闭环第一站
@@ -838,8 +1088,10 @@ export const TOOLS: ToolDef[] = [
           },
         },
       },
-      required: ['name', 'endpoint', 'model'],
+      required: ['name'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.name) { return { error: 'Missing required argument: name' }; } const mrr = await modelRegister({ name: args.name as string, endpoint: (args.endpoint as string) ?? '', model: (args.model as string) ?? '', ...(args.client_type === 'openai-compatible' || args.client_type === 'ollama' ? { client_type: args.client_type } : {}), ...(args.source === 'endpoint' || args.source === 'local-path' ? { source: args.source } : {}), ...(typeof args.weights_dir === 'string' ? { weights_dir: args.weights_dir } : {}), ...(typeof args.verify_hash === 'boolean' ? { verify_hash: args.verify_hash } : {}), ...(typeof args.eval_score === 'number' ? { eval_score: args.eval_score } : {}), ...(typeof args.comment === 'string' ? { comment: args.comment } : {}), ...(args.profile !== undefined ? { profile: args.profile as ModelRegisterArgs['profile'] } : {}) }); return { ...mrr, isError: mrr.data.isError }; },
   },
   {
     // v1.3.6 (交付 ④)：模型灰度切换/晋升/回滚——晋升强制人审（对齐 promote_ab）
@@ -858,6 +1110,8 @@ export const TOOLS: ToolDef[] = [
         comment: { type: 'string', description: '备注（灰度依据 / 回滚原因，写入事件留痕）' },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { const msr = await modelSwitch({ ...(typeof args.name === 'string' ? { name: args.name } : {}), lane: args.lane === 'pipeline' ? 'pipeline' : 'executor', ...(typeof args.percent === 'number' ? { percent: args.percent } : {}), action: args.action === 'rollback' ? 'rollback' : args.action === 'rollback-weights' ? 'rollback-weights' : 'switch', ...(typeof args.target_version === 'string' ? { target_version: args.target_version } : {}), ...(args.human_confirmed !== undefined ? { human_confirmed: args.human_confirmed === true } : {}), ...(typeof args.comment === 'string' ? { comment: args.comment } : {}) }); return { ...msr, isError: msr.data.isError }; },
   },
   {
     // v1.3.6 (交付 ④)：模型退役/恢复——强制人审，对齐 v1.3.4 养护环 + v1.3.5 promote_ab
@@ -874,6 +1128,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['name'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.name) { return { error: 'Missing required argument: name' }; } const mur = await modelUnregister({ name: args.name as string, action: args.action === 'restore' ? 'restore' : 'retire', ...(args.human_confirmed !== undefined ? { human_confirmed: args.human_confirmed === true } : {}), ...(typeof args.comment === 'string' ? { comment: args.comment } : {}) }); return { ...mur, isError: mur.data.isError }; },
   },
   {
     // v1.3.6 (交付 ⑦)：训练预算控制——查预算 / 超预算人审续跑或终止
@@ -889,6 +1145,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['action', 'job_id'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.action) { return { error: 'Missing required argument: action' }; } if (!args.job_id) { return { error: 'Missing required argument: job_id' }; } const tbr = await trainBudget({ action: args.action as 'status' | 'resolve', job_id: args.job_id as string, ...(args.decision === 'resume' || args.decision === 'terminate' ? { decision: args.decision } : {}) }); return { ...tbr, isError: tbr.data.isError }; },
   },
   {
     // v1.4.1 (块二)：训练任务提交——生成 trainJobId（编排层 train-scheduler 接管 spawn）
@@ -916,12 +1174,14 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['data_path', 'base_model', 'algorithm', 'enterprise_id'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.data_path) { return { error: 'Missing required argument: data_path' }; } if (!args.base_model) { return { error: 'Missing required argument: base_model' }; } if (!args.algorithm) { return { error: 'Missing required argument: algorithm' }; } if (!args.enterprise_id) { return { error: 'Missing required argument: enterprise_id' }; } const tsr = await trainSubmit({ data_path: args.data_path as string, base_model: args.base_model as string, algorithm: args.algorithm as 'sft' | 'dpo' | 'grpo', ...(args.hyperparams !== undefined && typeof args.hyperparams === 'object' ? { hyperparams: args.hyperparams as Record<string, unknown> } : {}), ...(args.budget !== undefined && typeof args.budget === 'object' ? { budget: args.budget as { max_minutes?: number; max_steps?: number; max_cost?: number } } : {}), enterprise_id: args.enterprise_id as string, ...(typeof args.train_job_id === 'string' ? { train_job_id: args.train_job_id } : {}) }); return { ...tsr, isError: tsr.data.isError }; },
   },
   {
     // v1.4.2 (章四)：训练环境体检——CUDA/显存/框架/基座缓存四项只查不装
     name: 'train_doctor',
     roles: ['eval', 'ops'],
-    description: '训练环境体检——CUDA/显存/框架版本/基座模型缓存四项 + 反作弊基线三项（git 禁用/.git 可见性/网络白名单）结构化报告（只查不装；装环境走 train env init，基座下载走 model-downloader）。',
+    description: '训练环境体检——CUDA/显存/框架版本/基座模型缓存四项 + 反作弊基线三项（git 禁用/.git 可见性/网络白名单）结构化报告（只查不装；装环境走 bash tools/train/train-env-init.sh，基座模型手动放置或推理服务拉取）。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -930,6 +1190,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['enterprise_id'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.enterprise_id) { return { error: 'Missing required argument: enterprise_id' }; } const tdr = await trainDoctorTool({ enterprise_id: args.enterprise_id as string, ...(typeof args.dataset_mount_path === 'string' ? { dataset_mount_path: args.dataset_mount_path } : {}) }); return { ...tdr, isError: tdr.data.isError }; },
   },
   {
     // v1.4.2 (章五)：训练 dry-run——失败前预防（管线连通/数据抽样/显存/算力外推）
@@ -980,6 +1242,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['data_path', 'algorithm'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.data_path) { return { error: 'Missing required argument: data_path' }; } if (!args.algorithm) { return { error: 'Missing required argument: algorithm' }; } const dyr = await trainDryrunTool({ data_path: args.data_path as string, algorithm: args.algorithm as 'sft' | 'dpo' | 'grpo', ...(args.column_mapping !== undefined && typeof args.column_mapping === 'object' ? { column_mapping: args.column_mapping as Record<string, string> } : {}), ...(args.vram !== undefined && typeof args.vram === 'object' ? { vram: args.vram as TrainDryrunArgs['vram'] } : {}), ...(args.extrapolate !== undefined && typeof args.extrapolate === 'object' ? { extrapolate: args.extrapolate as TrainDryrunArgs['extrapolate'] } : {}) }); return { ...dyr, isError: dyr.data.isError }; },
   },
   {
     // v1.4.2 (章六)：训练报告——客户可读交付物（量化四字段 + 归档 dashboard）
@@ -1009,6 +1273,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['train_job_id', 'enterprise_id'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.train_job_id) { return { error: 'Missing required argument: train_job_id' }; } if (!args.enterprise_id) { return { error: 'Missing required argument: enterprise_id' }; } const trr = await trainReportTool({ train_job_id: args.train_job_id as string, enterprise_id: args.enterprise_id as string, ...(args.baseline_eval !== undefined && typeof args.baseline_eval === 'object' ? { baseline_eval: args.baseline_eval as Record<string, unknown> } : {}), ...(args.after_eval !== undefined && typeof args.after_eval === 'object' ? { after_eval: args.after_eval as Record<string, unknown> } : {}), ...(args.dataset_version !== undefined && typeof args.dataset_version === 'object' ? { dataset_version: args.dataset_version as Record<string, unknown> } : {}), ...(args.quantification !== undefined && typeof args.quantification === 'object' ? { quantification: args.quantification as NonNullable<TrainReportArgs['quantification']> } : {}), ...(Array.isArray(args.artifacts) ? { artifacts: args.artifacts as string[] } : {}) }); return { ...trr, isError: trr.data.isError }; },
   },
   {
     // v1.4.3 (第一章)：训练进度查询——MCP 客户端长任务轮询入口
@@ -1024,6 +1290,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['train_job_id', 'enterprise_id'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.train_job_id) { return { error: 'Missing required argument: train_job_id' }; } if (!args.enterprise_id) { return { error: 'Missing required argument: enterprise_id' }; } const tsr = await trainStatusTool({ train_job_id: args.train_job_id as string, enterprise_id: args.enterprise_id as string, ...(typeof args.last_n === 'number' ? { last_n: args.last_n } : {}) }); return { ...tsr, isError: tsr.data.isError }; },
   },
   {
     // v1.4.3 (第一章)：历史任务列表——FDE 交付复盘、多任务管理
@@ -1041,6 +1309,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['enterprise_id'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.enterprise_id) { return { error: 'Missing required argument: enterprise_id' }; } const tlr = await trainListTool({ enterprise_id: args.enterprise_id as string, ...(typeof args.status === 'string' ? { status: args.status } : {}), ...(typeof args.base_model === 'string' ? { base_model: args.base_model } : {}), ...(typeof args.last_days === 'number' ? { last_days: args.last_days } : {}), ...(typeof args.limit === 'number' ? { limit: args.limit } : {}) }); return { ...tlr, isError: tlr.data.isError }; },
   },
   {
     // v1.4.3 (第二章)：训练失败诊断——七类分类 + 上下文 + 处方
@@ -1056,6 +1326,88 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['train_job_id', 'enterprise_id'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.train_job_id) { return { error: 'Missing required argument: train_job_id' }; } if (!args.enterprise_id) { return { error: 'Missing required argument: enterprise_id' }; } const tdr2 = await trainDiagnoseTool({ train_job_id: args.train_job_id as string, enterprise_id: args.enterprise_id as string, ...(typeof args.save === 'boolean' ? { save: args.save } : {}) }); return { ...tdr2, isError: tdr2.data.isError }; },
+  },
+  {
+    // v1.4.5 (第四章)：FDE 训练交付包——五件聚合 + manifest + HMAC 签名
+    name: 'train_deliverable',
+    roles: ['eval', 'ops'],
+    description: 'FDE 训练交付包——generate 聚合五件（训练配置模板+数据管道配置+eval基线冻结+运维手册+权重清单含回滚点）打 zip + manifest + HMAC 签名；verify 逐项核对完整性 + 环境兼容性（企业收包侧体检）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['generate', 'verify'], description: '🔴 动作：generate 生成交付包 / verify 校验既有包' },
+        enterprise_id: { type: 'string', description: '🔴 企业标识（隔离分区依赖）' },
+        train_job_id: { type: 'string', description: '血缘任务标识（可选——缺省取最新 completed job）' },
+        dataset_id: { type: 'string', description: '数据集标识（可选——缺省取版本台账最新）' },
+        contact: { type: 'string', description: 'FDE 联系方式（可选——写入运维手册联系方式段）' },
+        zip_path: { type: 'string', description: '待校验交付包路径（verify 必填）' },
+      },
+      required: ['enterprise_id'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.enterprise_id) { return { error: 'Missing required argument: enterprise_id' }; } const tdl = await trainDeliverableTool({ action: args.action === 'verify' ? 'verify' : 'generate', enterprise_id: args.enterprise_id as string, ...(typeof args.train_job_id === 'string' ? { train_job_id: args.train_job_id } : {}), ...(typeof args.dataset_id === 'string' ? { dataset_id: args.dataset_id } : {}), ...(typeof args.contact === 'string' ? { contact: args.contact } : {}), ...(typeof args.zip_path === 'string' ? { zip_path: args.zip_path } : {}) }); return { ...tdl, isError: tdl.data.isError }; },
+  },
+  {
+    // v1.4.5 (第一章)：推理服务生命周期——从权重目录拉起 vLLM/Ollama/OpenAI 兼容端点
+    name: 'train_serve',
+    roles: ['eval', 'ops'],
+    description: '推理服务生命周期——从权重目录拉起 vLLM/Ollama/OpenAI 兼容端点（/health 就绪探测 + 指数退避重试）+ 启停重启状态四操作；每次启停记 train_serve 审计事件（谁启的/哪个模型/哪个节点）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        enterprise_id: { type: 'string', description: '🔴 企业标识（serve 状态分区 + 审计隔离依赖）' },
+        model_name: { type: 'string', description: '🔴 注册模型名（定位服务）' },
+        action: { type: 'string', enum: ['start', 'stop', 'restart', 'status'], description: '操作（缺省 status）', default: 'status' },
+        weights_dir: { type: 'string', description: '权重目录（start/restart 必填——weights-manifest 目录规范）' },
+        backend: { type: 'string', enum: ['vllm', 'ollama', 'openai-compatible'], description: '拉起后端（缺省 vllm——三者都暴露 OpenAI 兼容端点）', default: 'vllm' },
+        host: { type: 'string', description: '监听地址（缺省 127.0.0.1）' },
+        port: { type: 'number', description: '端口（缺省 8000）' },
+        model_id: { type: 'string', description: '服务端模型标识（缺省同 model_name）' },
+        extra_args: { type: 'array', items: { type: 'string' }, description: '后端附加参数（透传）' },
+        actor: { type: 'string', description: '操作者（审计留痕——缺省 mcp-train-serve）' },
+      },
+      required: ['enterprise_id', 'model_name'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.enterprise_id) { return { error: 'Missing required argument: enterprise_id' }; } if (!args.model_name) { return { error: 'Missing required argument: model_name' }; } const action = args.action === 'start' || args.action === 'stop' || args.action === 'restart' ? args.action : 'status'; if ((action === 'start' || action === 'restart') && typeof args.weights_dir !== 'string') { return { error: `Missing required argument: weights_dir (action=${action})` }; } const tvr = await trainServeTool({ enterprise_id: args.enterprise_id as string, model_name: args.model_name as string, action, ...(typeof args.weights_dir === 'string' ? { weights_dir: args.weights_dir } : {}), ...(args.backend === 'vllm' || args.backend === 'ollama' || args.backend === 'openai-compatible' ? { backend: args.backend } : {}), ...(typeof args.host === 'string' ? { host: args.host } : {}), ...(typeof args.port === 'number' ? { port: args.port } : {}), ...(typeof args.model_id === 'string' ? { model_id: args.model_id } : {}), ...(Array.isArray(args.extra_args) ? { extra_args: args.extra_args as string[] } : {}), ...(typeof args.actor === 'string' ? { actor: args.actor } : {}) }); return { ...tvr, isError: tvr.data.isError }; },
+  },
+  {
+    // v1.4.6 (章二)：云 VM 执行面——注册/列表/状态/注销云 VM（控制面本地 / 执行面云上）
+    name: 'train_cloud',
+    roles: ['eval', 'ops'],
+    description: '云 VM 执行面——注册云 VM（endpoint + 凭据引用走虚拟 key 边界，真实凭据不落明文）/ 列出 / 查状态 / 注销；远程 spawn 训练走 ssh 通道（stdout JSON 回流）+ 分拣闸（敏感档拦上云，依据入审计链）+ 失联止损 + 成本入预算。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['add', 'list', 'status', 'remove'], description: '操作（缺省 list）', default: 'list' },
+        name: { type: 'string', description: '云 VM 注册名（add/status/remove 必填）' },
+        endpoint: { type: 'string', description: 'endpoint（add 必填——ssh user@host 或云 API endpoint）' },
+        credential_ref: { type: 'string', description: '凭据引用（虚拟 key 引用——真实凭据不落明文）' },
+      },
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { const tcAction = args.action === 'add' || args.action === 'status' || args.action === 'remove' ? args.action : 'list'; if ((tcAction === 'add' || tcAction === 'status' || tcAction === 'remove') && typeof args.name !== 'string') { return { error: `Missing required argument: name (action=${tcAction})` }; } if (tcAction === 'add' && typeof args.endpoint !== 'string') { return { error: 'Missing required argument: endpoint (action=add)' }; } const tcr = await trainCloud({ action: tcAction, ...(typeof args.name === 'string' ? { name: args.name } : {}), ...(typeof args.endpoint === 'string' ? { endpoint: args.endpoint } : {}), ...(typeof args.credential_ref === 'string' ? { credential_ref: args.credential_ref } : {}) }); return { ...tcr, isError: tcr.data.isError }; },
+  },
+  {
+    // v1.4.5 (第三章)：训练数据合规扫描——合规红线代码化（训练闸）
+    name: 'train_compliance',
+    roles: ['eval', 'ops'],
+    description: '训练数据合规扫描——PII（姓名/手机号/身份证）+ 敏感字段（健康/财务）+ 企业专有名词三类风险项（复用 v1.4.4 redactor 红名单检测）；报告（发现项+严重度+处置建议）写训练集版本；严重级发现阻断训练提交；数据来源标记（企业提供/合成/公开语料）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        enterprise_id: { type: 'string', description: '🔴 企业标识（隔离分区依赖）' },
+        dataset_id: { type: 'string', description: '🔴 数据集标识' },
+        version: { type: 'string', description: '🔴 数据集版本（versions.jsonl 的 version）' },
+        action: { type: 'string', enum: ['scan', 'gate', 'mark'], description: '操作（缺省 scan）：scan 扫描+写版本 / gate 只断言 / mark 来源标记', default: 'scan' },
+        provenance: { type: 'string', enum: ['enterprise', 'synthetic', 'public'], description: '数据来源标记（mark 必填；scan 可选同扫同标）' },
+      },
+      required: ['enterprise_id', 'dataset_id', 'version'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.enterprise_id) { return { error: 'Missing required argument: enterprise_id' }; } if (!args.dataset_id) { return { error: 'Missing required argument: dataset_id' }; } if (!args.version) { return { error: 'Missing required argument: version' }; } const cAction = args.action === 'gate' || args.action === 'mark' ? args.action : 'scan'; if (cAction === 'mark' && !args.provenance) { return { error: 'Missing required argument: provenance (action=mark)' }; } const tcr = await trainComplianceTool({ enterprise_id: args.enterprise_id as string, dataset_id: args.dataset_id as string, version: args.version as string, action: cAction, ...(args.provenance === 'enterprise' || args.provenance === 'synthetic' || args.provenance === 'public' ? { provenance: args.provenance } : {}) }); return { ...tcr, isError: tcr.data.isError }; },
   },
   {
     // v1.3.6 (交付 ⑨)：验收条件定义——任务创建时附机器可判定验收条件
@@ -1087,6 +1439,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['task_id', 'criteria'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.task_id) { return { error: 'Missing required argument: task_id' }; } if (!Array.isArray(args.criteria) || (args.criteria as unknown[]).length === 0) { return { error: 'Missing or empty required argument: criteria' }; } const dar = await defineAcceptance({ task_id: args.task_id as string, criteria: args.criteria as Array<Record<string, unknown>>, ...(typeof args.notes === 'string' ? { notes: args.notes } : {}) }); return { ...dar, isError: dar.data.isError }; },
   },
   {
     // v1.3.6 (交付 ⑨)：验收执行——修改后跑验收返回结构化结果
@@ -1101,6 +1455,253 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['task_id'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.task_id) { return { error: 'Missing required argument: task_id' }; } const car = await checkAcceptance({ task_id: args.task_id as string, ...(typeof args.project_root === 'string' ? { project_root: args.project_root } : {}) }); return { ...car, isError: car.data.isError }; },
+  },
+  {
+    // v1.4.7 (章三 G14)：workflow 对象化 CRUD——LUI Agent 读写入口（四 tool 之一）
+    name: 'workflow_create',
+    roles: ['agent'],
+    description: '新建 workflow 对象——schema-gate 校验（结构 + cron 语法）后落库 version=1，owner 持有 trunk 直改权；每次落库挂 decision-log 审计。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflow: {
+          type: 'object',
+          description: 'workflow 文档（name/nodes 必填；节点支持 trigger.schedule 定时触发 + visibility 三级可见性）',
+          properties: {
+            name: { type: 'string', description: 'workflow 名称（兼作存储主键 id）' },
+            description: { type: 'string', description: 'workflow 描述' },
+            nodes: {
+              type: 'array',
+              description: '节点列表（至少 1 个）',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string', description: '节点唯一标识' },
+                  agent: { type: 'string', description: 'Agent 类型（内置 4 类 / registry / agent-creation 兜底）' },
+                  task: { type: 'string', description: '节点任务描述' },
+                  depends_on: { type: 'array', items: { type: 'string' }, description: '上游节点 id' },
+                  type: { type: 'string', enum: ['loop', 'auto', 'manual'], description: '节点类型（缺省 auto）' },
+                  hitl: { type: 'boolean', description: '是否人工确认' },
+                  trigger: {
+                    type: 'object',
+                    properties: { schedule: { type: 'string', description: '定时触发周期——糖宏（@daily/@weekly/@monthly）或五段 cron；非法 cron 拒绝' } },
+                  },
+                  visibility: { type: 'string', enum: ['open', 'private', 'result-only'], description: '节点可见性（缺省 open）' },
+                },
+                required: ['id', 'agent', 'task'],
+              },
+            },
+            merge_criteria: { type: 'array', items: { type: 'object' }, description: '审阅协议：可叠加验收条件' },
+            approver: { type: 'object', description: '审阅协议：审阅批准者' },
+          },
+          required: ['name', 'nodes'],
+        },
+        owner: { type: 'string', description: '创建者标识（trunk 直改权持有人）' },
+        description: { type: 'string', description: 'workflow 描述（可选）' },
+        data_dir: { type: 'string', description: '数据根目录（缺省走 getDataDir 解析链）' },
+      },
+      required: ['workflow', 'owner'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.workflow || !args.owner) { return { error: 'Missing required arguments: workflow and owner' }; } const wcr = await workflowCreateTool(args); return { ...wcr, isError: wcr.data.isError }; },
+  },
+  {
+    // v1.4.7 (章三 G14)：workflow 全量更新——owner 直改 trunk / 非 owner 开 branch
+    name: 'workflow_update',
+    roles: ['agent'],
+    description: '全量替换 workflow 文档——owner 直改 trunk（version+1）；非 owner 写 branch-{actor}（trunk 不动，等审阅合并）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflow_id: { type: 'string', description: 'workflow 标识' },
+        workflow: { type: 'object', description: 'workflow 文档（与 workflow_create 同构，name 必填）' },
+        actor: { type: 'string', description: '操作者（=owner 直改 trunk；否则开 branch）' },
+        data_dir: { type: 'string', description: '数据根目录（缺省走 getDataDir 解析链）' },
+      },
+      required: ['workflow_id', 'workflow', 'actor'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.workflow_id || !args.workflow || !args.actor) { return { error: 'Missing required arguments: workflow_id, workflow, and actor' }; } const wur = await workflowUpdateTool(args); return { ...wur, isError: wur.data.isError }; },
+  },
+  {
+    // v1.4.7 (章三 G14)：workflow 追加单节点——上岗 prompt 产物落点（与 onboard_prompt 闭环）
+    name: 'workflow_node_add',
+    roles: ['agent'],
+    description: '向既有 workflow 追加单节点（增量改）——节点 id 重复/depends_on 悬空/cron 非法拒绝；owner 直改 trunk，非 owner 写 branch。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflow_id: { type: 'string', description: 'workflow 标识' },
+        node: {
+          type: 'object',
+          description: '追加节点（id/agent/task 必填；可选 trigger.schedule / visibility）',
+          properties: {
+            id: { type: 'string', description: '节点唯一标识' },
+            agent: { type: 'string', description: 'Agent 类型' },
+            task: { type: 'string', description: '节点任务描述' },
+            depends_on: { type: 'array', items: { type: 'string' }, description: '上游节点 id（须已存在）' },
+            type: { type: 'string', enum: ['loop', 'auto', 'manual'], description: '节点类型（缺省 auto）' },
+            hitl: { type: 'boolean', description: '是否人工确认' },
+            trigger: {
+              type: 'object',
+              properties: { schedule: { type: 'string', description: '定时触发周期（糖宏或五段 cron）' } },
+            },
+            visibility: { type: 'string', enum: ['open', 'private', 'result-only'], description: '节点可见性（缺省 open）' },
+          },
+          required: ['id', 'agent', 'task'],
+        },
+        actor: { type: 'string', description: '操作者（=owner 直改 trunk；否则开 branch）' },
+        data_dir: { type: 'string', description: '数据根目录（缺省走 getDataDir 解析链）' },
+      },
+      required: ['workflow_id', 'node', 'actor'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.workflow_id || !args.node || !args.actor) { return { error: 'Missing required arguments: workflow_id, node, and actor' }; } const wnr = await workflowNodeAddTool(args); return { ...wnr, isError: wnr.data.isError }; },
+  },
+  {
+    // v1.4.7 (章三 G14)：workflow 变更预览——只读零副作用
+    name: 'workflow_diff_preview',
+    roles: ['agent'],
+    description: '对比传入文档与 trunk 当前的行级差异（unified 风格 + 增删行数）——只读零副作用，落库前先预览。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflow_id: { type: 'string', description: 'workflow 标识' },
+        workflow: { type: 'object', description: '待对比 workflow 文档（与 workflow_create 同构）' },
+        actor: { type: 'string', description: '操作者' },
+        data_dir: { type: 'string', description: '数据根目录（缺省走 getDataDir 解析链）' },
+      },
+      required: ['workflow_id', 'workflow', 'actor'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.workflow_id || !args.workflow || !args.actor) { return { error: 'Missing required arguments: workflow_id, workflow, and actor' }; } const wdr = await workflowDiffPreviewTool(args); return { ...wdr, isError: wdr.data.isError }; },
+  },
+  {
+    // v1.4.7 (章五 G2)：能力缺口查询——商业平台悬赏数据源
+    name: 'workflow_gaps',
+    roles: ['ops'],
+    description: 'workflow 能力缺口分析——扫描 workflow-store 声明节点 vs worklog 实际执行，产出三类缺口清单（缺人/缺能力/待升级），可被商业平台消费转悬赏。纯读零写入。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        window_days: { type: 'number', description: '统计窗口天数（缺省 30）' },
+        data_dir: { type: 'string', description: '数据根目录（缺省走 getDataDir 解析链）' },
+      },
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { const wgr = await workflowGaps(args); return { ...wgr, isError: wgr.data.isError }; },
+  },
+  {
+    // v1.4.7 (章七 G13)：PR 生命周期——提交（open 态 + 贡献者登记 + triggerBinding 两态）
+    name: 'pr_submit',
+    roles: ['agent'],
+    description: '提交 workflow 变更提案（PR）——open 态入库 + 贡献者登记（人/数字员工同标准权重，weight 须 0-1 数值、声明 ≤10 条）+ 可选 triggerBinding（启发式=suggested / 显式=confirmed，显式不被启发式覆盖）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pr_id: { type: 'string', description: 'PR 标识' },
+        workflow_id: { type: 'string', description: '目标 workflow' },
+        title: { type: 'string', description: '变更描述' },
+        submitter: { type: 'string', description: '提交者（贡献者之一，权重 1.0）' },
+        contributors: { type: 'array', items: { type: 'object' }, description: '额外贡献者（[{contributor_id, weight}]，weight 0-1，≤10 条）' },
+        merge_criteria: { type: 'array', items: { type: 'object' }, description: '验收条件（内置 kind：approver-review / confidence-min(如 detail:"gte:0.7")；未知 kind 判不过走 HITL）' },
+        trigger: { type: 'object', description: '触发绑定 {source, confidence: suggested|confirmed}' },
+        data_dir: { type: 'string', description: '数据根目录（缺省走 getDataDir 解析链）' },
+      },
+      required: ['pr_id', 'workflow_id', 'title', 'submitter'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.pr_id || !args.workflow_id || !args.title || !args.submitter) { return { error: 'Missing required arguments: pr_id, workflow_id, title, and submitter' }; } const psr = await prSubmit(args); return { ...psr, isError: psr.data.isError }; },
+  },
+  {
+    // v1.4.7 (章七 G13)：PR 审阅（approve → reviewed / reject → rejected + 负样本留痕）
+    name: 'pr_review',
+    roles: ['agent'],
+    description: '审阅 PR——approve 进 reviewed（可合并）；reject 终态 rejected（拒因进 decision-log 负样本训练信号）。提交者不可自审（利益冲突拒绝）；verdict 精确匹配 approve/reject（大小写敏感）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pr_id: { type: 'string', description: 'PR 标识' },
+        reviewer: { type: 'string', description: '审阅者（不可为 submitter）' },
+        verdict: { type: 'string', enum: ['approve', 'reject'], description: '审阅结论（精确匹配，区分大小写）' },
+        note: { type: 'string', description: '审阅意见（reject 时即拒因）' },
+        data_dir: { type: 'string', description: '数据根目录' },
+      },
+      required: ['pr_id', 'reviewer', 'verdict'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.pr_id || !args.reviewer || !args.verdict) { return { error: 'Missing required arguments: pr_id, reviewer, and verdict' }; } const prr = await prReview(args); return { ...prr, isError: prr.data.isError }; },
+  },
+  {
+    // v1.4.7 (章七 G13)：PR 合并（criteria 真判定 fail-closed / 未过 HITL 人审门 / branch→trunk 写回）
+    name: 'pr_merge',
+    roles: ['agent'],
+    description: '合并 PR——merge_criteria 真判定（approver-review：reviewer 非 submitter；confidence-min：confirmed=1.0/suggested=0.5/无=0 ≥ detail 阈值；未知 kind 或 detail 畸形判不过）fail-closed，未过挂起 HITL（human_confirmed=true 强制合并）。PR 的 workflow 存在 branch-{submitter} 时联动写回 trunk（version+1+删 branch，mergedVersion 回填；写回失败 PR 回退 open）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pr_id: { type: 'string', description: 'PR 标识' },
+        actor: { type: 'string', description: '操作者' },
+        human_confirmed: { type: 'boolean', description: 'HITL 人审确认（criteria 未过时须显式 true 才合并）' },
+        data_dir: { type: 'string', description: '数据根目录' },
+      },
+      required: ['pr_id', 'actor'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.pr_id || !args.actor) { return { error: 'Missing required arguments: pr_id and actor' }; } const pmr = await prMerge(args); return { ...pmr, isError: pmr.data.isError }; },
+  },
+  {
+    // v1.4.7 (章八)：上岗 prompt 生成器——岗位描述 → 职责/边界/工具面三段
+    name: 'onboard_prompt',
+    roles: ['agent'],
+    description: '上岗 prompt 生成器——岗位描述 → 三段结构（职责/边界/工具面），产物经 workflow_node_add 落进节点配置（与 workflow CRUD 闭环）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        role_description: { type: 'string', description: '岗位描述（自由文本，如「负责每日数据报表生成与异常告警」）' },
+        agent_name: { type: 'string', description: 'Agent 名（可选——缺省从岗位描述推导）' },
+        role: { type: 'string', enum: ['ops', 'agent', 'fde', 'audit', 'eval'], description: '工具角色面（可选——缺省 ops，决定工具面清单口径）' },
+      },
+      required: ['role_description'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.role_description) { return { error: 'Missing required argument: role_description' }; } const opr = await onboardPrompt({ role_description: args.role_description as string, ...(typeof args.agent_name === 'string' ? { agent_name: args.agent_name } : {}), ...(typeof args.role === 'string' ? { role: args.role } : {}) }); return { ...opr, isError: opr.data.isError }; },
+  },
+  {
+    // v1.4.7 (章六 G4)：绩效数据导出——人/数字员工同标准贡献度聚合
+    name: 'contribution_query',
+    roles: ['ops'],
+    description: '贡献度报表——人/数字员工同标准聚合（PR 权重分 + 决策留痕 + 审计变更规模 → 综合贡献分），按人/按 workflow 两维度输出，org_id 跨租户过滤（G7 联动）。纯读零写入。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        window_days: { type: 'number', description: '统计窗口天数（缺省 30）' },
+        org_id: { type: 'string', description: '组织/租户标识（可选——缺省 default；经 resolveTenantDataDir 分区隔离）' },
+        data_dir: { type: 'string', description: '数据根目录（缺省走租户解析链）' },
+      },
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { const cqr = await contributionQuery(args); return { ...cqr, isError: cqr.data.isError }; },
+  },
+  {
+    // v1.4.7 (章十三)：标准数据推送入口——消费 v1.4.6 gateDataPush 双闸（终值 95）
+    name: 'data_push',
+    roles: ['ops'],
+    description: '标准数据推送入口——企业存储按约定 schema 推送训练语料/知识数据，经分拣闸（敏感档标记）+ 合规闸（拦截违规）双闸入库，拒绝留痕进审计链。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['training_corpus', 'knowledge'], description: '数据类型' },
+        enterprise_id: { type: 'string', description: '企业标识（租户隔离键）' },
+        source: { type: 'string', description: '来源系统（审计可追溯）' },
+        samples: { type: 'array', items: { type: 'string' }, description: '样本（训练语料行 / 知识片段）' },
+      },
+      required: ['kind', 'enterprise_id', 'source', 'samples'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.kind || !args.enterprise_id || !args.source || !args.samples) { return { error: 'Missing required arguments: kind, enterprise_id, source, and samples' }; } const dpr = await dataPush(args); return { ...dpr, isError: dpr.data.isError }; },
   },
   {
     // v1.4.2 (章八·引擎一)：FDE 访谈结构化——多轮追加 + nodeId 幂等合并 + profile 重算
@@ -1150,6 +1751,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['enterprise_id'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.enterprise_id) { return { error: 'Missing required argument: enterprise_id' }; } if (!args.prompts_only && (!Array.isArray(args.nodes) || (args.nodes as unknown[]).length === 0)) { return { error: 'Missing required argument: nodes' }; } const fir = await fdeInterviewTool({ enterprise_id: args.enterprise_id as string, ...(args.prompts_only === true ? { prompts_only: true } : {}), ...(Array.isArray(args.nodes) ? { nodes: args.nodes as NonNullable<FdeInterviewArgs['nodes']> } : {}) }); return { ...fir, isError: fir.data.isError }; },
   },
   {
     // v1.4.2 (章八·引擎二)：三问判定 → 节点方案（SSOT classifyAutomation + 六步分解）
@@ -1198,6 +1801,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['enterprise_id', 'nodes'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.enterprise_id) { return { error: 'Missing required argument: enterprise_id' }; } if (!Array.isArray(args.nodes) || (args.nodes as unknown[]).length === 0) { return { error: 'Missing or empty required argument: nodes' }; } const fcr = await fdeClassifyTool({ enterprise_id: args.enterprise_id as string, nodes: args.nodes as NonNullable<FdeClassifyArgs['nodes']> }); return { ...fcr, isError: fcr.data.isError }; },
   },
   {
     // v1.4.2 (章八·引擎三)：量化四字段 + ROI 排序（同公式同源 train-report）
@@ -1226,6 +1831,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['enterprise_id', 'nodes'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.enterprise_id) { return { error: 'Missing required argument: enterprise_id' }; } if (!Array.isArray(args.nodes) || (args.nodes as unknown[]).length === 0) { return { error: 'Missing or empty required argument: nodes' }; } const fqr = await fdeQuantifyTool({ enterprise_id: args.enterprise_id as string, nodes: args.nodes as NonNullable<FdeQuantifyArgs['nodes']> }); return { ...fqr, isError: fqr.data.isError }; },
   },
   {
     // v1.4.2 (章八·引擎四)：本体推导——五要素 → ontology YAML 草稿
@@ -1276,6 +1883,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['enterprise_id', 'workflow_name', 'nodes'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.enterprise_id) { return { error: 'Missing required argument: enterprise_id' }; } if (!args.workflow_name) { return { error: 'Missing required argument: workflow_name' }; } if (!Array.isArray(args.nodes) || (args.nodes as unknown[]).length === 0) { return { error: 'Missing or empty required argument: nodes' }; } const fdr = await fdeDeriveTool({ enterprise_id: args.enterprise_id as string, workflow_name: args.workflow_name as string, ...(typeof args.workflow_description === 'string' ? { workflow_description: args.workflow_description } : {}), nodes: args.nodes as NonNullable<FdeDeriveArgs['nodes']> }); return { ...fdr, isError: fdr.data.isError }; },
   },
   {
     // v1.4.2 (章八·引擎五)：三层交付物——文档/Skill/运行（GUIDE 第五章）
@@ -1324,6 +1933,8 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['enterprise_id', 'nodes'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.enterprise_id) { return { error: 'Missing required argument: enterprise_id' }; } if (!Array.isArray(args.nodes) || (args.nodes as unknown[]).length === 0) { return { error: 'Missing or empty required argument: nodes' }; } const fdsr = await fdeDistillTool({ enterprise_id: args.enterprise_id as string, nodes: args.nodes as NonNullable<FdeDistillArgs['nodes']> }); return { ...fdsr, isError: fdsr.data.isError }; },
   },
   {
     // v1.4.2 (章八·引擎六)：workflow 组装部署——产物走 submit+activate 现有链路
@@ -1374,12 +1985,14 @@ export const TOOLS: ToolDef[] = [
       },
       required: ['enterprise_id', 'workflow_name', 'nodes'],
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.enterprise_id) { return { error: 'Missing required argument: enterprise_id' }; } if (!args.workflow_name) { return { error: 'Missing required argument: workflow_name' }; } if (!Array.isArray(args.nodes) || (args.nodes as unknown[]).length === 0) { return { error: 'Missing or empty required argument: nodes' }; } const fdpr = await fdeDeployTool({ enterprise_id: args.enterprise_id as string, workflow_name: args.workflow_name as string, ...(typeof args.workflow_description === 'string' ? { workflow_description: args.workflow_description } : {}), nodes: args.nodes as NonNullable<FdeDeployArgs['nodes']> }); return { ...fdpr, isError: fdpr.data.isError }; },
   },
   {
     // 训练语料导出三件套（规则 + 方法论 + 样本）——训练信号机器可读化
     name: 'corpus_export',
     roles: ['ops'],
-    description: '训练语料导出三件套——规则（27 编号位含跳号占位 + reward_hint 骨架 + verifiers 三桶清单）+ FDE 方法论（锚点解析）+ 带标签审计样本（五源聚合 + 脱敏）。导出带版本号 + HMAC 签名，导出行为记 corpus_export 审计事件。',
+    description: '训练语料导出三件套——规则（27 编号位含跳号占位 + reward_hint 骨架 + verifiers 三桶清单）+ FDE 方法论（锚点解析）+ 带标签审计样本（六源聚合 + 脱敏）。导出带版本号 + HMAC 签名，导出行为记 corpus_export 审计事件。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1389,5 +2002,181 @@ export const TOOLS: ToolDef[] = [
         rules_only: { type: 'boolean', description: '只导规则面（跳过样本/方法论）' },
       },
     },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { const cer = await corpusExport({ ...(typeof args.scope === 'string' ? { scope: args.scope as CorpusExportArgs['scope'] } : {}), ...(typeof args.out_dir === 'string' ? { outDir: args.out_dir as string } : {}), ...(typeof args.data_dir === 'string' ? { dataDir: args.data_dir as string } : {}), ...(args.rules_only === true ? { rulesOnly: true } : {}) }); return { ...cer, isError: cer.data.isError }; },
+  },
+  {
+    // v1.4.9 G9（T1）：设备上线注册——Ed25519 身份码验签 fail-closed + 设备类型 + 能力声明
+    name: 'device_register',
+    roles: ['ops'],
+    description: '设备上线注册（G9）：Ed25519 身份码验签 fail-closed（伪造签名拒绝且留审计）+ 设备类型（pc/node/appliance）+ 能力声明（派单方按能力匹配设备）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        identity: { type: 'object', description: '设备身份码（AgentIdentity JSON——须含 publicKey + signature）' },
+        kind: { type: 'string', enum: ['pc', 'node', 'appliance'], description: '设备类型' },
+        capabilities: { type: 'array', items: { type: 'string' }, description: '能力标签清单（挂载的 MCP / skill / 数据源）' },
+        tenant: { type: 'string', description: '租户（缺省 default）' },
+      },
+      required: ['identity', 'kind'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.identity || typeof args.identity !== 'object') { return { error: 'Missing required argument: identity' }; } if (!args.kind || (args.kind !== 'pc' && args.kind !== 'node' && args.kind !== 'appliance')) { return { error: 'Invalid kind (pc/node/appliance)' }; } const drr = await deviceRegister({ identity: args.identity as Record<string, unknown>, kind: args.kind, ...(Array.isArray(args.capabilities) ? { capabilities: args.capabilities as string[] } : {}), ...(typeof args.tenant === 'string' ? { tenant: args.tenant } : {}) }); return { ...drr, isError: !drr.data.ok }; },
+  },
+  {
+    // v1.4.9 G9（T1）：设备清单查询——只含已验签设备，在线态实时判定（T12 派单前置）
+    name: 'device_list',
+    roles: ['ops'],
+    description: '设备清单查询（G9 发现面）：按租户/类型/能力过滤，含最后心跳时间与在线状态；清单只含已验签设备（被拒/吊销设备不出现）。只读。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tenant: { type: 'string', description: '租户过滤' },
+        kind: { type: 'string', enum: ['pc', 'node', 'appliance'], description: '设备类型过滤' },
+        capability: { type: 'string', description: '能力标签过滤' },
+      },
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: (args) => deviceList({ ...(typeof args.tenant === 'string' ? { tenant: args.tenant } : {}), ...(typeof args.kind === 'string' ? { kind: args.kind } : {}), ...(typeof args.capability === 'string' ? { capability: args.capability } : {}) }),
+  },
+  {
+    // v1.4.9 G10（T2）：设备侧数据面授权读取——白名单校验 → 读取 → 脱敏 → 审计计量
+    name: 'device_data_query',
+    roles: ['ops'],
+    description: '设备侧数据面授权读取（G10）：设备门禁 → 目录白名单校验（默认空=全拒，opt-in）→ 读取 → 脱敏管线（敏感字段不出设备）→ 审计留痕 + 计量进 worklog。返回结构化内容（不落原始路径）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        identity: { type: 'object', description: '设备身份码（AgentIdentity JSON——须过 gateDevice 闸门）' },
+        path: { type: 'string', description: '请求读取的文件路径（设备侧绝对路径，须在白名单内）' },
+        max_bytes: { type: 'number', description: '读取上限字节（缺省 64KB）' },
+      },
+      required: ['identity', 'path'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.identity || typeof args.identity !== 'object') { return { error: 'Missing required argument: identity' }; } if (!args.path || typeof args.path !== 'string') { return { error: 'Missing required argument: path' }; } const dqr = await deviceDataQuery({ identity: args.identity as Record<string, unknown>, path: args.path, ...(typeof args.max_bytes === 'number' && args.max_bytes > 0 ? { maxBytes: args.max_bytes } : {}) }); return { ...dqr, isError: !dqr.data.ok }; },
+  },
+  {
+    // v1.4.9 G11（T3）：数据上行通道——采集声明校验 → 脱敏 → 加密入队（WAL 暂存/断点续传）
+    name: 'device_data_push',
+    roles: ['ops'],
+    description: '数据上行通道（G11）：设备门禁 → 采集声明校验（默认空=不上行，opt-in）→ 脱敏 → AES-256-GCM 加密入队（WAL 暂存断网不丢，游标续传不重传已 ack 段）→ 审计留痕 + 计量进 worklog。原始数据不出设备。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        identity: { type: 'object', description: '设备身份码（AgentIdentity JSON——须过 gateDevice 闸门）' },
+        category: { type: 'string', enum: ['metrics', 'audit-digest', 'inference-result'], description: '数据类别（须在采集声明内）' },
+        payload: { type: 'string', description: '上行内容明文（入队前脱敏 + 加密）' },
+        destination: { type: 'string', description: '目的地端点标识（与声明核对）' },
+      },
+      required: ['identity', 'category', 'payload'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.identity || typeof args.identity !== 'object') { return { error: 'Missing required argument: identity' }; } if (!args.category || typeof args.category !== 'string') { return { error: 'Missing required argument: category' }; } if (typeof args.payload !== 'string') { return { error: 'Missing required argument: payload' }; } const dpr = await deviceDataPush({ identity: args.identity as Record<string, unknown>, category: args.category, payload: args.payload, ...(typeof args.destination === 'string' ? { destination: args.destination } : {}) }); return { ...dpr, isError: dpr.data.isError }; },
+  },
+  {
+    // v1.4.9 G5b（T4）：连接器注册——准入复用插件来源白名单（fail-closed）
+    name: 'connector_register',
+    roles: ['ops'],
+    description: '注册第三方连接器（G5b 准入面）：来源过 plugin-gate 白名单校验（Git URL / 主机 / 本地路径，白名单外拒绝）→ 注册表落库（config/connectors.json，租户隔离 + 同租户重名拒绝）→ 审计留痕。与工具注册分列——连接器清单见 connector_list。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: '连接器标识（租户内唯一，1-64 位字母数字开头词法）' },
+        kind: { type: 'string', enum: ['db', 'rest', 'saas'], description: '连接器类型' },
+        source: { type: 'string', description: '来源串（Git URL / 主机 / 本地路径——须在企业白名单内）' },
+        capabilities: { type: 'array', items: { type: 'string' }, description: '能力标签（发现面过滤维度）' },
+        tenant: { type: 'string', description: '归属租户（缺省 default）' },
+        endpoint: { type: 'string', description: '接入端点回显（不含凭证）' },
+      },
+      required: ['name', 'kind', 'source'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.name || typeof args.name !== 'string') { return { error: 'Missing required argument: name' }; } if (!args.kind || (args.kind !== 'db' && args.kind !== 'rest' && args.kind !== 'saas')) { return { error: 'Invalid kind (db/rest/saas)' }; } if (!args.source || typeof args.source !== 'string') { return { error: 'Missing required argument: source' }; } const crr = await connectorRegister({ name: args.name, kind: args.kind, source: args.source, ...(Array.isArray(args.capabilities) ? { capabilities: args.capabilities as string[] } : {}), ...(typeof args.tenant === 'string' && args.tenant ? { tenant: args.tenant } : {}), ...(typeof args.endpoint === 'string' && args.endpoint ? { endpoint: args.endpoint } : {}) }); return { ...crr, isError: crr.data.isError }; },
+  },
+  {
+    // v1.4.9 G5b（T4）：连接器发现——与 tool-registry 分列铁律
+    name: 'connector_list',
+    roles: ['ops'],
+    description: '连接器发现（G5b 目录面）：按类型（db/rest/saas）/ 主机 / 能力标签过滤，租户隔离（只返回请求租户条目）。清单只含连接器——与 MCP 工具清单（TOOLS）分列，绝不混列。只读。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tenant: { type: 'string', description: '租户隔离键（缺省 default）' },
+        kind: { type: 'string', enum: ['db', 'rest', 'saas'], description: '类型过滤' },
+        host: { type: 'string', description: '来源过滤（主机名 / 本地路径前缀）' },
+        capability: { type: 'string', description: '能力标签过滤' },
+      },
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => connectorList({ ...(typeof args.tenant === 'string' && args.tenant ? { tenant: args.tenant } : {}), ...(args.kind === 'db' || args.kind === 'rest' || args.kind === 'saas' ? { kind: args.kind } : {}), ...(typeof args.host === 'string' && args.host ? { host: args.host } : {}), ...(typeof args.capability === 'string' && args.capability ? { capability: args.capability } : {}) }),
+  },
+  {
+    // v1.4.9 G1（T5）：workflow 模板导出——五件套 + 血缘 + 跨租户剥离
+    name: 'workflow_export',
+    roles: ['agent'],
+    description: 'workflow 模板导出（G1 五件套）：workflow.yml + 本体数据 + MD 家族 + manifest（sha256 完整性）+ 血缘元数据（源企业/源版本/fork 层级/祖先链）。跨租户缺省剥离 private / result-only 节点（G6 联动，剥离计数入 manifest）。export 事件入血缘谱系 + 审计挂链。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflow_id: { type: 'string', description: '源 workflow 标识' },
+        enterprise: { type: 'string', description: '源企业标识（血缘元数据——导入方回溯锚）' },
+        cross_tenant: { type: 'boolean', description: '跨租户分发（缺省 true——private/result-only 剥离；同租户传 false 全量）' },
+        actor: { type: 'string', description: '执行者（审计留痕）' },
+      },
+      required: ['workflow_id'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.workflow_id || typeof args.workflow_id !== 'string') { return { error: 'Missing required argument: workflow_id' }; } const wer = await workflowExport({ workflow_id: args.workflow_id, ...(typeof args.enterprise === 'string' && args.enterprise ? { enterprise: args.enterprise } : {}), ...(typeof args.cross_tenant === 'boolean' ? { cross_tenant: args.cross_tenant } : {}), ...(typeof args.actor === 'string' && args.actor ? { actor: args.actor } : {}) }); return { ...wer, isError: wer.data.isError }; },
+  },
+  {
+    // v1.4.9 G1（T5）：workflow 模板导入——三闸 + 血缘回流
+    name: 'workflow_import',
+    roles: ['agent'],
+    description: 'workflow 模板导入（G1 三闸 fail-closed）：结构闸（manifest + 必要件 + sha256 完整性核对）→ schema 校验门（zod 结构 + 可见性枚举 + cron 语法，与 CRUD 同门）→ 落地闸（冲突拒绝）。跨企业包检出 private/result-only 节点整包拒绝（G6 加固）。血缘回流（import 事件 + 祖先链接入）+ 本体合并（本地优先）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        bundle: { type: 'object', description: '导出包整体（workflow_export 返回的 bundle 对象——manifest + workflow.yml + 伴生件）' },
+        imported_as: { type: 'string', description: '落地 workflow id（缺省 = 源 id + \'-imported\'）' },
+        owner: { type: 'string', description: '落地 owner（trunk 直改权持有人——缺省 actor）' },
+        actor: { type: 'string', description: '执行者（审计留痕）' },
+      },
+      required: ['bundle'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.bundle || typeof args.bundle !== 'object') { return { error: 'Missing required argument: bundle' }; } const wir = await workflowImport({ bundle: args.bundle as Record<string, unknown>, ...(typeof args.imported_as === 'string' && args.imported_as ? { imported_as: args.imported_as } : {}), ...(typeof args.owner === 'string' && args.owner ? { owner: args.owner } : {}), ...(typeof args.actor === 'string' && args.actor ? { actor: args.actor } : {}) }); return { ...wir, isError: wir.data.isError }; },
+  },
+  {
+    // v1.4.9 T7：router 过站 session 承接——伴生 exporter 推送入口（103→104 终值）
+    name: 'router_session_push',
+    roles: ['ops'],
+    description: 'router 过站 session 承接（T7 第七章）：exporter 标准 schema 校验（fail-closed 拒绝坏格式）→ 多轮展开（切窗/角色映射）→ 脱敏本地落盘（数据主权铁律——记录不出企业边界，幂等：同 sessionId 重复推送拒绝）→ usage 入 cost 台账（按模型/时段聚合）→ key 维度过站行为 HMAC 挂链（审计）。会话续接五元组（执行器+员工身份+模型+工作目录+运行时）透传判定。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        raw: { type: 'object', description: 'exporter 推送 payload（RouterSessionSchema 形态——字段：sessionId、enterpriseId、source、messages、usage、route，可选 apiKeyId、scope、pushedAt）' },
+      },
+      required: ['raw'],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { if (!args.raw || typeof args.raw !== 'object') { return { error: 'Missing required argument: raw' }; } const rsp = await routerSessionPush({ raw: args.raw }); return { ...rsp, isError: rsp.data.isError }; },
+  },
+  {
+    // v1.5.0 章八：跨层证据对账（104→105——DSH trace vs git diff vs logs 三源比对）
+    name: 'trace_reconcile',
+    roles: ['ops', 'fde'],
+    description: '跨层证据对账（trace reconcile）：DSH session trace（Agent 自述）vs git diff（独立事实）vs logs 声明集三源比对——产出差异清单（漏报/幻觉动作/瞒报四态）+ 一致率；可选模型层回溯链（推理 → 模型版本 → train_job → datasetHash）。对账结果入 decision-log（kind=COVERAGE）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo_root: { type: 'string', description: '仓库根（git diff 采集目标；缺省 process.cwd()）' },
+        include_model_layer: { type: 'boolean', description: '是否输出模型层回溯链（llm-calls → train fingerprint）' },
+        session_limit: { type: 'number', description: 'DSH session 扫描上限（缺省 50）' },
+      },
+      required: [],
+    },
+    // v1.4.8 条目 5 迁移：查表分发
+    handler: async (args) => { const trt = await traceReconcileTool({ ...(typeof args.repo_root === 'string' && args.repo_root ? { repo_root: args.repo_root } : {}), ...(typeof args.include_model_layer === 'boolean' ? { include_model_layer: args.include_model_layer } : {}), ...(typeof args.session_limit === 'number' ? { session_limit: args.session_limit } : {}) } satisfies TraceReconcileArgs); return { ...trt, isError: trt.data.isError }; },
   },
 ];

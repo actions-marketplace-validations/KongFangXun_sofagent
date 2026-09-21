@@ -1,6 +1,6 @@
 # 文件系统审计 — 非开发者使用指南
 
-> v1.4.3 · 让非开发者也能被 sofagent 审计覆盖
+> v1.5.0 · 2026-09-19（UTC）· ✅ 已发版 · 孔放勋 · 让非开发者也能被 sofagent 审计覆盖
 
 ## 概述
 
@@ -34,7 +34,7 @@ daemon 启动时自动遍历所有子目录并建独立 watcher，新目录创�
 | 出口 | 用途 |
 |------|------|
 | stdout | 实时终端输出 |
-| `daemon-health.json` | 供审计引擎后续检查 |
+| `daemon-health.json` | 供审计模块后续检查 |
 | `audit/history.jsonl` | `--timeline` 查看历史 |
 
 - **A16 非授权文件变更**：敏感目录（config/、.env、secrets/）和敏感类型（.xlsx、.pdf、.pem 等）的修改/删除 → WARN
@@ -57,6 +57,8 @@ sofagent-audit --timeline 50      # 最近 50 条
 sofagent-audit --timeline --json  # JSON 格式
 sofagent-audit --revert <SHA>     # 回滚到指定快照
 ```
+
+> **两个入口的分工**：`sofagent-audit` 是 quick 入口（只读审计，零安装即用），`sofagent-audit-full` 是完整引擎入口。时间线 / 回滚这两个 flag **只在完整引擎实现**——quick 入口识别到它们会自动转交完整引擎执行，所以上面直接用 `sofagent-audit` 即可，无需换命令名。完整引擎不可用（未装依赖、未构建）时不会静默降级：命令以非零退出码失败并给出诊断，不会拿一次错对象的审计冒充成功。
 
 ## 局限
 

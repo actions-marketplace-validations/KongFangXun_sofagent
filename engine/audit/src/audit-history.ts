@@ -1,6 +1,6 @@
 // ============================================================
 // audit-history.ts · 审计历史持久化
-// v1.4.3 env fingerprint: hash chain 加环境指纹防 Agent 重算整链
+// v1.5.0 env fingerprint: hash chain 加环境指纹防 Agent 重算整链
 // ============================================================
 //
 // ⚠️ 双副本说明（勿混淆）：本仓库有两份同名 audit-history.ts，职责不同、**不可合并**：
@@ -10,7 +10,7 @@
 //     并 re-export core 的哈希链原语（见下方 import/export）。
 //   - engine/core/src/audit-history.ts —— 底层「哈希链完整性」原语层（零上层依赖）：
 //     getHistoryFilePath / getEnvFingerprint / getHmacKey / stableStringify /
-//     checkHistoryChainDetailed / checkHistoryChainIntegrity / validateHmacKey。
+//     checkHistoryChainDetailed / validateHmacKey。
 //   依赖方向单向：audit → core（core 绝不反向依赖 audit）。业务持久化含 audit 规则
 //   结果域类型，不能下沉到 core 底座（会违反 core「零上层依赖」分层契约），故保持两份。
 //
@@ -32,8 +32,8 @@
 // 向后兼容——不做指纹校验，只做链完整性校验。
 // ============================================================
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, statSync } from 'fs';
-import { dirname } from 'path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, statSync, renameSync, rmSync } from 'fs';
+import { dirname, join } from 'path';
 import { createHash, createHmac } from 'crypto';
 import { loadEnvConfig, resolveHomeDir } from '@sofagent/core';
 import { atomicAppendSync, atomicWriteSync } from '@sofagent/core';
@@ -50,11 +50,11 @@ import {
 } from '@sofagent/core';
 import type { RuleCheck, ActionGovernance } from './rules/types';
 
-// v1.2.0: checkHistoryChainIntegrity + helpers sunk to core;
+// v1.2.0: checkHistoryChainDetailed + helpers sunk to core;
 // import for internal use (appendHistory/loadHistory/clearHistory still need them),
 // re-export for external backward compat.
 import { getHistoryFilePath, getEnvFingerprint, getHmacKey, stableStringify, validateHmacKey } from '@sofagent/core';
-export { checkHistoryChainIntegrity, checkHistoryChainDetailed, getHistoryFilePath, getHmacKey, validateHmacKey } from '@sofagent/core';
+export { checkHistoryChainDetailed, getHistoryFilePath, getHistoryAnchorFilePath, getHmacKey, validateHmacKey } from '@sofagent/core';
 
 /**
  * 对 ruleResult 做脱敏处理——避免审计工具自身成为第二泄漏点。
@@ -99,6 +99,77 @@ export function sanitizeFreeText(text: string | undefined): string | undefined {
 }
 
 /**
+ * 深度脱敏自由文本（S2 写入字段脱敏策略强制声明的运行时守卫）。
+ *
+ * 背景：baseSanitized 的 ...entry 展开只显式处理顶层 commitMsg/task 与
+ * ruleResults——嵌套对象（如 actionGovernance.context）不在展开面内，
+ * 「新字段裸奔」曾是 P0-2 的同类根因（beforeAfter 已在构建侧修，context
+ * 依赖本函数兜底）。策略：递归遍历 entry 全部字符串叶子，凡命中
+ * REDACTION_PATTERNS 的即脱敏——白名单跳过结构化/签名/链字段（脱敏会
+ * 破坏验签或篡改语义）。这是兜底层，字段级显式声明（types.ts 注释）
+ * 仍是第一防线；两层叠加把「先脱敏再签名」从纪律变成机制。
+ *
+ * 白名单原则：只豁免「值不可能含用户自由文本」的字段——
+ *   - hmacSig/envFingerprint/prevHash/hashVersion/hmacAlgo/chainStatus：
+ *     签名与链字段，脱敏即破坏验签语义（它们本就不含明文敏感面）；
+ *   - timestamp/diffRange/exitCode/diffFileCount/engine/commitSha/parentSha/
+ *     commitPhase/agentId：结构化枚举值（SANITIZE N/A）。
+ * 其余字符串叶子（含未来新增字段）一律过管道——新字段未声明策略时
+ * 默认按自由文本处理（fail-safe），命中即脱敏并计数。
+ */
+const SANITIZE_EXEMPT_KEYS = new Set<string>([
+  // 签名/链字段——脱敏破坏验签或链语义
+  'hmacSig', 'envFingerprint', 'prevHash', 'hashVersion', 'hmacAlgo', 'chainStatus',
+  // 结构化枚举值——不含自由文本
+  'timestamp', 'diffRange', 'exitCode', 'diffFileCount', 'engine', 'commitSha',
+  'parentSha', 'commitPhase', 'agentId', 'treeSha',
+]);
+
+/** 深扫脱敏：递归处理对象/数组中的字符串叶子，返回 [处理后对象, 命中次数] */
+function deepSanitizeFreeText(node: unknown, hitsRef: { count: number }): unknown {
+  if (typeof node === 'string') {
+    const cleaned = sanitizeFreeText(node);
+    if (cleaned !== node) hitsRef.count++;
+    return cleaned;
+  }
+  if (Array.isArray(node)) return node.map((item) => deepSanitizeFreeText(item, hitsRef));
+  if (node && typeof node === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      // 豁免只对「字符串叶子」有意义且须值形可证（shouldExempt）——对象/数组值
+      // 不论其 key 是否碰白名单同名，一律继续递归（防「嵌套结构字段同名却持自由文本」）。
+      out[key] = typeof value === 'string' && shouldExempt(key, value)
+        ? value
+        : deepSanitizeFreeText(value, hitsRef);
+    }
+    return out;
+  }
+  return node;
+}
+
+/**
+ * 豁免判定收窄为「值维」（path 维静态度不可得，读侧无 schema——递归时只拿到 key×value，
+ * 无运行时可校验的记录 schema）。
+ *
+ * 漏洞形态 (P1)：SANITIZE_EXEMPT_KEYS 用裸 key 名在每一层递归里整键豁免——若某嵌套
+ * 对象的字段恰好与白名单同名（engine/agentId 这些通用短词）却持 secret/自由文本，
+ * 整棵子树被跳过深扫 → 明文被 HMAC 固化。真正要豁免的只是「值确为结构化/短码」的叶子：
+ *   - 非字符串值本就不被字符串脱敏触碰，白名单外也一样递归处理（无泄漏面，恒安全）；
+ *   - 字符串值仅在「是紧致短码 + 经 sanitizeFreeText 无操作」时才豁免——真实
+ *     hmacSig/prevHash/commitSha/envFingerprint 等为紧凑 hex/枚举，脱敏是无操作，
+ *     豁免仅为免去伪命中计数噪声（不损验签：见 deepSanitizeFreeText 头注释）；
+ *   - 含空白（句子/折行）、或超长（sk-/AKIA…/长段落）、或可真命中 REDACTION 任一
+ *     模式的串——即使裸 key 同名也不豁免，走正常脱敏分支被自动打码。
+ */
+function shouldExempt(key: string, value: string): boolean {
+  if (!SANITIZE_EXEMPT_KEYS.has(key)) return false;
+  if (/\s/.test(value)) return false; // 含空白 = 自由文本形态 → 不豁免
+  if (value.length > 64) return false; // 超长 = code 面不可能（secret token 常无空白）→ 不豁免
+  // 紧致短码还需确认不会可真命中脱敏（对真实 hex/enum 是 no-op，豁免只省一次计数器）
+  return sanitizeFreeText(value) === value;
+}
+
+/**
  * 单条审计历史记录
  */
 export interface AuditHistoryEntry {
@@ -128,6 +199,14 @@ export interface AuditHistoryEntry {
    */
   parentSha?: string;
   /**
+   * v1.4.8 F-16：对账键内容指纹——审计时 HEAD 的 tree SHA。
+   * pre-commit 记录记 parentSha 对应的 treeSha；post-commit 对账在
+   * parentSha + subject 匹配后叠加 HEAD^{tree} 比对——soft-reset 换料
+   * 后 treeSha 必变，假绿回声消失（对账不命中走 INFO/WARN 路径，不阻断）。
+   * 旧记录无此字段时跳过 tree 校验（向后兼容）。
+   */
+  treeSha?: string;
+  /**
    * v1.2.9 审计所处阶段标记。'pre-commit' = commit-msg hook 场景
    * （审计在 commit 对象生成前运行，commitSha 未知，仅记 parentSha）。
    * 手动 --diff <range> 场景无此字段（保持旧语义）。
@@ -145,7 +224,7 @@ export interface AuditHistoryEntry {
   hmacSig?: string;
   /** v1.2.5 写入时记录的环境指纹——读侧 HMAC 不匹配时用它区分「真篡改（指纹一致）」与「环境漂移（指纹不一致）」 */
   envFingerprint?: string;
-  /** v1.1.3+: 审计引擎标识，用于追溯记录来源 */
+  /** v1.1.3+: 审计模块标识，用于追溯记录来源 */
   engine?: string;
   /**
    * v1.3.1 交付 6: 审计记录关联的 Agent 身份码（AgentIdentity.agentId）。
@@ -271,7 +350,7 @@ export function appendHistory(entry: AuditHistoryEntry, dataDir?: string): void 
   // 有密钥时签名整条记录（防 Agent 重算整链）；无密钥时降级 SHA-256（不写 hmacSig，向后兼容）。
   // 修复（含回归修复）：必须先脱敏再签名——HMAC 基于【已脱敏的 baseSanitized】计算，
   // 而非原始 entry.ruleResults。原因：落盘记录经过 sanitizeRuleResult()，它对 A2(number=2)/A9(number=9)
-  // 的 details 强制脱敏覆盖；读侧 checkHistoryChainIntegrity 校验的正是「脱敏后」记录。若写侧用 raw
+  // 的 details 强制脱敏覆盖；读侧 checkHistoryChainDetailed 校验的正是「脱敏后」记录。若写侧用 raw
   // ruleResults 签名，含 A2/A9 的条目 HMAC 永远与读侧不匹配，被 hmacAlgo:'stable' 判为篡改 →
   // 干净链误报链断裂（run-09 回归 false-positive）。先脱敏再签名后，写/读两侧 HMAC 输入完全一致。
   const hmacKey = getHmacKey();
@@ -304,9 +383,26 @@ export function appendHistory(entry: AuditHistoryEntry, dataDir?: string): void 
     task: sanitizeFreeText(entry.task),
   };
 
+  // S2 写入字段脱敏策略强制声明——运行时兜底守卫（v1.4.5）：
+  // baseSanitized 显式面只覆盖 ruleResults/commitMsg/task，嵌套对象
+  //（actionGovernance.context 等）靠这一层深扫兜底。签名输入 = 深扫后
+  // 的记录（「先脱敏再签名」语义延伸到嵌套面）；命中计数 >0 说明有
+  // 字段携带了可脱敏内容——字段级声明（types.ts 🔐 注释）漏了，打 WARN
+  // 提示补声明（不阻断写入，与链断裂同取舍：审计可用性优先）。
+  const deepHits = { count: 0 };
+  const deepSanitized = deepSanitizeFreeText(baseSanitized, deepHits) as typeof baseSanitized;
+  if (deepHits.count > 0) {
+    // 用户可见文案：只说「已自动脱敏」这一事实，不暴露「请在 rules/types.ts 补声明」
+    // 的贡献者指令（v1.4.5 审查 P1——内部 TODO 泄漏进 npx 用户终端，用户误以为包坏了）。
+    // 字段级声明遗漏的信号仍保留给维护者：见本文件顶部 S2 注释 + types.ts 🔐 声明约定。
+    console.warn(
+      `⚠️ [sofagent] 审计历史写入时对 ${deepHits.count} 处嵌套字段自动脱敏打码（检测到疑似敏感内容，已自动处理）`
+    );
+  }
+
   // 签名输入排除 prevHash/hashVersion/hmacSig/hmacAlgo（与读侧 recordForSig 一致）；
   // 用 stableStringify（递归按 key 字典序排序）消除 key 顺序敏感。
-  const recordForSig = { ...baseSanitized, prevHash: undefined, hashVersion: undefined, hmacSig: undefined, hmacAlgo: undefined };
+  const recordForSig = { ...deepSanitized, prevHash: undefined, hashVersion: undefined, hmacSig: undefined, hmacAlgo: undefined };
   // HMAC-SHA256 完整输出 64 hex（256bit），此处 .slice(0, 32) 截断到 128bit。
   // 截断理由：① 每条 history.jsonl 记录都存 hmacSig，截断省约一半存储空间；
   // ② 128bit 防篡改强度充分（伪造需 2^128 次尝试，远超可行算力）；
@@ -316,7 +412,7 @@ export function appendHistory(entry: AuditHistoryEntry, dataDir?: string): void 
     ? createHmac('sha256', hmacKey).update(stableStringify(recordForSig) + '|' + fingerprint).digest('hex').slice(0, 32)
     : undefined;
 
-  const sanitizedEntry = { ...baseSanitized, hmacSig: hmacSig ?? undefined };
+  const sanitizedEntry = { ...deepSanitized, hmacSig: hmacSig ?? undefined };
   // v1.0.5: 使用原子追加（先读+追加+原子写），避免并发写入导致的行交错
   // v1.2.5 atomicAppendSync 已内置文件锁互斥（O_EXCL + 过期回收），
   //   读-改-写跨进程串行化——不再需要 busy-wait 重试循环（原 189-206 行已移除）。
@@ -331,9 +427,12 @@ export function appendHistory(entry: AuditHistoryEntry, dataDir?: string): void 
   // v1.3.9 修复：加密激活态最后一行是 SOFAGENT-AGE-V1 密文，直接 JSON.parse 必抛异常
   // → 每次写入都假警「读回校验失败」，且校验对象是密文而非明文（校验失效）。
   // 现检测前缀 → 复用同文件 decryptWithAge 先解密再 JSON.parse，读回校验真实校验明文。
+  // finding-02：postAppendEntryCount 同时作为链头锚点的 entryCount 来源（非空行数）。
+  let postAppendEntryCount = 0;
   try {
     const content = readFileSync(filePath, 'utf-8');
     const lines = content.trim().split('\n').filter(Boolean);
+    postAppendEntryCount = lines.length;
     if (lines.length > 0) {
       const lastLine = lines[lines.length - 1]!;
       const lastPlain = isAgePayload(lastLine)
@@ -369,6 +468,38 @@ export function appendHistory(entry: AuditHistoryEntry, dataDir?: string): void 
       // 实际 ≤0o600：false alarm（chmod 语义受限但权限已收紧）——静默放行
     } catch {
       console.error(`[sofagent] 审计历史文件权限设置失败且无法读回验证: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // finding-02 尾部截断防护——链头锚点（写入侧）：
+  // history.jsonl 的哈希链只能证明「剩余内容自洽」——把文件砍掉尾部 N 条后剩余链
+  // 仍然自洽（整文件删除报 insufficient，部分截断无检测）。锚点文件把「最后一次
+  // 写入时的总条数 + 末条哈希」落在 history.jsonl 之外，读侧 checkHistoryChainDetailed
+  // 据此检测静默尾部截断。headHash 公式与「下一条 appendHistory 计算 prevHash」逐字
+  // 一致：plain JSON.stringify + '|' + fingerprint（非 stableStringify；sanitizedEntry
+  // 内存对象的 key 顺序与落盘 JSON round-trip 后的解析序一致，链公式两侧对齐）。
+  if (postAppendEntryCount > 0) {
+    try {
+      const anchorPath = join(dirname(filePath), 'history-chain-head');
+      const headHash = createHash('sha256')
+        .update(JSON.stringify({ ...sanitizedEntry, prevHash: undefined, hashVersion: undefined }) + '|' + fingerprint)
+        .digest('hex').slice(0, 16);
+      const anchor = {
+        version: 1,
+        entryCount: postAppendEntryCount,
+        headHash,
+        envFingerprint: fingerprint,
+        updatedAt: new Date().toISOString(),
+      };
+      // 临时文件 + renameSync 原子替换——杜绝半写锚点被读侧读到；0600 与 history.jsonl 同级权限
+      const tmpPath = anchorPath + '.tmp';
+      writeFileSync(tmpPath, JSON.stringify(anchor) + '\n', { mode: 0o600 });
+      renameSync(tmpPath, anchorPath);
+      chmodSync(anchorPath, 0o600);
+    } catch (e) {
+      // fail-open：锚点写入失败不阻断审计主链路（与 appendHistory 既有取舍一致），
+      // 仅告警——本次追加后尾部截断检测退化为「无锚点 = 跳过」的旧行为
+      console.warn(`[sofagent] 链头锚点写入失败（尾部截断检测本次不可用）: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 }
@@ -458,4 +589,15 @@ export function clearHistory(dataDir?: string): void {
   }
 
   writeFileSync(filePath, '', 'utf-8');
+
+  // finding-02：清空 history.jsonl 时同步删除链头锚点——锚点记录的 entryCount/headHash
+  // 已随清空失效，残留会让重建后的链被读侧误判「历史被截断」。存在才删，失败仅告警。
+  try {
+    const anchorPath = join(dirname(filePath), 'history-chain-head');
+    if (existsSync(anchorPath)) {
+      rmSync(anchorPath);
+    }
+  } catch (e) {
+    console.warn(`[sofagent] 链头锚点删除失败（请手动清理，否则可能误报历史截断）: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }

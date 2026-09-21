@@ -2,7 +2,7 @@
 
 > v1.4.1 块一定稿。本文档回答一个问题：**训练这件事，在 sofagent 里到底由谁、在哪个栈、按什么接口完成。** 双栈不是妥协，是生态现实——主流生产后训练框架（verl / TRL / NeMo RL / Oumi / open-instruct）全部是 Python（PyTorch + CUDA 生态决定）。Node 管决策与资源，Python 只当被 spawn 的计算子进程。
 >
-> 接口字段的唯一权威来源是 `engine/orchestrator/src/train/train-protocol.ts`（SSOT）——本文档只讲约定与流程，不复制字段定义。
+> 接口字段的唯一权威来源是 `engine/train/src/train-protocol.ts`（SSOT）——本文档只讲约定与流程，不复制字段定义。
 
 ---
 
@@ -12,13 +12,13 @@
 |---|---|---|
 | **决策面** | 受约束的训练 Agent | 数据质检 / 超参选择 / 失败诊断 / 评估 / 晋升决策——有 LLM 决策空间的环节，走约束层（注入训练铁律 + 审计 + 可回溯 + think.md 进化） |
 | **计算面** | verl / DeepSpeed / TRL（spawn） | LoRA 微调等确定性计算，Agent 不碰——防「每步都问 LLM」的成本 / 不确定性 / 审计噪音 |
-| **资源面** | 训练引擎（Node 控制面） | GPU 队列 / 显存预算 / checkpoint 续跑 / 失败恢复 / 环境准备——确定性流程，代码执行 |
+| **资源面** | 后训模块（Node 控制面） | GPU 队列 / 显存预算 / checkpoint 续跑 / 失败恢复 / 环境准备——确定性流程，代码执行 |
 
 三层的通信关系：决策面通过资源面下发训练任务（job.json），资源面 spawn 计算面的 Python 进程并消费其事件流；计算面对决策面完全不可见（它只看到 stdin/stdout/信号）。
 
 ### 环境准备是资源面的第零步
 
-训练跑起来之前，资源面先做环境决策（`engine/orchestrator/src/train/train-env.ts`）：
+训练跑起来之前，资源面先做环境决策（`engine/train/src/train-env.ts`）：
 
 - 流程：**检测 GPU → 安装/配置框架 → 验证可用 → 输出就绪报告**（结构化 JSON）。
 - 分支判定：检测到可用 CUDA（`nvidia-smi` 存在且输出可解析）→ `cuda-ready`；否则 → `metal-degraded`（macOS 上用 `system_profiler SPDisplaysDataType` 探测 Metal 支持，给出明确降级提示）。
@@ -29,7 +29,7 @@
 
 ## 二、协议三约定（双栈的接口契约）
 
-> SSOT：`engine/orchestrator/src/train/train-protocol.ts`。此处只述约定本身，字段以源码为准。
+> SSOT：`engine/train/src/train-protocol.ts`。此处只述约定本身，字段以源码为准。
 
 ### 约定一 · 启动：Node spawn Python + 单 JSON config
 
@@ -83,9 +83,9 @@ Node 发 SIGINT → Python 捕获后存 checkpoint 优雅退出（退出码 0）
 | LoRA 计算 | **复用** LLaMA-Factory / Unsloth / verl spawn | 确定性计算，成熟框架，自研无增益 |
 | 实验跟踪 | **复用** MLflow | 标准生态，Node 侧只消费其 API |
 | 推理（评估 / 采样） | **复用** vLLM / SGLang | 高吞吐推理是独立成熟赛道 |
-| 训练任务编排 + 四源语料闭环 + 训练审计 | **自研** | sofagent 的产品核心——约束层治理视角的编排 / 审计 / 回溯是差异化所在，外部框架没有等价物 |
+| 训练任务编排 + 六源语料闭环 + 训练审计 | **自研** | sofagent 的产品核心——约束层治理视角的编排 / 审计 / 回溯是差异化所在，外部框架没有等价物 |
 
-一句话：**计算交给成熟框架，治理留给自己。** 自研面只做 Node 控制面（train-job 编排 / 预算 / 断点 / 审计）+ 数据闭环（四源语料），任何「用 Node 重写一遍训练算子」的冲动都应该被这个表格拦下。
+一句话：**计算交给成熟框架，治理留给自己。** 自研面只做 Node 控制面（train-job 编排 / 预算 / 断点 / 审计）+ 数据闭环（六源语料），任何「用 Node 重写一遍训练算子」的冲动都应该被这个表格拦下。
 
 ---
 
@@ -93,8 +93,8 @@ Node 发 SIGINT → Python 捕获后存 checkpoint 优雅退出（退出码 0）
 
 | 文件 | 角色 |
 |---|---|
-| `engine/orchestrator/src/train/train-protocol.ts` | 协议三约定 SSOT（job.json schema / 事件流解析 / 信号控制） |
-| `engine/orchestrator/src/train/train-budget.ts` | 训练预算控制（时间 / 步数 / 成本三维度，超限 SIGINT + 人审） |
-| `engine/orchestrator/src/train/train-env.ts` | 环境准备（GPU 检测 / 框架安装验证 / 就绪报告） |
-| `engine/orchestrator/src/__tests__/train-env.test.ts` | 环境准备测试（mock 三场景 + Mac 真机集成） |
+| `engine/train/src/train-protocol.ts` | 协议三约定 SSOT（job.json schema / 事件流解析 / 信号控制） |
+| `engine/train/src/train-budget.ts` | 训练预算控制（时间 / 步数 / 成本三维度，超限 SIGINT + 人审） |
+| `engine/train/src/train-env.ts` | 环境准备（GPU 检测 / 框架安装验证 / 就绪报告） |
+| `engine/train/src/__tests__/train-env.test.ts` | 环境准备测试（mock 三场景 + Mac 真机集成） |
 | `docs/changelog/v1.4/v1.4.1.md` | 版本目标与八大块排期 |

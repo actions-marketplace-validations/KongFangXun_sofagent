@@ -3,9 +3,9 @@
 // v1.3 新增：一条命令完成 3 步
 //   1. 生成 .sofagent/config.yml 配置模板
 //   2. 安装 git commit-msg hook
-//   3. 冒烟测试——验证审计引擎可用
+//   3. 冒烟测试——验证审计模块可用
 // v1.3.7: 新增仓库状态分类器（gstack 首次运行引导）
-// v1.4.3 daemon 注册改为「确认后注册」——默认不装、非 TTY 不挂起、
+// v1.4.4 daemon 注册改为「确认后注册」——默认不装、非 TTY 不挂起、
 //   已有 plist 询问不静默覆盖、npx 场景如实报错（不生成坏 plist、不打印假成功）、
 //   修正 plist 路径前缀 sofagent/daemon/ → engine/daemon/。
 // v1.2.5 --init 自动生成 HMAC 密钥（~/.sofagent-key，权限 600），
@@ -18,9 +18,31 @@ import { execFileSync, execSync } from 'child_process';
 import { homedir, platform } from 'os';
 import { randomBytes } from 'crypto';
 import { isatty } from 'tty';
-import { CONFIG_TEMPLATE, HOOK_TEMPLATE, VERSION, generateWatchTemplate, resolveKnowledgeDir, resolveDaemonLog } from '@sofagent/core';
+import { CONFIG_TEMPLATE, VERSION, generateWatchTemplate, resolveKnowledgeDir, resolveDaemonLog } from '@sofagent/core';
 import { writeConfig } from '@sofagent/core';
 import { defaultRules } from '../rules';
+// v1.4.5 T1: hook 落点解析（core.hooksPath 优先）——与 index.ts installHook() 同源
+import { resolveHooksDir } from '../hook-install';
+
+/**
+ * hook 模板**唯一源**：`engine/audit/hooks/<name>`（随包发布，`files` 白名单含 hooks/）。
+ * ❌ 不再使用任何内嵌模板常量——
+ *   历史上三份内嵌模板与 hooks/ 目录「靠人工保持一致」，已实际漂移：内嵌 commit-msg 停留在
+ *   单信号版本（只比 audit-hash.txt），而 hooks/commit-msg 已是双信号（含源码指纹 + dist 聚合）。
+ *   `--init` 装的是内嵌版、`--install-hook` 装的是 hooks/ 版 ⇒ 两条安装路径行为不一致；
+ *   在「PATH 前置 wrapper」场景（acceptance 场景即如此）内嵌版的入口解析会解析到 wrapper 脚本，
+ *   哈希恒不匹配 ⇒ fail-closed 拦截 ⇒ audit 不执行 ⇒ A18 类场景**假红**（S51 实证）。
+ * 读不到即抛错（fail-closed）：audit 包必然带 hooks/，静默回退旧模板会重新引入漂移。
+ */
+function readHookTemplate(name: 'pre-commit' | 'commit-msg' | 'post-commit'): string {
+  const p = join(__dirname, '..', '..', 'hooks', name);
+  try {
+    return readFileSync(p, 'utf-8');
+  } catch (err) {
+    throw new Error(`hook 模板缺失: ${p}（audit 包应随包发布 hooks/ 目录）——${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 
 /**
  * 仓库状态分类（v1.0.5 新增）
@@ -70,7 +92,7 @@ function classifyRepo(): { state: RepoState; hint: string } {
   if (!hasCommits) {
     return {
       state: 'greenfield',
-      hint: '📋 新仓库——sofagent 会从第一次 commit 开始审计。建议先跑 FORGE/playbook/acceptance-test.sh 验证安装。',
+      hint: '📋 新仓库——sofagent 会从第一次 commit 开始审计。建议先跑 playbook/acceptance-test.sh 验证安装。',
     };
   }
 
@@ -91,7 +113,7 @@ function classifyRepo(): { state: RepoState; hint: string } {
     if (files.trim().length === 0) {
       return {
         state: 'greenfield',
-        hint: '📋 新仓库——sofagent 会从第一次 commit 开始审计。建议先跑 FORGE/playbook/acceptance-test.sh 验证安装。',
+        hint: '📋 新仓库——sofagent 会从第一次 commit 开始审计。建议先跑 playbook/acceptance-test.sh 验证安装。',
       };
     }
   } catch { /* */ }
@@ -336,7 +358,11 @@ export function runInit(): void {
     }
     writeConfig(configPath, CONFIG_TEMPLATE);
     console.log(`  → .sofagent/config.yml 已生成（${defaultRules.length} 条规则默认全部启用）`);
-    console.log('  → 这个配置控制哪些审计规则启用，直接编辑 .sofagent/config.yml 即可自定义');
+    // v1.4.5 (R4-P0): 旅程完整性——「直接编辑」必须是含重签名的完整旅程。config.yml
+    // 有 HMAC 签名（fail-closed），手动编辑不重签会被验签拦住，用户会误以为配置坏了。
+    console.log('  → 这个配置控制哪些审计规则启用，可直接编辑 .sofagent/config.yml 自定义');
+    console.log('  → 注意：编辑后需重新签名：sofagent-audit --sign-config（否则签名校验会拒绝启动）');
+    console.log('  → 注意：config.yml 已签名（防篡改）——手动编辑后需重新签名：sofagent-audit --sign-config');
     stepOk++;
   }
 
@@ -413,7 +439,7 @@ export function runInit(): void {
 
   if (!gitDir) {
     console.log('  → 当前目录不在 git 仓库内，hook 已跳过');
-    console.log('  ⚠️ 审计引擎在 git 项目中才能运行——配置已生成，但审计不可用');
+    console.log('  ⚠️ 审计模块在 git 项目中才能运行——配置已生成，但审计不可用');
     console.log('  → 初始化 git 仓库后重新跑: git init && sofagent-audit --init');
     // P1-C4: 非 git 目录残留清理——删除刚创建的 .sofagent/ 目录
     try {
@@ -446,9 +472,21 @@ export function runInit(): void {
     console.log('╚══════════════════════════════════════════╝');
     process.exit(1);
   } else {
-    const hooksDir = join(gitDir, 'hooks');
+    // v1.4.5 T1: hook 落点改经 resolveHooksDir（core.hooksPath 优先，缺省 $gitDir/hooks）。
+    // 此处必须与 index.ts installHook() 同语义——repo 配 core.hooksPath=.githooks 时
+    // 装到 .git/hooks 等于没装（git 不执行），且 doctor 按 hooksPath 找不到会误报。
+    const hooksResolution = resolveHooksDir(cwd);
+    if (!hooksResolution) {
+      console.log('  → 无法解析 git hook 目录，hook 已跳过');
+      console.log('  ⚠️ 审计模块在 git 项目中才能运行——配置已生成，但审计不可用');
+      process.exit(1);
+    }
+    const hooksDir = hooksResolution.hooksDir;
     if (!existsSync(hooksDir)) {
       mkdirSync(hooksDir, { recursive: true });
+    }
+    if (hooksResolution.configured) {
+      console.log(`  → 检测到 core.hooksPath=${hooksResolution.configuredValue ?? ''}——hook 将安装到配置目录 ${hooksDir}`);
     }
 
     // v1.4.2 H-01: pre-commit 从「旧版迁移删除对象」升级为三层防线主防线——
@@ -459,31 +497,6 @@ export function runInit(): void {
     // fail-loud exit 1 拒绝 commit。commit 对象生成前的清理是唯一对当次 commit
     // 直接生效的防线（commit-msg 阶段 git 主进程持内存 index 快照，reset 只能
     // 清理磁盘 index 防后续 commit 卷入）。
-    const PRE_COMMIT_TEMPLATE = `#!/bin/bash
-# sofagent pre-commit hook v\${VERSION}
-# 安装：sofagent-audit --init 或 sofagent-audit --install-hook
-# 三层防线第一层（主防线）：.sofagent/ 永不入库——在 commit 对象生成前
-# 就把 .sofagent/ 条目移出暂存区。
-#
-# v1.4.2 H-01 三层防线：
-#   ① pre-commit（本 hook）：staged 有 .sofagent/ 条目 → reset 移出（主防线）；
-#   ② commit-msg：同样逻辑再兜一次 + 24 条规则审计；
-#   ③ post-commit：HEAD tree 对账告警（best-effort，永不阻断）。
-#
-# reset 失败（如 index.lock 竞态被并发 git 进程持锁）→ fail-loud 拒绝本次
-# commit（宁可 false-retry 也不可静默入库），与 commit-msg 行为一致。
-
-if git diff --cached --name-only -- .sofagent/ 2>/dev/null | grep -q .; then
-  if git reset -q -- .sofagent/ 2>/dev/null; then
-    echo "ℹ️ [sofagent] 已将 .sofagent/ 移出暂存区（审计数据永不入库）"
-  else
-    echo "❌ [sofagent] 无法将 .sofagent/ 移出暂存区（index 可能被占用）。请稍后重试 commit。" >&2
-    exit 1
-  fi
-fi
-
-exit 0
-`;
 
     const preCommitPath = join(hooksDir, 'pre-commit');
     let hasPreCommitHook = false;
@@ -529,7 +542,7 @@ exit 0
           }
         } catch { /* 备份失败不阻塞安装 */ }
       }
-      writeFileSync(preCommitPath, PRE_COMMIT_TEMPLATE, 'utf-8');
+      writeFileSync(preCommitPath, readHookTemplate('pre-commit'), 'utf-8');
       chmodSync(preCommitPath, 0o755);
       console.log('  → .git/hooks/pre-commit 已安装（.sofagent/ 永不入库主防线）');
     }
@@ -570,7 +583,7 @@ exit 0
       console.log(`  → commit-msg hook 已安装（检测到 sofagent 标识），跳过`);
       stepSkipped++;
     } else {
-      writeFileSync(hookPath, HOOK_TEMPLATE, 'utf-8');
+      writeFileSync(hookPath, readHookTemplate('commit-msg'), 'utf-8');
       chmodSync(hookPath, 0o755);
       console.log(`  → 检测到 git 仓库: ${gitDir.replace('/.git', '')}`);
       console.log('  → .git/hooks/commit-msg 已安装（可执行，含无声失败保护）');
@@ -580,146 +593,6 @@ exit 0
 
     // v1.2.9: post-commit hook 重写——commit hash 对账替代 timestamp 近邻匹配 + 读全局 history 路径
     // v1.2.9 对账逻辑适配 parentSha（commit-msg hook 记录的是父提交 SHA）
-    const POST_COMMIT_TEMPLATE = `#!/bin/bash
-# sofagent post-commit hook v${VERSION}
-# 检测策略：commit hash 对账——检查当前 commit 的 SHA 是否在审计记录中有对应条目
-# （commitSha 精确匹配 + commitPhase='pre-commit' 记录的 parentSha 匹配）
-# 如果没有，判定为绕过（--no-verify 或 hook 被删/失效）
-# 注意：git commit --no-verify 会绕过本 hook——CI 侧 sofagent-audit --diff 兜底是最终防线
-
-# P1-A7: commit-msg hook 缺失自检——醒目告警（下次 commit 时）
-COMMIT_MSG_HOOK=".git/hooks/commit-msg"
-if [ ! -f "$COMMIT_MSG_HOOK" ]; then
-  echo ""
-  echo "  ╔══════════════════════════════════════════════╗"
-  echo "  ║  🔴 [sofagent] commit-msg hook 不存在！       ║"
-  echo "  ║  审计引擎未运行——所有提交都不受审计约束      ║"
-  echo "  ║  运行 sofagent-audit --init 重新安装          ║"
-  echo "  ╚══════════════════════════════════════════════╝"
-  echo ""
-elif ! grep -q 'sofagent' "$COMMIT_MSG_HOOK" 2>/dev/null; then
-  echo ""
-  echo "  ⚠️ [sofagent] commit-msg hook 存在但不包含 sofagent 标识——"
-  echo "  可能已被替换或覆盖。运行 sofagent-audit --init 恢复。"
-  echo ""
-fi
-
-if ! command -v node &>/dev/null; then exit 0; fi
-
-if command -v sofagent-audit &>/dev/null; then
-  AUDIT_CMD="sofagent-audit"
-else
-  exit 0
-fi
-
-# v1.2.8: 读全局 history 路径（不再读仓库相对路径 data/audit/history.jsonl）
-SOFAGENT_HOME="\${SOFAGENT_HOME:-\$HOME/.sofagent}"
-HISTORY_FILE="$SOFAGENT_HOME/data/audit/history.jsonl"
-if [ ! -f "$HISTORY_FILE" ]; then exit 0; fi
-
-# 当前 commit SHA（= 已创建的新提交自身）
-COMMIT_SHA=$(git rev-parse HEAD 2>/dev/null)
-if [ -z "$COMMIT_SHA" ]; then exit 0; fi
-
-# v1.3.3 #13: 父提交 SHA——用于和 commit-msg hook 记录的 parentSha 对账。
-# commit-msg hook 在 commit 对象生成前运行，记录的 parentSha = 审计时 HEAD = 新提交的父提交。
-# post-commit 在 commit 生成后运行，HEAD = 新提交自身，因此需取 HEAD^ 才能对上 parentSha。
-# 首次提交无父（unborn HEAD 场景）：HEAD^ 不存在，git rev-parse 返回非零并把字面量 "HEAD^"
-# 写到 stdout（而非空串），必须检查退出码而非判空，否则兜底失效。
-PARENT_SHA=''
-if git rev-parse HEAD^ >/dev/null 2>&1; then
-  PARENT_SHA=$(git rev-parse HEAD^ 2>/dev/null)
-fi
-if [ -z "\$PARENT_SHA" ]; then
-  PARENT_SHA='4b825dc642cb6eb9a060e54bf8d69288fbee4904'
-fi
-
-# 当前 commit 的 message 主题行——parentSha 匹配后叠加主题消歧，防跨 commit 误认领：
-# commit N 的 SHA 天然是 commit N+1 审计记录的 parentSha，--no-verify 绕过提交 B 后
-# 紧跟的正常提交 C 会让 B 的对账命中 C 的审计记录。记录的 task 字段（hook 写入时
-# 来自 commit message 主题行）须与本 commit 主题一致才认领。
-COMMIT_SUBJECT=$(git log -1 --pretty=%s HEAD 2>/dev/null)
-
-# v1.3.3 #17E: SHA / 路径通过 process.env 传入 node -e，不再字符串拼接（命令注入加固）
-# commit hash 对账：检查当前 commit 是否在审计记录中有对应条目
-COMMIT_SHA="$COMMIT_SHA" PARENT_SHA="$PARENT_SHA" COMMIT_SUBJECT="$COMMIT_SUBJECT" HISTORY_FILE="$HISTORY_FILE" node -e '
-const fs = require("fs");
-const COMMIT_SHA = process.env.COMMIT_SHA;
-const PARENT_SHA = process.env.PARENT_SHA;
-const COMMIT_SUBJECT = (process.env.COMMIT_SUBJECT || "").trim();
-const HISTORY_FILE = process.env.HISTORY_FILE;
-if (!HISTORY_FILE) process.exit(0);
-const lines = fs.readFileSync(HISTORY_FILE, "utf-8").trim().split("\\n").filter(Boolean);
-if (lines.length === 0) process.exit(0);
-try {
-  // 反向查找（最新记录在末尾）
-  // 匹配规则（v1.3.3 #13 修正）：
-  //   1. commitSha 精确匹配（手动 --diff 场景记录，HEAD 已存在）
-  //   2. commitPhase=pre-commit 记录：parentSha = 审计时 HEAD = 新提交的父提交，
-  //      post-commit 用 HEAD^（当前提交的父）与之对账——父子关系正确匹配；
-  //      SHA 命中后叠加主题行消歧（记录 task vs 本 commit subject），防相邻
-  //      commit 的审计记录被误认领（--no-verify 绕过场景）。旧记录无 task/
-  //      commitMsg 可回退时退化为准 SHA 匹配（向后兼容）。
-  //   旧记录无 parentSha/commitPhase 字段时规则 2 不生效，行为与旧版一致。
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const entry = JSON.parse(lines[i]);
-    const entryCommit = entry.commitSha || "";
-    if (entryCommit === COMMIT_SHA) {
-      // v1.3.4 P1-8: 审计通过时输出轻量回声（可感知性——让用户知道 sofagent 在工作）
-      console.log("  ✓ [sofagent] 审计通过");
-      process.exit(0);  // 找到匹配——审计已运行
-    }
-    if (entry.commitPhase === "pre-commit" && entry.parentSha === PARENT_SHA) {
-      // 主题消歧：记录的 task（hook 写入时来自 commit message 主题行）与本 commit
-      // 主题不一致 → 这是相邻 commit 的审计记录，不认领，继续找。
-      const recordSubject = (typeof entry.task === "string" && entry.task.trim() !== ""
-        ? entry.task
-        : (typeof entry.commitMsg === "string" ? (entry.commitMsg.split("\\n")[0] || "") : "")
-      ).trim();
-      if (COMMIT_SUBJECT && recordSubject && recordSubject !== COMMIT_SUBJECT) {
-        continue;
-      }
-      // v1.3.5 #2: 假阳性回声修复——命中 pre-commit 记录时必须校验该次审计的结果。
-      // 此前无脑输出「✓ 审计通过」：带 token 提交被 commit-msg 拦截（exit 2，
-      // 拦截记录带 parentSha）→ 同内容 --no-verify 强推 → post-commit 命中那条
-      // **失败**记录 → 输出假绿。现在按 exitCode 三档分流：
-      //   0 = 审计真通过 → 回声；
-      //   1 = WARN 放行——commit-msg 只对 exit 2 阻断，exit 1 时 commit 合法走过审计
-      //       （v1.3.6 B8 修复：此前 exit 1 被误判为拦截记录，正常 WARN 提交被报「疑似绕过」）；
-      //   2 = FAIL 拦截后仍出现同父新 commit → 疑似 --no-verify 绕过（保留警示）。
-      if (entry.exitCode === 0) {
-        console.log("  ✓ [sofagent] 审计通过");
-        process.exit(0);  // pre-commit 记录按父提交 SHA 对账命中且审计通过
-      }
-      if (entry.exitCode === 1) {
-        console.log("  ✓ [sofagent] 审计通过（含警告，WARN 放行）");
-        process.exit(0);  // WARN 放行 = 合法走过审计，不是绕过
-      }
-      console.log("");
-      console.log("  ℹ️ [sofagent] 父提交存在审计拦截记录（exit " + entry.exitCode + "）但本次 commit 未走审计——疑似 --no-verify 绕过。");
-      console.log("  可运行 sofagent-audit --verify-commit " + COMMIT_SHA + " 复核。");
-      process.exit(0);  // post-commit 永不阻断 commit（只提示）
-    }
-  }
-  // 未找到匹配——降级为 INFO 提示（避免狼来了）。真绕过仍由 --verify-commit 复核。
-  console.log("");
-  console.log("  ℹ️ [sofagent] 未确认审计记录（post-commit 对账未命中）。");
-  console.log("  如未使用 --no-verify 可忽略；如需确认运行 sofagent-audit --verify-commit " + COMMIT_SHA);
-} catch (e) {
-  // 解析失败不影响提交
-}
-' 2>/dev/null
-
-# v1.4.2 H-01: HEAD tree 入库对账兜底——pre-commit/commit-msg 的 reset 在极端时序
-# 竞态下仍可能失败放行，此处扫描刚生成 commit 的 HEAD tree，命中 .sofagent/ 即
-# 告警（best-effort，永不阻断）。
-if git ls-tree -r HEAD --name-only 2>/dev/null | grep -q '^\\.sofagent/'; then
-  echo "  ⚠️ [sofagent] 检测到 .sofagent 文件已入库，违反永不入库承诺（reset 未拦住，疑似 index 竞态）。"
-  echo "  请立即处理：git rm --cached <文件> 并重写历史（git commit --amend 或 filter-branch）。"
-fi
-
-exit 0
-`;
 
     // v1.0.7: 安装 post-commit hook
     const postCommitPath = join(hooksDir, 'post-commit');
@@ -772,7 +645,7 @@ exit 0
     if (hasPostCommitHook) {
       console.log('  → post-commit hook 已安装（检测到 sofagent 标识），跳过');
     } else {
-      writeFileSync(postCommitPath, POST_COMMIT_TEMPLATE, 'utf-8');
+      writeFileSync(postCommitPath, readHookTemplate('post-commit'), 'utf-8');
       chmodSync(postCommitPath, 0o755);
       console.log('  → .git/hooks/post-commit 已安装（--no-verify 绕过检测）');
     }
@@ -841,15 +714,15 @@ exit 0
     smokeOk = false;
   }
 
-  // 审计引擎可用检测——尝试跑一次空 diff
+  // 审计模块可用检测——尝试跑一次空 diff
   try {
     execFileSync('git', ['rev-parse', '--is-inside-work-tree'], {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    console.log('  ✅ 审计引擎可用');
+    console.log('  ✅ 审计模块可用');
   } catch {
-    console.log('  ⚠️ 非 git 仓库，审计引擎在 git 项目中才能运行');
+    console.log('  ⚠️ 非 git 仓库，审计模块在 git 项目中才能运行');
   }
 
   if (smokeOk) stepOk++;
@@ -887,9 +760,9 @@ exit 0
   console.log('║  git commit 审计已就绪                   ║');
   console.log('╚══════════════════════════════════════════╝');
   console.log('');
-  console.log('  💡 审计已就绪——改个文件试试 git commit，你会看到审计引擎在提交前自动扫描。');
+  console.log('  💡 审计已就绪——改个文件试试 git commit，你会看到审计模块在提交前自动扫描。');
   console.log('  下一步：');
-  console.log('    1. 改个文件，试试 git commit——你会看到审计引擎在提交前自动扫描');
+  console.log('    1. 改个文件，试试 git commit——你会看到审计模块在提交前自动扫描');
   console.log('    2. 想测试拦截？echo "API_KEY=test" > .env && git add -f .env && git commit -m "test"');
   console.log('       （用 -f 强制添加以便演示拦截——.env 通常被 .gitignore 忽略）');
   console.log('    3. 想看全部命令？sofagent-audit --help');

@@ -16,7 +16,7 @@
 # set -u: 未定义变量引用视为错误（无 -e，因为验证脚本需收集所有失败项后再 exit 1）
 # set -o pipefail: 管道中任一命令失败都计为失败
 set -uo pipefail
-VERSION="1.4.3"
+VERSION="1.5.0"
 # ── 临时文件清理（当前脚本不创建临时文件，预留用于将来扩展）──
 cleanup() { [ -n "${TMP_FILE:-}" ] && rm -f "$TMP_FILE" 2>/dev/null; }
 trap cleanup EXIT
@@ -40,7 +40,7 @@ while [[ $# -gt 0 ]]; do
       echo "  2. think.md 可写性"
       echo "  3. fde.md 可写性"
       echo "  4. task/logs/ 目录可写"
-      echo "  5. 审计引擎可执行"
+      echo "  5. 审计模块可执行"
       echo "  6. MCP server 可执行"
       echo "  7. daemon 配置文件"
       echo "  8. 安装版本一致性"
@@ -463,13 +463,13 @@ else
       for log_file in $RECENT_LOGS; do
         [ -f "$log_file" ] || continue
         LOG_CONTENT=$(cat "$log_file" 2>/dev/null || true)
-        if echo "$LOG_CONTENT" | grep -q "sofagent-load-chain"; then
+        if [[ "$LOG_CONTENT" == *"sofagent-load-chain"* ]]; then
           HOOK_TRIGGERED=1
         fi
-        if echo "$LOG_CONTENT" | grep -q "think\\.md"; then
+        if grep -q "think\\.md" <<< "$LOG_CONTENT"; then
           LAYER2_FOUND=1
         fi
-        if echo "$LOG_CONTENT" | grep -q "rules\\.md"; then
+        if grep -q "rules\\.md" <<< "$LOG_CONTENT"; then
           LAYER3_FOUND=1
         fi
         [ "$HOOK_TRIGGERED" = "1" ] && [ "$LAYER2_FOUND" = "1" ] && [ "$LAYER3_FOUND" = "1" ] && break
@@ -520,7 +520,7 @@ _section "平台兼容性"
 if command -v openclaw &>/dev/null; then
   OC_PATH=$(command -v openclaw)
   OC_VER=$(openclaw --version 2>/dev/null || echo "?")
-  if echo "$OC_PATH" | grep -q ".workbuddy"; then
+  if grep -q ".workbuddy" <<< "$OC_PATH"; then
     check_pass "OpenClaw v${OC_VER}（WorkBuddy 内嵌）"
   else
     check_pass "OpenClaw 已安装: v${OC_VER}"
@@ -715,14 +715,14 @@ _test_sanitize() {
 }
 
 SANITY_SK=$(_test_sanitize "sk-***REDACTED***")
-if echo "$SANITY_SK" | grep -q "REDACTED"; then
+if [[ "$SANITY_SK" == *REDACTED* ]]; then
   check_pass "脱敏: API Key 打码正常 (sk- → sk-***REDACTED***)"
 else
   check_fail "脱敏: API Key 未打码"
 fi
 
 SANITY_PWD=$(_test_sanitize "password=mysecret123")
-if echo "$SANITY_PWD" | grep -q "REDACTED" && ! echo "$SANITY_PWD" | grep -q "mysecret123"; then
+if [[ "$SANITY_PWD" == *REDACTED* ]] && [[ "$SANITY_PWD" != *mysecret123* ]]; then
   check_pass "脱敏: 凭证打码正常 (password= → password=***REDACTED***)"
 else
   check_fail "脱敏: 凭证未打码"
@@ -730,7 +730,7 @@ fi
 
 # 手机号脱敏测试（v0.71 P0 修复）
 SANITY_PHONE=$(_test_sanitize "用户电话 13812345678 请回拨")
-if echo "$SANITY_PHONE" | grep -q "PHONE-REDACTED" && ! echo "$SANITY_PHONE" | grep -q "13812345678"; then
+if [[ "$SANITY_PHONE" == *PHONE-REDACTED* ]] && [[ "$SANITY_PHONE" != *13812345678* ]]; then
   check_pass "脱敏: 手机号打码正常 (1[3-9]xxxxxxxxx → [PHONE-REDACTED])"
 else
   check_fail "脱敏: 手机号未打码"
@@ -738,7 +738,7 @@ fi
 
 # 手机号误伤测试——11 位订单号不应被打码
 SANITY_NO_FALSE_POSITIVE=$(_test_sanitize "订单号 28012345678 已生成")
-if ! echo "$SANITY_NO_FALSE_POSITIVE" | grep -q "PHONE-REDACTED"; then
+if [[ "$SANITY_NO_FALSE_POSITIVE" != *PHONE-REDACTED* ]]; then
   check_pass "脱敏: 11 位订单号（非 1[3-9] 开头）未被误伤"
 else
   check_warn "脱敏: 11 位订单号被误伤（可能误打码）"
@@ -746,7 +746,7 @@ fi
 
 # 词边界防误伤测试——monkey=foo 不应被打码
 SANITY_KEYWORD=$(_test_sanitize "monkey=foo 这是任务名")
-if ! echo "$SANITY_KEYWORD" | grep -q "REDACTED"; then
+if [[ "$SANITY_KEYWORD" != *REDACTED* ]]; then
   check_pass "脱敏: 词边界保护（monkey=foo 不被误伤）"
 else
   check_warn "脱敏: 词边界失效（monkey=foo 被误伤）"
@@ -765,7 +765,7 @@ if [ -f "$CLEANUP_SCRIPT" ] && [ -x "$CLEANUP_SCRIPT" ]; then
   check_pass "cleanup.sh 存在且可执行"
   # 检查关键参数（注意：grep -q 在 pipefail 下会因 SIGPIPE 误报，用临时变量避免）
   CLEANUP_HELP=$(bash "$CLEANUP_SCRIPT" --help 2>/dev/null || true)
-  if echo "$CLEANUP_HELP" | grep -q "dry-run"; then
+  if [[ "$CLEANUP_HELP" == *dry-run* ]]; then
     check_pass "cleanup.sh --dry-run 参数可用"
   else
     check_warn "cleanup.sh --dry-run 参数不可用"
@@ -780,7 +780,7 @@ if [ -f "$AUDIT_SCRIPT_VERIFY" ] && [ -x "$AUDIT_SCRIPT_VERIFY" ]; then
   check_pass "audit.sh 存在且可执行"
   # 检查关键参数（同上，避免 pipefail + grep -q 的 SIGPIPE 误报）
   AUDIT_HELP=$(bash "$AUDIT_SCRIPT_VERIFY" --help 2>/dev/null || true)
-  if echo "$AUDIT_HELP" | grep -q "operation"; then
+  if [[ "$AUDIT_HELP" == *operation* ]]; then
     check_pass "audit.sh --operation 参数可用"
   else
     check_warn "audit.sh --operation 参数不可用"
@@ -794,17 +794,16 @@ if [ -f "${VERIFY_SCRIPT_DIR}/lib/config.sh" ]; then
   # shellcheck disable=SC1091
   source "${VERIFY_SCRIPT_DIR}/lib/config.sh" 2>/dev/null || true
 fi
-if [ "${SOFA_SANITIZE:-}" != "true" ] && [ "${SOFA_AUDIT_ENABLED:-}" != "true" ] && [ "${SOFA_CLEANUP_ON_RECORD:-}" != "true" ]; then
+# 10.4 默认关闭确认
+# v1.4.5 T4: 读规范名 SOFAGENT_*（旧 SOFA_* 兜底——lib/config.sh 双导出下两者一致）
+if [ "${SOFAGENT_SANITIZE:-${SOFA_SANITIZE:-}}" != "true" ] && [ "${SOFAGENT_AUDIT_ENABLED:-${SOFA_AUDIT_ENABLED:-}}" != "true" ]; then
   check_pass "默认关闭: 合规功能全部关闭（向后兼容）"
 else
-  if [ "${SOFA_SANITIZE:-}" = "true" ]; then
+  if [ "${SOFAGENT_SANITIZE:-${SOFA_SANITIZE:-}}" = "true" ]; then
     check_warn "脱敏已启用 (log_sanitize=true)"
   fi
-  if [ "${SOFA_AUDIT_ENABLED:-}" = "true" ]; then
+  if [ "${SOFAGENT_AUDIT_ENABLED:-${SOFA_AUDIT_ENABLED:-}}" = "true" ]; then
     check_warn "审计已启用 (audit_enabled=true)"
-  fi
-  if [ "${SOFA_CLEANUP_ON_RECORD:-}" = "true" ]; then
-    check_warn "清理触发已启用 (data_cleanup_on_record=true)"
   fi
 fi
 
@@ -824,15 +823,15 @@ for candidate in \
 done
 if [ -n "$RULES_FILE" ]; then
   missing=0
-  for key in log_sanitize log_sanitize_ips data_retention_days data_retention_max_entries data_cleanup_on_record data_cleanup_frequency audit_enabled; do
+  for key in log_sanitize log_sanitize_ips data_retention_days data_retention_max_entries data_cleanup_frequency audit_enabled; do
     if ! grep -q "${key}:" "$RULES_FILE" 2>/dev/null; then
       missing=$((missing + 1))
     fi
   done
   if [ "$missing" -eq 0 ]; then
-    check_pass "fde.md 合规配置段完整（7/7 配置项）"
+    check_pass "fde.md 合规配置段完整（6/6 配置项）"
   else
-    check_warn "fde.md 合规配置段不完整（缺少 ${missing}/7 项）"
+    check_warn "fde.md 合规配置段不完整（缺少 ${missing}/6 项）"
   fi
 else
   check_warn "fde.md 未找到，无法验证合规配置段"

@@ -1,92 +1,87 @@
-// ============================================================
-// cordis-plugin-rollback · DSH 反向插件（v1.4.0 交付五）
-// ============================================================
-// 每个插件干一件事、可独立安装渐进采用——只引对应 @public API 子集。
-// seam 挂载：effect 注册/卸载
-// 版本同步：sofagent v1.4.3 → 各 plugin v0.1.0（DSH Cordis 协议 breaking change 时 bump major）
+// cordis-plugin-sofagent-rollback · DSH 反向插件（v1.5.0：98 行样板收敛到 @sofagent/dsh-plugin-kit）
+// seam 挂载：agent/error    # 语义：Agent 出错 → git snapshot 逆序撤销（默认关档）
+// 清单生成源 = engine/dsh-plugins/plugins.json（生成 package.json 的 description/sofagent/dsh 段与 cordis.patch.yml）；本文件的 seam 字面量由生成器 --check 与之对账。
 
-/** 插件元数据（DSH profile/注册表消费） */
-export const pluginMeta = {
-  id: 'cordis-plugin-sofagent-rollback',
-  version: '0.1.0',
-  description: '出错逆序撤销——git snapshot → effect disposer（seam: effect 注册/卸载）',
-  seam: 'effect 注册/卸载',
-} as const;
+import {
+  createSofagentPlugin,
+  seamHelpers,
+  type SeamHandler,
+  type SeamHelpers,
+} from '../../plugin-kit/dist/index.js';
 
-/** 依赖的 sofagent 能力说明（供 DSH skill 引导链展示） */
-export const capability = '快照回溯（出事一键回滚）';
-
-/**
- * 调用对应的 sofagent @public API（懒加载 + 降级不抛）。
- * 包装层职责：把 sofagent 能力暴露成 DSH 可调用的插件函数。
- */
-export async function invoke<T = unknown>(...args: unknown[]): Promise<T> {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const m = await import('@sofagent/core');
-    const fn = m.getHistoryFilePath;
-    if (typeof fn !== 'function') {
-      throw new Error('createShadowRepo 不是可调用函数（@sofagent/core 公共 API）');
-    }
-    return await (fn as (...a: unknown[]) => unknown)(...args) as T;
-  } catch (err) {
-    // 依赖未装/能力不可用时降级返回错误信息（不抛——插件可独立安装，缺依赖时优雅提示）
-    throw new Error('cordis-plugin-rollback 依赖 @sofagent/core 不可用：' + (err instanceof Error ? err.message : String(err)));
-  }
+/** 一次性日志表（接线自证 / 降级提示只打一次） */
+const logged = new Set<string>();
+function logOnce(helpers: SeamHelpers, key: string, message: string): void {
+  if (logged.has(key)) return;
+  logged.add(key);
+  helpers.log(message);
 }
 
+const errMsg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** 项目根：显式环境变量优先，缺省取宿主进程工作目录 */
+const projectRoot = (): string => process.env.SOFAGENT_PROJECT_ROOT ?? process.cwd();
 
 /**
- * DSH Cordis 插件契约（v1.4.0 品牌化）：默认导出 apply(ctx) 把能力注册为 ctx 服务（sofagent.rollback）。
- * 插件被挂进 DSH profile（dsh.bundle + cordis.patch.yml）后由 Cordis loader 调用。
+ * seam 事件处理器（v1.5.0 章十）——`agent/error` 的**实现**（此前只有声明）。
+ *
+ * 宿主契约：emit 派发，listener 约定 `(payload)`，payload 含 `{ agent, turn, step, error }`；
+ * 返回值无意义（观察位）。
+ *
+ * 🔴 **默认关档**（settings `rollbackOnError = 'false'`）：自动撤销工作区是破坏性
+ *    动作，接线本身不应改变既有行为——要恢复就必须显式开档。关档时本事件位仍
+ *    真实订阅（装载状态可自证），只是不动作。
+ * 🔴 判定逻辑零改动：快照定位与恢复都是既有 @public API（`listSnapshots` /
+ *    `restoreSnapshot`），插件只做串联；快照序为追加序，「末尾即最新」。
  */
-export default {
-  apply(ctx: unknown): void {
-    const c = ctx as {
-      provide?: (name: string, service: Record<string, unknown>) => unknown;
-      [key: string]: unknown;
-    };
-    const service = { invoke, meta: pluginMeta, capability };
-    if (typeof c.provide === 'function') {
-      c.provide('sofagent.rollback', service);
-    } else {
-      const cur = (c.sofagent ?? {}) as Record<string, unknown>;
-      c.sofagent = { ...cur, rollback: service };
+const seamHandlers: Record<string, SeamHandler> = {
+  'agent/error': async (...args: unknown[]) => {
+    const helpers = seamHelpers(args);
+    if (helpers.flags().rollbackOnError !== true) {
+      logOnce(
+        helpers,
+        'error-rollback-disarmed',
+        'Agent 出错事件已接线；自动回滚档位关闭（rollbackOnError=false）——不撤销工作区（默认关，避免误伤未提交变更）',
+      );
+      return;
     }
-    // v1.4.0 批量：注册为 dynamicCordisRunner 动态插件（Plugin list 可见加载状态）
     try {
-      const runner = c.dynamicCordisRunner as { define?: (r: Record<string, unknown>) => unknown } | undefined;
-      if (runner && typeof runner.define === 'function') {
-        const res = runner.define({
-          name: 'sofagent-rollback',
-          purpose: '出错逆序撤销——git snapshot → effect disposer（品牌色 #16B8F3）',
-          code: {
-            host: [
-              'module.exports = {',
-              '  async main(ctx, args) {',
-              '    return { ok: true, source: "sofagent-rollback", message: "出错逆序撤销——git snapshot → effect disposer" };',
-              '  }',
-              '};',
-            ].join('\n'),
-          },
-          plugin: { kind: 'new', idPrefix: 'soga' },
-          sessionId: 'profile-boot',
-        });
-        console.error('[sofagent-rollback] dynamicCordisRunner.define 成功:', JSON.stringify(res));
+      const root = projectRoot();
+      const snapshots = await helpers.call('@sofagent/core', 'listSnapshots', root);
+      if (!Array.isArray(snapshots) || snapshots.length === 0) {
+        logOnce(helpers, 'error-no-snapshot', 'Agent 出错但无可用快照——不撤销（先跑一次审计才会建快照）');
+        return;
       }
+      const latest = snapshots[snapshots.length - 1] as { sha?: unknown };
+      if (typeof latest?.sha !== 'string' || latest.sha === '') return;
+      const restored = await helpers.call('@sofagent/core', 'restoreSnapshot', root, latest.sha);
+      helpers.log(
+        `出错逆序撤销：已恢复到快照 ${latest.sha.slice(0, 8)}（${Array.isArray(restored) ? restored.length : 0} 个文件）`,
+      );
     } catch (err) {
-      console.error('[sofagent-rollback] define 失败:', err instanceof Error ? err.message : String(err));
-    }
-    // v1.4.0 批量：注册 settings namespace（Plugin configuration 数据层可见）
-    try {
-      const settings = c.settings as { register?: (ns: string, schema: unknown, opts?: Record<string, unknown>) => unknown } | undefined;
-      if (settings?.register) {
-        const s = require('@deepseek-ai/schemastery') as { object: (s: Record<string, unknown>) => unknown; boolean: () => unknown; string: () => unknown };
-        settings.register('sofagent-rollback', s.object({ enabled: s.boolean(), brandColor: s.string() }), { base: { enabled: true, brandColor: '#16B8F3' } });
-        console.error('[sofagent-rollback] settings.register 成功');
-      }
-    } catch (err) {
-      console.error('[sofagent-rollback] settings.register 失败:', err instanceof Error ? err.message : String(err));
+      logOnce(helpers, 'error-rollback-failed', `快照回滚失败（不阻断宿主错误处理）：${errMsg(err)}`);
     }
   },
 };
+
+/** 插件声明（本文件唯一手写处；适配层红线由 kit 承担：ctx 鸭子类型 + 宿主 API 缺席降级不抛） */
+const kit = createSofagentPlugin(
+  {
+    id: 'cordis-plugin-sofagent-rollback',
+    seam: 'agent/error',
+    seamSemantics: 'Agent 出错 → git snapshot 逆序撤销（默认关档，需显式开 rollbackOnError）',
+    capability: '快照回溯（出事一键回滚）',
+    bridgePkg: '@sofagent/core',
+    bridgeApi: 'restoreSnapshot',
+    description: '出错逆序撤销——git snapshot → effect disposer',
+    // 默认关：自动撤销工作区是破坏性动作，接线不改变既有行为
+    settingsExtra: { rollbackOnError: 'false' },
+    seamHandlers,
+  },
+  require('../package.json') as { version?: string },
+);
+
+export const pluginMeta = kit.pluginMeta; // 插件元数据（DSH profile/注册表消费）
+export const capability = kit.capability; // 依赖的 sofagent 能力说明（DSH skill 引导链展示）
+export const invoke = kit.invoke; // 桥接 @sofagent/* 公共 API（懒加载 + 降级不抛）
+export default kit.plugin; // DSH Cordis 插件契约（apply 三段式由 kit 提供）

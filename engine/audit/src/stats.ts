@@ -1,4 +1,4 @@
-// stats.ts · v1.4.3 第七章 · 审计聚合指标（安全边界触发率——约束层价值量化）
+// stats.ts · v1.5.0 第七章 · 审计聚合指标（安全边界触发率——约束层价值量化）
 //
 // 定位：约束层的价值目前是逐次事件（这次拦了什么），缺聚合度量——
 // 「近 30 天 N 次变更中，多少次触发审计边界、拦下多少次注入」这一行数字
@@ -24,6 +24,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import type { AuditHistoryEntry } from './audit-history';
 import type { RuleCheck } from './rules/types';
+import { ruleCode } from './rules/assemble';
 
 // ════════════════════════════════════════
 // 聚合报告数据模型
@@ -165,8 +166,8 @@ export function computeAuditStats(options: StatsOptions = {}): AuditStatsReport 
   for (const entry of inWindow) {
     for (const rc of entry.ruleResults as RuleCheck[]) {
       if (!rc || rc.status !== 'WARN' && rc.status !== 'FAIL') continue;
-      // 规则码：A<n> / E<n>（与 reporter.ts 口径一致——E 系列 number=200+序号，200+ 走 E 前缀）
-      const code = rc.number >= 200 ? `E${rc.number - 200}` : `A${rc.number}`;
+      // 规则码：A<n> / E<n> / R<n>（v1.4.8 条目 7：编号推导收口 ruleCode——此前本处内联分支）
+      const code = rc.id ?? ruleCode(rc.number, rc.name);
       const existing = ruleCounts.get(code) ?? { name: '', count: 0, failCount: 0 };
       existing.count += 1;
       if (rc.status === 'FAIL') existing.failCount += 1;
@@ -210,6 +211,9 @@ export function formatStatsReport(report: AuditStatsReport): string {
     rate === null ? '—（无数据）' : `${(rate * 100).toFixed(2)}%`;
   const lines: string[] = [
     '━━━ sofagent 审计聚合报告（治理 KPI）━━━',
+    // v1.4.5 T7: 口径标注——缺省读 ~/.sofagent/data（全局跨仓库混合，不分 repo），
+    // 汇报前必须知道分母混了哪些仓库，否则 KPI 会被误读成单项目口径
+    '口径：~/.sofagent 全局聚合（跨仓库混合，非单项目；数据源 history.jsonl）',
     `统计窗口：近 ${report.windowDays} 天（${report.windowStart.slice(0, 10)} ~ ${report.windowEnd.slice(0, 10)}）`,
     `变更总数：${report.totalChanges}`,
     `判定分布：PASS ${report.distribution.pass} · WARN ${report.distribution.warn} · FAIL ${report.distribution.fail}`,

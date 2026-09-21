@@ -1,8 +1,10 @@
 # sofagent-inject
 
-**约束注入** · sofagent 约束层四能力在 OpenClaw 生态的插件形态（品牌色 #16B8F3）
+**给 OpenClaw 加上约束注入** · sofagent 约束层五能力在 OpenClaw 生态的插件形态
 
-before_prompt_build 注入四层加载链（core-rules/think.md/fde.md/knowledge），复用 @sofagent/harness.buildConstrainedSystemPrompt。
+装上之后：模型每次构建提示词前，系统上下文先被追加四层加载链（core-rules.md / think.md / fde.md / knowledge/）——Agent 不必你每次交代背景；另有一个 `sofagent_inject` 工具可随时预览注入了什么。
+
+> 机制：复用 `@sofagent/inject` 的 `buildConstrainedSystemPrompt()`——四层加载链与 DSH 侧同源。
 
 ## 能力
 
@@ -50,4 +52,4 @@ clawhub package publish . --family code-plugin --name sofagent-inject --version 
 
 ## 说明
 
-与 DSH 插件 `cordis-plugin-sofagent-inject` 同引擎、不同宿主：DSH 挂 `tools/pre-execute` 等生命周期事件，OpenClaw 挂 `before_prompt_build` / `before_tool_execute` 等事件。审计引擎（git diff 24 规则）在所有形态一样硬。
+与 DSH 插件 `cordis-plugin-sofagent-inject` 同引擎、不同宿主：DSH 侧挂 `agent/pre-step`，OpenClaw 侧挂 `before_prompt_build`——两侧都在模型读到本轮输入之前，把四层加载链（core-rules / think.md / fde.md / knowledge）拼成 `prependSystemContext` 注入，数据源取 `config.projectRoot`。

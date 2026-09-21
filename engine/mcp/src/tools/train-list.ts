@@ -1,5 +1,5 @@
 // ============================================================
-// train-list.ts · MCP tool：train_list（v1.4.3 第一章）
+// train-list.ts · MCP tool：train_list（v1.5.0 第一章）
 // ============================================================
 //
 // 历史任务列表——按时间 / 状态 / 模型 / 企业过滤。FDE 交付复盘、
@@ -82,7 +82,7 @@ export async function trainListTool(args: TrainListArgs): Promise<TrainListToolR
   }
 
   try {
-    const orch = await import('@sofagent/orchestrator');
+    const orch = await import('@sofagent/train');
     const dataDir = getDataDir();
 
     // 受守卫列 job（只扫本企业分区——零跨企业泄露）

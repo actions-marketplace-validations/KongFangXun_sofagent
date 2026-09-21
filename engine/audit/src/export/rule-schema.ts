@@ -1,5 +1,5 @@
 // ============================================================
-// rule-schema.ts · v1.4.4 第一章 · 规则导出格式定义
+// rule-schema.ts · v1.5.0 第一章 · 规则导出格式定义
 //
 // 定位：24+3 条审计规则的机器可读序列化格式（训练语料第一件）。
 // 口径（changelog 表下注 A，2026-09-01 核对 rules/index.ts 后定）：
@@ -137,9 +137,9 @@ export function signatureOf(rule: Pick<Rule, 'evidenceMode' | 'name'>): string {
 
 /** 已实现规则 → 导出条目（reward_hint 段三件套齐全） */
 export function toRuleExportEntry(rule: Rule): RuleExportEntry {
-  const m = rule.name.match(/^[A-E]\d+/);
+  // v1.4.8 条目 7：编号直接从 Rule.id 读取（原为 name 正则反推，属编号推导第 7 处）
   return {
-    code: m ? m[0] : rule.name,
+    code: rule.id,
     name: rule.name,
     number: rule.number,
     evidenceMode: rule.evidenceMode,

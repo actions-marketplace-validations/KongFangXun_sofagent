@@ -1,5 +1,5 @@
 #!/bin/bash
-# sofagent post-commit hook v1.4.3
+# sofagent post-commit hook v1.5.0
 # --no-verify 跳过 commit-msg，但不跳过 post-commit
 # 安装：sofagent-audit --init（v1.0.6 起 --init 同时安装 commit-msg + post-commit）
 #
@@ -17,10 +17,20 @@ if ! command -v node &>/dev/null; then
 fi
 
 # 检测 sofagent-audit
-if command -v sofagent-audit &>/dev/null; then
-  AUDIT_CMD="sofagent-audit"
+# v1.4.8：与 commit-msg 同源——认显式注入（测试/CI 指定）> 本仓 dist（仓库根绝对）> **相对路径** > 全局/PATH。
+# 🔴 逐级保留"相对 CWD"这一环是**契约要求**：单测（init.test.ts）在测试仓里建"迷你 dist"，
+#    靠 `cwd: repoDir` 下的相对 `engine/audit/dist` 命中；且 CI 里 `git rev-parse --show-toplevel`
+#    可能失败（实测 CI 报 `Command failed: git rev-parse --git-dir` ⇒ `_REPO_TOP` 为空），
+#    此时必须能落到相对路径，否则静默 exit 0、回声为空（CI 5 例失败的真因）。
+if [ -n "${SOFAGENT_AUDIT_ENTRY:-}" ]; then
+  [ -f "$SOFAGENT_AUDIT_ENTRY" ] || exit 0  # post-commit 不阻断，静默退出即可
+  AUDIT_CMD="node $SOFAGENT_AUDIT_ENTRY"
+elif [ -n "${_REPO_TOP:-}" ] && [ -f "$_REPO_TOP/engine/audit/dist/index.js" ]; then
+  AUDIT_CMD="node $_REPO_TOP/engine/audit/dist/index.js"
 elif [ -f "engine/audit/dist/index.js" ]; then
   AUDIT_CMD="node engine/audit/dist/index.js"
+elif command -v sofagent-audit &>/dev/null; then
+  AUDIT_CMD="sofagent-audit"
 else
   exit 0  # 静默退出
 fi
@@ -40,22 +50,37 @@ PARENT_SHA=$(git rev-parse HEAD^ 2>/dev/null)
 # 来自 commit message 主题行）须与本 commit 主题一致才认领。
 COMMIT_SUBJECT=$(git log -1 --pretty=%s HEAD 2>/dev/null)
 
+# v1.4.8 F-16: 对账键第三重——HEAD tree 哈希。parentSha+subject 命中后叠加 treeSha
+# 比对：干净 commit 过审计后 soft-reset 换料（同 message 不同内容）提交，treeSha 必变，
+# 对账不命中走 INFO/WARN 路径——假绿回声消失（post-commit 永不阻断铁律不变）。
+# 旧审计记录无 treeSha 字段时跳过此重校验（向后兼容）。
+COMMIT_TREE=$(git rev-parse 'HEAD^{tree}' 2>/dev/null)   # 引号：{tree} 是 git 语法，避免 shellcheck SC1083
+                                                              # 误判大括号为字面量（语义不变）
+
 # 检查 history.jsonl：SHA 精确匹配 + parentSha 匹配
-# 路径动态获取用户级 data 目录（与 data-paths.ts 的 SOFAGENT_HOME 解析链对齐）
-HISTORY_FILE="${SOFAGENT_HOME:-$HOME/.sofagent}/data/audit/history.jsonl"
+# 路径动态获取用户级 data 目录（与 data-paths.ts 的解析链对齐——v1.4.8 F-17：
+# 读侧与写侧同链：先 SOFAGENT_DATA，再 SOFAGENT_HOME/data，再默认 ~/.sofagent/data。
+# 此前只认 SOFAGENT_HOME——企业集中数据目录（SOFAGENT_DATA）场景下对账第二道
+# 防线整体静默失明（文件不存在静默 exit 0））
+if [ -n "$SOFAGENT_DATA" ]; then
+  HISTORY_FILE="$SOFAGENT_DATA/audit/history.jsonl"
+elif [ -n "$SOFAGENT_HOME" ]; then
+  HISTORY_FILE="$SOFAGENT_HOME/data/audit/history.jsonl"
+else
+  HISTORY_FILE="$HOME/.sofagent/data/audit/history.jsonl"
+fi
+if [ ! -f "$HISTORY_FILE" ] && [ -n "$SOFAGENT_DATA" ]; then
+  echo "  ⚠️ [sofagent] SOFAGENT_DATA 已设置但 $HISTORY_FILE 不存在——审计对账数据缺失，请检查数据目录配置。"
+fi
 if [ -f "$HISTORY_FILE" ]; then
-  # v1.3.5 #2: 假阳性回声修复——对账命中 pre-commit 记录时校验审计结果。
-  # 旧逻辑（grep -q parentSha）会命中**被拦截**的审计记录（exit 2）：
-  # 带 token commit 被 commit-msg 拦 → 拦截记录写入 history（含 parentSha）→
-  # 同内容 --no-verify 强推 → post-commit 命中失败记录 → 假绿。
-  # 改为 node 解析：只有 commitSha 匹配、或 pre-commit 记录 parentSha 匹配
-  # **且 exitCode === 0** 才静默退出（真回声）；命中失败记录输出疑似绕过提示。
-  # post-commit 永远 exit 0（不阻断任何操作）。
-  COMMIT_SHA="$CURRENT_SHA" PARENT_SHA="$PARENT_SHA" COMMIT_SUBJECT="$COMMIT_SUBJECT" HISTORY_FILE="$HISTORY_FILE" node -e '
+  # v1.5.0 TASK-9: 捕获 node 对账退出码——真实损坏（解析异常）时 exit 1 传播
+  # （commit 已发生，post-commit 退出码不阻断 commit 本身，只向上游链路报红）。
+  COMMIT_SHA="$CURRENT_SHA" PARENT_SHA="$PARENT_SHA" COMMIT_SUBJECT="$COMMIT_SUBJECT" COMMIT_TREE="$COMMIT_TREE" HISTORY_FILE="$HISTORY_FILE" node -e '
 const fs = require("fs");
 const COMMIT_SHA = process.env.COMMIT_SHA;
 const PARENT_SHA = process.env.PARENT_SHA;
 const COMMIT_SUBJECT = (process.env.COMMIT_SUBJECT || "").trim();
+const COMMIT_TREE = (process.env.COMMIT_TREE || "").trim();
 const HISTORY_FILE = process.env.HISTORY_FILE;
 if (!HISTORY_FILE) process.exit(0);
 let lines;
@@ -63,13 +88,36 @@ try {
   lines = fs.readFileSync(HISTORY_FILE, "utf-8").trim().split("\n").filter(Boolean);
 } catch { process.exit(0); }
 if (lines.length === 0) process.exit(0);
+// v1.5.0 TASK-9: 加密态对账修复——SOFAGENT-AGE-V1 密文行（SECURITY.md 定义格式）
+// 不 parse（parse 必抛错被吞 → 全静默）；计数跳过。三态语义：
+//   全密文 → 显式降级提示（对账不可用≠失败，但必须发声）；
+//   混合态 → 明文行正常对账 + 结尾「跳过 N 条密文行」；
+//   真实损坏（非密文前缀的 parse 异常）→ 红字 + exit 1（损坏不能吞）。
+const CIPHER_PREFIX = "SOFAGENT-AGE-V1";
+let cipherCount = 0;
+const plainLines = [];
+for (const line of lines) {
+  if (line.startsWith(CIPHER_PREFIX)) { cipherCount++; continue; }
+  plainLines.push(line);
+}
+if (plainLines.length === 0 && cipherCount > 0) {
+  console.log("  ℹ️ [sofagent] 审计历史为加密态（SOFAGENT-AGE-V1），post-commit 明文对账不可用——--no-verify 检测依赖 CI 侧 sofagent-audit --diff 兜底");
+  process.exit(0);  // 对账不可用≠失败——发声后 exit 0（post-commit 永不阻断铁律不变）
+}
+// 混合态跳过计数——对账出口（命中/未命中）前统一发声（任务书：结尾输出「跳过 N 条密文行」）
+function noteSkippedCipherLines() {
+  if (cipherCount > 0) {
+    console.log("  ℹ️ [sofagent] 另跳过 " + cipherCount + " 条密文行（SOFAGENT-AGE-V1 加密态，明文对账不可用）");
+  }
+}
 try {
-  // 反向查找（最新记录在末尾）
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const entry = JSON.parse(lines[i]);
+  // 反向查找（最新记录在末尾）——只对明文行（密文行已滤出）
+  for (let i = plainLines.length - 1; i >= 0; i--) {
+    const entry = JSON.parse(plainLines[i]);
     const entryCommit = entry.commitSha || "";
     if (entryCommit === COMMIT_SHA) {
-      process.exit(0);  // commitSha 找到，commit 已审计
+      noteSkippedCipherLines();  // commitSha 找到，commit 已审计
+      process.exit(0);
     }
     if (entry.commitPhase === "pre-commit" && entry.parentSha === PARENT_SHA) {
       // 主题消歧：记录的 task（hook 写入时来自 commit message 主题行）与本 commit
@@ -81,6 +129,13 @@ try {
       if (COMMIT_SUBJECT && recordSubject && recordSubject !== COMMIT_SUBJECT) {
         continue;
       }
+      // v1.4.8 F-16: 第三重对账——treeSha 内容指纹。记录含 treeSha 且与本 commit
+      // HEAD tree 不一致 → 审计后内容被换（soft-reset 换料同 message 重提），
+      // 不认领（继续找；找不到走未命中提示路径）——假绿回声消失。
+      if (typeof entry.treeSha === "string" && entry.treeSha.trim() !== ""
+          && COMMIT_TREE && entry.treeSha.trim() !== COMMIT_TREE) {
+        continue;
+      }
       // v1.3.5 #2: 校验该次审计的结果——exitCode 三档分流（v1.3.6 B8 修正）：
       //   0 = 审计真通过 → 真回声；
       //   1 = WARN 放行——commit-msg 只对 exit 2 阻断，exit 1 时 commit 合法走过审计，
@@ -88,10 +143,12 @@ try {
       //   2 = FAIL 拦截后仍出现同父新 commit = --no-verify 绕过，输出疑似绕过提示。
       if (entry.exitCode === 0) {
         console.log("  ✓ [sofagent] 审计通过");
+        noteSkippedCipherLines();
         process.exit(0);  // parentSha 找到（pre-commit 记录，审计通过）
       }
       if (entry.exitCode === 1) {
         console.log("  ✓ [sofagent] 审计通过（含警告，WARN 放行）");
+        noteSkippedCipherLines();
         process.exit(0);  // WARN 放行 = 合法走过审计，不是绕过
       }
       console.log("");
@@ -101,11 +158,43 @@ try {
     }
   }
   // 未找到任何匹配——降级为 INFO 提示（避免狼来了）。真绕过仍由 --verify-commit 复核。
+  // v1.4.8 R3: 对账未命中时检测 commit-msg hook 是否在位——hook 缺失（卸甲）时
+  // 升级为 WARN：INFO 在 hook 被删场景下是误导性安心（mv .git/hooks/commit-msg
+  // 后明文密钥可落库，唯一信号只是一行可忽略的 INFO）。仍 exit 0 不阻断。
   console.log("");
-  console.log("  ℹ️ [sofagent] 未确认审计记录（post-commit 对账未命中）。");
-  console.log("  如未使用 --no-verify 可忽略；如需确认运行 sofagent-audit --verify-commit " + COMMIT_SHA);
-} catch { process.exit(0); }
+  var hookPath = ".git/hooks/commit-msg";
+  var hookMissing = false;
+  try {
+    fs.readFileSync(hookPath, "utf-8");
+    hookMissing = false;
+  } catch {
+    hookMissing = true;
+  }
+  if (hookMissing) {
+    console.log("  ⚠️ [sofagent] 未确认审计记录，且 commit-msg hook 不在位（防线已卸甲）——建议重新安装：sofagent-audit --init");
+  } else {
+    console.log("  ℹ️ [sofagent] 未确认审计记录（post-commit 对账未命中）。");
+    console.log("  如未使用 --no-verify 可忽略；如需确认运行 sofagent-audit --verify-commit " + COMMIT_SHA);
+  }
+  // v1.5.0 TASK-9: 混合态跳过计数——对账完成后补一行密文行跳过说明
+  if (cipherCount > 0) {
+    console.log("  ℹ️ [sofagent] 另跳过 " + cipherCount + " 条密文行（SOFAGENT-AGE-V1 加密态，明文对账不可用）");
+  }
+} catch (err) {
+  // v1.5.0 TASK-9: 区分「设计内的不可读」与「意外的损坏」——非密文前缀的
+  // JSON.parse 异常 = 真实损坏，红字 + exit 1（损坏必须红，不能吞）。
+  // 注意走 console.log（stdout）——外层 2>/dev/null 会吞 stderr。
+  console.log("  ❌ [sofagent] 审计历史解析异常（可能损坏）: " + (err && err.message ? err.message : String(err)));
+  console.log("  可运行 sofagent-audit --doctor 检查数据目录，或人工核查 " + HISTORY_FILE);
+  process.exit(1);
+}
 ' 2>/dev/null
+  RECONCILE_RC=$?
+  # v1.5.0 TASK-9: 真实损坏 exit 1 直接返回（跳过后续 best-effort 扫描——
+  # 检测面死亡必须红；commit 本身已完成，此处退出码只对上游链路/CI 报红）。
+  if [ "$RECONCILE_RC" -ne 0 ]; then
+    exit "$RECONCILE_RC"
+  fi
 fi
 
 # v1.4.2 H-01: HEAD tree 入库对账兜底——tree 在 commit-msg 运行前已生成、commit 成功后主进程

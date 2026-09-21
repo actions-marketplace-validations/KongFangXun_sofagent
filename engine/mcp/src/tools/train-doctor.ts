@@ -1,14 +1,14 @@
 // ============================================================
-// train-doctor.ts · MCP tool：train_doctor（v1.4.3 章四）
+// train-doctor.ts · MCP tool：train_doctor（v1.5.0 章四）
 // ============================================================
 //
 // 训练环境体检——sofagent train doctor 的 MCP 面：CUDA 可用 / 显存 /
 // 框架版本 / 基座模型缓存四项结构化体检报告（对齐 v1.3.x doctor 模式）。
-// 委托 @sofagent/orchestrator 的 env-manager.trainDoctor（v1.4.3 扩展，
-// 复用 v1.4.3 train-env 检测地基——扩展非重建）。
+// 委托 @sofagent/orchestrator 的 env-manager.trainDoctor（v1.5.0 扩展，
+// 复用 v1.5.0 train-env 检测地基——扩展非重建）。
 //
 // 只查不装：本 tool 是体检（环境怎么装走 train env init /
-// tools/train-env-init.sh；基座模型怎么下走 model-downloader）。
+// tools/train/train-env-init.sh；基座模型手动放置或走推理服务拉取）。
 // ============================================================
 
 import { getDataDir } from '@sofagent/core';
@@ -63,7 +63,7 @@ export async function trainDoctorTool(args: TrainDoctorArgs): Promise<TrainDocto
   }
 
   try {
-    const orch = await import('@sofagent/orchestrator');
+    const orch = await import('@sofagent/train');
     const dataDir = getDataDir();
     // deps 缺省 → env-manager 内部走 makeDefaultExecFn（execFile 封装）——
     // MCP 调用方无需构造；测试经 orchestrator 单测的注入路径覆盖。
@@ -86,7 +86,7 @@ export async function trainDoctorTool(args: TrainDoctorArgs): Promise<TrainDocto
     }
     const summary = report.ready
       ? `[sofagent] 训练环境体检 ✅ READY（${enterprise_id}）——四项全过：\n  · ${okLines.join('\n  · ')}`
-      : `[sofagent] 训练环境体检 ⚠️ 未就绪（${enterprise_id}）——待处理项：\n  · ${badLines.join('\n  · ')}\n（装环境走 train env init / bash tools/train-env-init.sh；基座模型下载支持断点续传）`;
+      : `[sofagent] 训练环境体检 ⚠️ 未就绪（${enterprise_id}）——待处理项：\n  · ${badLines.join('\n  · ')}\n（装环境走 train env init / bash tools/train/train-env-init.sh；基座模型下载支持断点续传）`;
 
     return {
       text: summary,

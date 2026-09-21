@@ -1,7 +1,9 @@
 #!/bin/bash
-# sofagent commit-msg hook v1.4.3
+# sofagent commit-msg hook v1.5.0
 # 安装：sofagent-audit --init 或 sofagent-audit --install-hook
 # commit-msg hook 接收 $1 = commit message 文件路径
+# 变更：空提交同样发起引擎调用（message 类规则 A5/A9/A19 照常执行）；
+#             新增 fresh-eyes run 冻结窗口锁检查（run 进行中阻断 driver 源码提交）
 
 # 0. 读取 commit message（commit-msg hook 独有优势）
 #    - subject（第一行）：A3 越界检查依赖此参数
@@ -14,10 +16,10 @@ if [ -f "$COMMIT_MSG_FILE" ]; then
   COMMIT_FULL_MSG=$(cat "$COMMIT_MSG_FILE")
 fi
 
-DIFF=$(git diff --cached --name-only)
-if [ -z "$DIFF" ]; then
-  exit 0
-fi
+# 空 diff（典型是 git commit --allow-empty）**不再整体 early return**：
+#   - 不依赖 diff 的校验（dist 完整性、.gitignore 兜底）照常执行；
+#   - 引擎调用照常发起——引擎空 diff 短路已升级为 message 类规则照常执行
+#     （A5/A9/A19），空提交不再是无审计盲区（详见下方第 4 步）。
 
 # 1. Node.js 检测
 if ! command -v node &>/dev/null; then
@@ -27,46 +29,175 @@ if ! command -v node &>/dev/null; then
 fi
 
 # 2. sofagent-audit 检测（优先用仓库本地 engine/audit/dist/，避免全局旧版版本漂移）
-if [ -f "engine/audit/dist/index.js" ]; then
+# v1.4.8 F-15: 全局回退分支不再 `command -v`（PATH 解析可被前置假 binary 完全
+# 绕过——执行面与校验面路径错位），改与 2.1 校验面同源的 require.resolve 绝对
+# 路径：node_modules 解析链不受 PATH 摆布，校验哪个文件就执行哪个文件。
+# 🔴 v1.4.8 修复：原先用**相对路径**判断 `[ -f "engine/audit/dist/index.js" ]`，而候选路径
+# 相对的是**当前工作目录**——在仓库子目录或临时仓（如验收场景的 /tmp/TMP_REPO）里提交时，
+# 该判断恒假 ⇒ 静默回退到 PATH/全局包 ⇒ **审计执行的其实不是本仓代码**（验收场景 11 长期
+# 「失败」的真因：它一直在测 npm 上的旧版本，本仓的修复与回归都测不到）。
+# 正解：用 `git rev-parse --show-toplevel` 定位**本仓库根**再拼绝对路径。
+#
+# 0. 显式注入（v1.4.8 补）：`SOFAGENT_AUDIT_ENTRY` 让**测试/CI 能指定要测的 CLI**——
+#    否则"用本仓 dist 审计一个临时仓"这类场景永远只能命中全局包（被测对象错位）。
+#    🔴 **必须 fail-loud**：指定了却不存在就报错退出，**不得静默回退**——静默回退会让调用方
+#    误以为测的是指定实现（正是本 bug 的成因：回退不可见 ⇒ 假信号）。
+if command -v git >/dev/null 2>&1; then
+  _REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null || true)
+fi
+if [ -n "${SOFAGENT_AUDIT_ENTRY:-}" ]; then
+  if [ ! -f "$SOFAGENT_AUDIT_ENTRY" ]; then
+    echo "❌ SOFAGENT_AUDIT_ENTRY 指向的入口不存在: $SOFAGENT_AUDIT_ENTRY"
+    echo "   （显式注入 fail-loud：不静默回退，避免被测对象与预期不符）"
+    exit 1
+  fi
+  AUDIT_CMD=(node "$SOFAGENT_AUDIT_ENTRY")
+elif [ -n "${_REPO_TOP:-}" ] && [ -f "$_REPO_TOP/engine/audit/dist/index.js" ]; then
+  AUDIT_CMD=(node "$_REPO_TOP/engine/audit/dist/index.js")
+elif [ -f "engine/audit/dist/index.js" ]; then
+  # 🔴 保留「相对 CWD」这一环是**契约要求**（v1.4.8 回归教训）：单测在测试仓里建"迷你 dist"，
+  # 靠 `cwd: repoDir` 下的相对路径命中；且 CI 里 `git rev-parse --show-toplevel` 可能失败
+  # （实测 CI 报 `Command failed: git rev-parse --git-dir` ⇒ `_REPO_TOP` 为空），
+  # 此时必须能落到本分支，否则会一路退到全局包/静默退出（CI 5 例失败的真因）。
   AUDIT_CMD=(node "engine/audit/dist/index.js")
-elif command -v sofagent-audit &>/dev/null; then
-  AUDIT_CMD=(sofagent-audit)
 else
-  echo "❌ sofagent-audit 未安装，审计未运行"
-  echo "   请运行: npm install -g @sofagent/audit"
-  exit 1
+  # v1.4.8 F-15 补（验收实测修正三处）：① 解析目标是**包名** `@sofagent/audit`——
+  # bin 名 `sofagent-audit` 不是包名，用它 require.resolve 必然 MODULE_NOT_FOUND
+  # （全局安装场景 hook 全面误拦 + 完整性校验被静默跳过）；② require.resolve 默认
+  # 只走 cwd 向上的本地解析链，`npm install -g` 装的包需追加全局包根回退
+  # （execPath 推导 lib/node_modules + `npm root -g` 兜底，两条均不走 PATH，
+  # 不重开 command -v 劫持面）；③ 解析得的 main 是库入口 public-api.js，须从
+  # 包根推导 CLI 入口 dist/index.js 再执行（hook 要完整 CLI 而非库 API）。
+  # 🔴 v1.5.0 TASK-10: 删除无 paths 的裸首试 require.resolve('@sofagent/audit')——
+  # 裸解析从被审仓库根出发沿目录树找 node_modules，被审仓内若被投放
+  # node_modules/@sofagent/audit/（gitignored、Agent 可写、不进 git diff）即被
+  # 命中，冒牌包被当作审计引擎执行（劫持面）。现只走显式全局根限定解析
+  # （execPath 推导 + npm root -g），被审仓库内 node_modules 不再进入解析域。
+  RESOLVED_ENTRY=$(node -e "try{const p=require('path');let e=null;const r=[p.resolve(p.dirname(process.execPath),'..','lib','node_modules')];try{r.push(require('child_process').execSync('npm root -g',{encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim())}catch(x){};for(const q of r){try{e=require.resolve('@sofagent/audit',{paths:[q]});break}catch(x){}};if(e)process.stdout.write(p.join(p.dirname(p.dirname(e)),'dist','index.js'))}catch(x){}" 2>/dev/null)
+  if [ -n "$RESOLVED_ENTRY" ] && [ -f "$RESOLVED_ENTRY" ]; then
+    # v1.5.0 TASK-10: 非开发仓路径（全局解析分支）纳入聚合哈希校验——
+    # 此前 P1-A2 只覆盖 _REPO_TOP 开发仓路径，全局入口完全在防线外。
+    # 基准 ~/.sofagent/internal/audit-dist-hash.txt 由 --doctor 生成；
+    # 基准缺失（首装未 doctor）= 校验形同虚设，不静默放行（对齐 P1-A3 fail-loud）。
+    _RESOLVED_ROOT=$(dirname "$(dirname "$RESOLVED_ENTRY")")
+    SOFAGENT_HOME="${SOFAGENT_HOME:-$HOME/.sofagent}"
+    _GLOBAL_HASH_RECORD="$SOFAGENT_HOME/internal/audit-dist-hash.txt"
+    _GLOBAL_HASH_SCRIPT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/tools/audit-dist-hash.mjs"
+    _GLOBAL_HASH=""
+    if [ -f "$_GLOBAL_HASH_SCRIPT" ]; then
+      _GLOBAL_HASH=$(node "$_GLOBAL_HASH_SCRIPT" "$_RESOLVED_ROOT" 2>/dev/null)
+    fi
+    if [ -n "$_GLOBAL_HASH" ]; then
+      if [ ! -f "$_GLOBAL_HASH_RECORD" ]; then
+        echo "🔴 [sofagent] 全局审计引擎哈希基准缺失——首次使用请运行 sofagent-audit --doctor 生成引擎基准哈希"
+        exit 1
+      fi
+      _GLOBAL_RECORDED=$(tr -d '[:space:]' < "$_GLOBAL_HASH_RECORD" 2>/dev/null)
+      if [ "$_GLOBAL_HASH" != "$_GLOBAL_RECORDED" ]; then
+        echo "🔴 [sofagent] 审计引擎哈希不匹配（可能被投毒）: $RESOLVED_ENTRY"
+        echo "   当前聚合哈希 ${_GLOBAL_HASH:0:12}... ≠ 基准 ${_GLOBAL_RECORDED:0:12}..."
+        echo "   恢复: npm install -g @sofagent/audit 后重跑 sofagent-audit --doctor 重建基准"
+        exit 1
+      fi
+    fi
+    # 哈希脚本缺失（非开发仓环境）时降级放行——被审仓内无法计算聚合哈希，
+    # 防线退化为「全局根限定解析」本身（不解析被审仓 node_modules，冒牌包不可达）。
+    AUDIT_CMD=(node "$RESOLVED_ENTRY")
+  else
+    echo "❌ sofagent-audit 未安装，审计未运行"
+    echo "   请运行: npm install -g @sofagent/audit"
+    exit 1
+  fi
 fi
 
 # 2.1 P1-A2: dist 完整性校验——防止本地覆写 dist 致审计失效
-#     比对 engine/audit/dist/index.js 的 SHA-256 与安装时记录的基准哈希。
-#     基准哈希存储在 ~/.sofagent/internal/audit-hash.txt（install.sh 首装或 --doctor 首次运行时记录）。
+#     比对 engine/audit/dist 的**多入口聚合哈希**与记录的基准哈希。
+#     为什么用聚合而不是 dist/index.js 单文件：dist 有多个可执行入口
+#     （index.js 与 cli-quick.js 都是 bin，agent-shield.js / cli/agent-shield.js
+#     各自独立），而 index.js 的 import 图覆盖不到那三个（实测从 index.js 出发
+#     可达 17 个模块，均不含它们）。后果是双向的：
+#       - 误报：只改 cli-quick.ts 并重建后 index.js 逐字节不变 → 报「dist 未重建」；
+#       - 漏防：攻击者只覆写 cli-quick.js，单文件哈希同样发现不了。
+#     聚合全部 dist/**/*.js（排序后逐个取内容哈希再聚合）后两个方向都闭合。
+#     基准哈希存储在 ~/.sofagent/internal/audit-dist-hash.txt。
+#     计算必须由 dist 之外的代码完成：若交给 dist/index.js 算，dist 被篡改时
+#     哈希同样可伪造，防线 self-defeating。故用 tools/ 下的独立脚本。
 #     v1.4.0 P1-A3：基准缺失时 FAIL 而非跳过——此前 if [ -f ] 缺基准即静默放行，
 #     首次部署窗口内可植入冒牌引擎（基准仅 --doctor 生成而首装不生成，空窗被利用）。
-if [ -f "engine/audit/dist/index.js" ]; then
+#     v1.4.8：本判断同样保留「相对 CWD」兜底（CI 下 git rev-parse 可能失败）。
+_DIST_ROOT_FOR_HASH="${_REPO_TOP:-}"
+[ -n "$_DIST_ROOT_FOR_HASH" ] && [ -f "$_DIST_ROOT_FOR_HASH/engine/audit/dist/index.js" ] || _DIST_ROOT_FOR_HASH="$(pwd)"
+if [ -f "$_DIST_ROOT_FOR_HASH/engine/audit/dist/index.js" ]; then
   SOFAGENT_HOME="${SOFAGENT_HOME:-$HOME/.sofagent}"
-  HASH_RECORD="$SOFAGENT_HOME/internal/audit-hash.txt"
-  if [ ! -f "$HASH_RECORD" ]; then
+  # 主锚：全部 dist/**/*.js 的聚合哈希（任一入口变化都可观测），本 hook 的拦截判定只看它
+  HASH_RECORD="$SOFAGENT_HOME/internal/audit-dist-hash.txt"
+  # 兼容锚：仅 index.js 的哈希。@sofagent/core 的 runDoctor 按「整文件 == 一个
+  # index.js 哈希」读它，语义不能改（换成聚合会让它恒判不匹配），故本 hook 只在其
+  # 缺失时补生成，不再用它做拦截判定。
+  LEGACY_RECORD="$SOFAGENT_HOME/internal/audit-hash.txt"
+  DIST_HASH_SCRIPT="tools/audit-dist-hash.mjs"
+  CURRENT_HASH=$(node "$DIST_HASH_SCRIPT" "$(pwd)" 2>/dev/null)
+  # 兼容锚缺失时顺手补上——runDoctor 依赖它，补不上也只影响体检、不阻断本次提交
+  if [ ! -f "$LEGACY_RECORD" ]; then
+    node -e "const c=require('crypto'),f=require('fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync('engine/audit/dist/index.js')).digest('hex'))" > "$LEGACY_RECORD" 2>/dev/null && chmod 600 "$LEGACY_RECORD" 2>/dev/null || true
+  fi
+  if [ -z "$CURRENT_HASH" ]; then
+    # 算不出来 ≠ 一致。静默放行会让「完整性校验」变成摆设，必须让人看见没跑。
+    echo "⚠️ [sofagent] dist 聚合哈希计算失败（$DIST_HASH_SCRIPT 缺失或 dist 为空）——本次完整性校验未执行"
+  elif [ ! -f "$HASH_RECORD" ]; then
     # 基准缺失 = 完整性校验形同虚设 → fail-closed：先补生成基准再放行本次，
     # 让后续每次 commit 都有可比对的锚点（与 install.sh 首装生成策略闭环）
-    echo "⚠️ [sofagent] 审计引擎哈希基准缺失——正在补生成..."
+    echo "⚠️ [sofagent] 审计模块 dist 基准缺失——正在补生成..."
     mkdir -p "$SOFAGENT_HOME/internal"
-    if node -e "const c=require('crypto'),f=require('fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync('engine/audit/dist/index.js')).digest('hex'))" > "$HASH_RECORD" 2>/dev/null && [ -s "$HASH_RECORD" ]; then
+    if printf '%s\n' "$CURRENT_HASH" > "$HASH_RECORD" 2>/dev/null && [ -s "$HASH_RECORD" ]; then
       chmod 600 "$HASH_RECORD" 2>/dev/null || true
-      echo "ℹ️ [sofagent] 基准哈希已记录（后续 commit 将比对完整性）"
+      echo "ℹ️ [sofagent] dist 基准已记录（后续 commit 将比对完整性）"
     else
-      echo "🔴 [sofagent] 基准哈希生成失败——无法保证审计引擎未被替换，本次提交终止"
-      echo "   请运行: sofagent-audit --doctor（自动记录基准）后重试"
+      echo "🔴 [sofagent] dist 基准生成失败——无法保证审计模块未被替换，本次提交终止"
+      echo "   请运行: bash tools/audit-baseline-sync.sh"
       exit 1
     fi
   else
-    CURRENT_HASH=$(node -e "const c=require('crypto'),f=require('fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync('engine/audit/dist/index.js')).digest('hex'))" 2>/dev/null)
     RECORDED_HASH=$(cat "$HASH_RECORD" 2>/dev/null | tr -d '[:space:]')
-    if [ -n "$CURRENT_HASH" ] && [ -n "$RECORDED_HASH" ] && [ "$CURRENT_HASH" != "$RECORDED_HASH" ]; then
-      echo "🔴 [sofagent] 审计引擎完整性校验失败（P1-A2 dist 哈希不匹配）"
-      echo "   engine/audit/dist/index.js 可能被替换（影子审计器劫持风险）。"
+
+    # 双信号判定：dist 哈希变化有两种成因，单看 dist 无法区分，
+    # 只能一律拦截，结果是每次 rebuild 后全仓 commit 被阻塞。追加「源码指纹」
+    # 作为第二个信号即可分离：
+    #   src 变 + dist 变 → 改过源码并重建，属预期 → 放行
+    #   src 变 + dist 不变 → dist 过期（审计实际在跑旧代码）→ 告警
+    #   src 不变 + dist 变 → 无法用「改源码」解释 = 真劫持 → fail-closed 拦截
+    # 指纹必须由 dist 之外的代码计算：若交给 dist/index.js 算，dist 被篡改时
+    # 指纹同样可伪造，防线 self-defeating。故此处直接调用 tools/ 下独立脚本。
+    SRC_CHANGED=0
+    CURRENT_SRC_FP=""
+    RECORDED_SRC_FP=""
+    SRC_RECORD="$SOFAGENT_HOME/internal/audit-src-fingerprint.txt"
+    FP_SCRIPT="tools/audit-src-fingerprint.mjs"
+    if [ -f "$FP_SCRIPT" ] && [ -f "$SRC_RECORD" ]; then
+      CURRENT_SRC_FP=$(node "$FP_SCRIPT" "$(pwd)" 2>/dev/null)
+      RECORDED_SRC_FP=$(cat "$SRC_RECORD" 2>/dev/null | tr -d '[:space:]')
+      if [ -n "$CURRENT_SRC_FP" ] && [ -n "$RECORDED_SRC_FP" ] && [ "$CURRENT_SRC_FP" != "$RECORDED_SRC_FP" ]; then
+        SRC_CHANGED=1
+      fi
+    fi
+
+    if [ "$SRC_CHANGED" -eq 1 ]; then
+      if [ -n "$CURRENT_HASH" ] && [ -n "$RECORDED_HASH" ] && [ "$CURRENT_HASH" = "$RECORDED_HASH" ]; then
+        echo "⚠️ [sofagent] 审计模块源码已变更，但 dist 未重建——当前审计跑的是旧代码"
+        echo "   请执行: npm run build --workspace=engine/audit"
+      else
+        echo "ℹ️ [sofagent] 审计模块源码已变更（src 指纹 ${RECORDED_SRC_FP:0:12}... → ${CURRENT_SRC_FP:0:12}...），dist 随之变化属预期，本次提交放行"
+        echo "   同步信任锚: bash tools/audit-baseline-sync.sh"
+      fi
+    elif [ -n "$CURRENT_HASH" ] && [ -n "$RECORDED_HASH" ] && [ "$CURRENT_HASH" != "$RECORDED_HASH" ]; then
+      echo "🔴 [sofagent] 审计模块完整性校验失败（P1-A2 dist 聚合哈希不匹配）"
+      echo "   engine/audit/dist 下某个 .js 可能被替换（影子审计器劫持风险）。"
+      echo "   源码未变（src 指纹 ${CURRENT_SRC_FP:0:12}...）——dist 变化无法用「改了源码」解释。"
       echo "   记录哈希: ${RECORDED_HASH:0:12}...  当前哈希: ${CURRENT_HASH:0:12}..."
-      echo "   如需恢复，运行: npm run build --workspace=engine/audit"
-      echo "   如为故意重建 dist，运行: sofagent-audit --doctor（会更新基准哈希）"
+      echo "   定位到具体文件: bash tools/audit-baseline-sync.sh --check"
+      echo "   恢复原始 dist: npm run build --workspace=engine/audit"
+      echo "   确认 dist 可信后重建信任锚: bash tools/audit-baseline-sync.sh"
+      echo "   （注意：sofagent-audit --doctor 只体检、不覆盖已存在的基线，不能用它刷新）"
       exit 1
     fi
   fi
@@ -110,6 +241,30 @@ if git diff --cached --name-only -- .sofagent/ 2>/dev/null | grep -q .; then
   fi
 fi
 
+# 2.6 冻结窗口锁：fresh-eyes run 进行中不得提交 driver 源码改动。
+#     锁由 driver 启动时写入（runId + 源码指纹 + PID），run 正常结束/SIGTERM 时删除。
+#     锁在且 PID 存活且本次提交命中 FORGE/src/fresh-eyes-driver.mjs → 阻断
+#     （主进程内存步骤表派发旧步骤名而磁盘代码已变，worker 会「未知步骤」全灭——
+#     提交时阻断比事后 fail-closed 更早止损；与引擎 exit 86 运行时门禁两层兜底）。
+#     PID 已死 = 锁滞留（历史残留）→ WARN 放行，不误伤。
+#     空提交不命中 driver 源码 → 天然放行（锁只管源码变更）。
+RUN_LOCK="$HOME/.sofagent/internal/fresh-eyes-run.lock"
+if [ -f "$RUN_LOCK" ]; then
+  _lock_info=$(node -e "try{const l=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));process.stdout.write((l.pid||'')+' '+(l.runId||''))}catch{}" "$RUN_LOCK" 2>/dev/null || true)
+  LOCK_PID="${_lock_info%% *}"
+  LOCK_RUN="${_lock_info#* }"
+  if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
+    if git diff --cached --name-only HEAD 2>/dev/null | grep -q "FORGE/src/fresh-eyes-driver.mjs"; then
+      echo "🔴 [sofagent] fresh-eyes run ${LOCK_RUN} 进行中（pid=${LOCK_PID}）——冻结窗口内不得修改 driver 源码"
+      echo "   run 进行中收编 driver 改动会导致主进程与磁盘步骤表错位，worker 分片全灭。"
+      echo "   处置：等 run 收口后提交，或先停 run（产物保留，--resume 可续跑）再改再重启。"
+      exit 1
+    fi
+  else
+    echo "⚠️ [sofagent] fresh-eyes run 锁滞留（PID ${LOCK_PID:-未知} 已退出）——放行本次提交；确认无 run 后可删除: $RUN_LOCK"
+  fi
+fi
+
 # 3. 审计范围固定为「暂存区（staged）= 即将提交的变更」
 #    无论是否首次提交都用 --cached：
 #    - commit-msg 钩子运行时提交尚未生成，staged 即本次提交的真实内容；
@@ -121,12 +276,34 @@ AUDIT_DIFF_ARG="--cached"
 # --task 传 subject（A3 越界检查用）
 # --commit-msg 传完整 message（A9 注入检查用）——两个参数都传
 # AUDIT_CMD 用 bash 数组——仓库路径含空格时（如 /Users/foo/my repo/）不炸
+# 空提交（--allow-empty，NO_STAGED_FILES=1）同样发起引擎调用：引擎的空 diff
+# 短路已升级为「message 类规则照常执行」（A5 空 message / A9 注入 / A19 质量
+# 只消费 commit message、不依赖 diff 内容），空提交不再是无审计盲区。
+AUDIT_STDERR="$(mktemp /tmp/sofagent-hook-stderr-XXXXXX)"
 if [ -n "$COMMIT_SUBJECT" ]; then
-  "${AUDIT_CMD[@]}" --diff "$AUDIT_DIFF_ARG" --silent --ci --task "$COMMIT_SUBJECT" --commit-msg "$COMMIT_FULL_MSG"
+  "${AUDIT_CMD[@]}" --diff "$AUDIT_DIFF_ARG" --silent --ci --task "$COMMIT_SUBJECT" --commit-msg "$COMMIT_FULL_MSG" 2>"$AUDIT_STDERR"
 else
-  "${AUDIT_CMD[@]}" --diff "$AUDIT_DIFF_ARG" --silent --ci
+  "${AUDIT_CMD[@]}" --diff "$AUDIT_DIFF_ARG" --silent --ci 2>"$AUDIT_STDERR"
 fi
 EXIT_CODE=$?
+
+# v1.4.8 阶段九加固 / v1.4.9 P1-15 降为**兜底**：退出码是主判据（新版 audit 崩溃 = 专属码 4），
+# 故下面的 stderr 特征扫描**不再是必需项**——它只用来兜住**旧版引擎**：旧版（含用户已装的
+# 全局包）没有「崩溃」专属码，node 未捕获异常仍是 exit 1，会与「1=警告」撞码 ⇒ fail-open。
+# 两条判据**互为冗余**：任一命中即阻断。本项只降措辞与定性，**阻断语义与判定顺序均未动**。
+ENGINE_CRASH=0
+if grep -qE "^(Error|TypeError|ReferenceError|RangeError|SyntaxError|UnhandledPromiseRejection)|throw new Error|at Object\.<anonymous>|Node\.js v[0-9]+" "$AUDIT_STDERR" 2>/dev/null; then
+  ENGINE_CRASH=1
+fi
+rm -f "$AUDIT_STDERR"
+
+if [ $ENGINE_CRASH -eq 1 ]; then
+  echo ""
+  echo "❌ sofagent audit: 审计引擎异常（stderr 含崩溃特征）——审计未完成，commit 已阻止。"
+  echo "   即使退出码为 0/1（旧版引擎无「崩溃=4」契约），崩溃也不得被当作「通过/警告」放行。"
+  echo "   排查：SOFAGENT_HOME 越界 / Node 版本 / dist 完整性。"
+  exit 1
+fi
 
 if [ $EXIT_CODE -eq 2 ]; then
   echo ""
@@ -138,6 +315,14 @@ fi
 if [ $EXIT_CODE -eq 1 ]; then
   echo ""
   echo "⚠️  sofagent audit: 检测到警告，但允许 commit。"
+elif [ $EXIT_CODE -ne 0 ]; then
+  echo ""
+  echo "❌ sofagent audit: 审计引擎异常退出（exit $EXIT_CODE）——审计未完成，commit 已阻止。"
+  echo "   契约：0=全绿 / 1=警告（放行）/ 2=违规（阻断）/ 3=非 git 仓库 / 4=引擎崩溃；"
+  echo "   上述五者之外的退出码 = 环境异常"
+  echo "   （SOFAGENT_HOME 越界 fail-loud / Node 缺失 / dist 异常等）。静默放行 = 0 处违规但根本"
+  echo "   没在看 = fail-open，故此处 fail-loud。"
+  exit 1
 fi
 
 exit 0

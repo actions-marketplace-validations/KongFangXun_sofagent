@@ -104,6 +104,7 @@ async function startServer() {
 
 describe('MCP corpus_export — 训练语料导出三件套（协议面）', () => {
   let savedKeyPath: string | undefined;
+  let tmpOutDir: string;
 
   beforeEach(async () => {
     vi.restoreAllMocks();
@@ -115,6 +116,11 @@ describe('MCP corpus_export — 训练语料导出三件套（协议面）', () 
     const keyPath = require('path').join(require('os').tmpdir(), `sofagent-corpus-key-${process.pid}`);
     await realFsp.writeFile(keyPath, 'test-corpus-export-key-0123456789abcdef');
     process.env.SOFAGENT_KEY_PATH = keyPath;
+    // 产物外置 tmpdir（不传 outDir 时导出落 cwd 的 data/export/corpus/——
+    // 会两次污染工作树：本仓 engine/mcp/data/ 不在根 .gitignore 覆盖内）
+    tmpOutDir = await realFsp.mkdtemp(
+      require('path').join(require('os').tmpdir(), `sofagent-corpus-out-${process.pid}-`),
+    );
   });
 
   afterEach(async () => {
@@ -126,6 +132,7 @@ describe('MCP corpus_export — 训练语料导出三件套（协议面）', () 
       require('path').join(require('os').tmpdir(), `sofagent-corpus-key-${process.pid}`),
       { force: true },
     );
+    await realFsp.rm(tmpOutDir, { recursive: true, force: true });
   });
 
   it('rules_only 模式：27 编号位 + verifiers 三桶经 JSON-RPC 返回', async () => {
@@ -136,7 +143,7 @@ describe('MCP corpus_export — 训练语料导出三件套（协议面）', () 
       method: 'tools/call',
       params: {
         name: 'corpus_export',
-        arguments: { scope: 'all', rules_only: true },
+        arguments: { scope: 'all', rules_only: true, out_dir: tmpOutDir },
       },
     });
 
@@ -162,7 +169,7 @@ describe('MCP corpus_export — 训练语料导出三件套（协议面）', () 
     expect(d.rules.hmac).toMatch(/^[0-9a-f]{32}$/);
   });
 
-  it('完整三件套：五源样本 + 方法论一并返回（absentSources 显式登记）', async () => {
+  it('完整三件套：六源样本 + 方法论一并返回（absentSources 显式登记）', async () => {
     const { send, lastResponse, flush } = await startServer();
     send({
       jsonrpc: '2.0',
@@ -170,7 +177,7 @@ describe('MCP corpus_export — 训练语料导出三件套（协议面）', () 
       method: 'tools/call',
       params: {
         name: 'corpus_export',
-        arguments: { scope: 'all' },
+        arguments: { scope: 'all', out_dir: tmpOutDir },
       },
     });
 
@@ -180,7 +187,7 @@ describe('MCP corpus_export — 训练语料导出三件套（协议面）', () 
     expect(d.ok).toBe(true);
     // 方法论三段（真实 GUIDE 锚点解析——未 mock fs 读，走真文件）
     expect(d.methodology?.sections?.length).toBeGreaterThanOrEqual(3);
-    // 样本面：本机 data/ 无数据时五源全缺席但显式登记（非静默空）
+    // 样本面：本机 data/ 无数据时六源全缺席但显式登记（非静默空）
     expect(d.samples).toBeTruthy();
     expect(Array.isArray(d.samples.absentSources)).toBe(true);
   });
@@ -191,7 +198,7 @@ describe('MCP corpus_export — 训练语料导出三件套（协议面）', () 
       jsonrpc: '2.0',
       id: 102,
       method: 'tools/call',
-      params: { name: 'corpus_export', arguments: {} },
+      params: { name: 'corpus_export', arguments: { out_dir: tmpOutDir } },
     });
 
     await flush();
@@ -199,5 +206,25 @@ describe('MCP corpus_export — 训练语料导出三件套（协议面）', () 
     const d = res.result?._meta?.data ?? {};
     expect(d.ok).toBe(true);
     expect(d.rules.counts.totalSlots).toBe(27);
+  });
+
+  it('audit 包缺席降级分支：auditEvent 置 null（源码契约锁——createRequire 绕过 mock，行为面归 e2e）', async () => {
+    // fresh-eyes 视角9-1 修复行为锁：降级分支曾返回字段形态齐全的伪
+    // auditEvent——机器消费方无法区分「降级占位」与「真实事件记录」。
+    // corpusExport 的 audit 包解析走 createRequire(__filename)（绕过 vitest
+    // mock——doMock 无法触达降级分支，这是延迟 require 设计的固有属性），
+    // 故此处锁源码契约：降级分支 auditEvent 必须严格 null，不出现伪事件字段。
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.readFileSync(
+      path.join(__dirname, '..', 'tools', 'corpus-export.ts'),
+      'utf-8',
+    );
+    // 降级返回体：auditEvent: null + isError: true 形态在源码中锁定
+    expect(src).toMatch(/auditEvent:\s*null/);
+    expect(src).toMatch(/isError:\s*true/);
+    // 防伪形态回潮：降级分支不得再出现「event: 'corpus_export'」字面构造
+    const degradedBody = src.slice(src.indexOf('不可用'), src.indexOf('// 一、规则'));
+    expect(degradedBody).not.toMatch(/event:\s*'corpus_export'/);
   });
 });

@@ -1,7 +1,7 @@
 # L2 团队协作协议 · 架构设计文档
 
-> **版本**：v1.3.3 · **状态**：设计稿（review 通过后进入实现）
-> **前置**：v1.3.1（身份码 + 跨设备审计聚合）· v1.4.3（Onboard Agent 循环引擎）· v1.1.8（安全联邦加密通道）
+> **版本**：v1.3.3（✅ 已发版）· **状态**：协议已落地（L2 协作 / 主 agent 编排 / 入口路由 / Refine Agent / 进化闭环随该版交付）
+> **前置**：v1.3.1–v1.3.2（Onboard Agent 循环机制：L1 于 v1.3.1，完整版 L2-L5 于 v1.3.2）· v1.1.8（安全联邦加密通道）
 > **适用范围**：本文定义 sofagent 多 Agent 团队化的底层协议。所有 v1.3.3 交付物（L2 协作、主 agent 编排、入口路由、Refine Agent、进化闭环）的协作行为均遵循本文约束。
 
 ---
@@ -20,7 +20,7 @@ v1.3.2 交付了单 Agent 全闭环（Onboard L1-L5）+ workflow 批量生成（
 | **不碰 L3 组织能力市场** | Agent 的发现/交易/上架归 v1.3.4 | v1.3.4 |
 | **不重写联邦加密链路** | 复用 v1.1.8 AES-256-GCM + FederationChannel 抽象 | v1.1.8 |
 | **不重写 CRDT 同步** | 复用 @automerge/automerge@^3.4.1（v1.3.5 迁移，跨 major 升级须先跑 team-state 回归） | v1.1.8 |
-| **不重写循环引擎** | Refine 复用 loop-agent 的 L1/L3/L4/L5，只换 L2 判据 | v1.3.2 |
+| **不重写循环机制** | Refine 复用 loop-agent 的 L1/L3/L4/L5，只换 L2 判据 | v1.3.2 |
 | **进化闭环只动经验层** | L1 SKILL.md / 审计规则 / 回溯机制永远不可碰 | 铁律 |
 
 ### 0.3 trust 语义边界（提前钉死）
@@ -32,7 +32,7 @@ v1.3.2 交付了单 Agent 全闭环（Onboard L1-L5）+ workflow 批量生成（
 - ❌ 成员能不能加入团队（那是 team-manager 的建队逻辑，无条件接受 team.yml 声明的成员）
 - ❌ 成员能不能调用某个工具（那是 v1.3.7 权限体系的事）
 - ❌ 成员能不能修改某个文件（同上）
-- ❌ 成员的输出是否可信（那是审计引擎 A1-A24 的 git diff 硬证据判定）
+- ❌ 成员的输出是否可信（那是审计模块 A1-A23 的 git diff 硬证据判定）
 
 实现者最容易犯的错：把 trust 做成 `if (member.trust > 0.5) allow()` 的准入控制。**这是越界实现，必须在 code review 时拦截**。trust 只出现在 `resolveConflict()` 函数的排序比较里，不出现在任何 `if` 条件分支里。
 
@@ -113,27 +113,7 @@ interface FeedbackEntry {
 
 ### 1.3 automerge 用法（对齐 core/federation.ts 模式）
 
-```typescript
-// 初始化团队共享态
-let doc = Automerge.init<TeamStateDoc>();
-doc = Automerge.change(doc, (d) => {
-  d.meta = { teamId, name, createdAt: new Date().toISOString() };
-  d.members = {};
-  d.tasks = {};
-  d.fileLocks = {};
-  d.feedback = [];
-});
-
-// 成员加入（更新本地副本）
-doc = Automerge.change(doc, (d) => {
-  d.members[agentId] = { agentId, role, trust, status: 'idle', lastHeartbeat: now };
-});
-
-// 跨设备/跨 Agent 同步：序列化 → 联邦通道传输 → 对端反序列化 → merge
-const binary = Automerge.save(doc);              // 序列化为 Uint8Array
-const remoteDoc = Automerge.load(binary);         // 反序列化
-doc = Automerge.merge(doc, remoteDoc);            // CRDT 自动合并
-```
+初始化走 `Automerge.init<TeamStateDoc>()` + `change()` 写 meta/members/tasks/fileLocks/feedback；成员加入用 `change()` 更新 `members[agentId]`；跨设备/跨 Agent 同步走 `save()` 序列化 → 联邦通道传输 → 对端 `load()` → `merge()`（CRDT 自动合并）。
 
 **与 `core/federation.ts` 的 `mergeFederationResults` 区别**：
 - `mergeFederationResults` 合并的是**知识查询结果**（一次性合并快照，用完即弃）
@@ -244,7 +224,7 @@ class IntentBus {
 当满足以下任一条件时触发冲突消解：
 1. **文件锁冲突**：Agent B 尝试写文件 X，但 team-state 中 X 的 fileLock 由 Agent A 持有且未过期
 2. **共享态 key 冲突**：两个 Agent 在同一收敛窗口内广播了针对同一 target 的矛盾意图（如 A 要删文件、B 要改文件）
-3. **审计拦截**：Agent 的修改被审计引擎判 FAIL，且存在其他 Agent 的竞争版本
+3. **审计拦截**：Agent 的修改被审计模块判 FAIL，且存在其他 Agent 的竞争版本
 
 ### 3.2 裁决顺序（trust → 时间戳 → 显式优先级）
 
@@ -428,12 +408,12 @@ export class FederatedTeamSyncChannel implements TeamSyncChannel {
 |------|---------|--------|
 | 分发 | 意图广播 + 触发反应 | Leader 广播 `intent.execute.<task>` → 匹配的 sub-agent 触发 |
 | 监控 | 团队级审计轨迹 | Leader 读 decision-log（按 teamId tag 过滤） |
-| 审计 | 审计引擎 git diff | sub-agent 产出后走 A1-A24（已有能力） |
+| 审计 | 审计模块 git diff | sub-agent 产出后走 A1-A23（已有能力） |
 | 通讯 | 意图广播 + 共享态中转 | sub-agent 间不直连，经 Leader 的 intent-bus 中转 |
 
 ### 6.2 自动入队挂点
 
-v1.3.2 workflow 批量生成的 sub-agent 需要自动加入团队。挂点在 `workflow-parser.ts:156` 的 `deriveAgentFromRequirement` 调用后：
+v1.3.2 workflow 批量生成的 sub-agent 需要自动加入团队。挂点在 `workflow-parser.ts` 的 `resolveAgent` 之后：
 
 ```
 parseWorkflowToSubAgents()
@@ -449,7 +429,7 @@ parseWorkflowToSubAgents()
 
 ## 7. Refine Agent 与协议的衔接
 
-### 7.1 复用 loop-agent 引擎
+### 7.1 复用 loop-agent
 
 Refine Agent 复用 v1.3.2 loop-agent 的 L1/L3/L4/L5，只替换 L2 判据：
 
@@ -501,7 +481,7 @@ quality-rule-set 加载顺序：
 | L1 硬约束（SKILL.md） | ❌ | **永远不可碰——审计铁律** |
 | L2 决策约束（think.md） | ✅ | |
 | L4 经验层（knowledge/） | ✅ | |
-| 审计规则（A1-A24） | ❌ | **永远不可碰** |
+| 审计规则（A1-A23） | ❌ | **永远不可碰** |
 | 回溯机制（git snapshot） | ❌ | **永远不可碰** |
 
 **哲学一致性**：如果优化器能改约束层，审计就失去意义（优化器可以把自己的审计规则改松来通过"验收"）。这条不是保守，是底线。
@@ -545,4 +525,4 @@ freezeBenchmark(def)           // benchmark-designer.ts:172 冻结基线
 
 ---
 
-*本文档 review 通过后进入实现阶段。所有协作行为必须遵循本文约束。*
+*本文档定义 L2 协作协议约束；协议随 v1.3.3 交付，后续修订需 review 通过。所有协作行为必须遵循本文约束。*

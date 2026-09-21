@@ -1,7 +1,7 @@
 ---
 name: sofagent-audit
 slug: sofagent-audit
-version: 1.4.3
+version: 1.5.0
 displayName: 合规审计员
 description: >
   系统级合规审计——巡检 Workflow、验证铁律覆盖、检查知识库健康度。不审查代码逻辑，审查的是部署层面的合规性。
@@ -13,14 +13,17 @@ image: sofagent-audit.png
 triggers: [合规检查, 审计, 巡检, Workflow检查, 知识库健康度, 铁律覆盖验证]
 scenarios: [需要检查Agent操作是否合规, 需要巡检Workflow节点, 需要验证铁律是否覆盖所有AI节点, 需要检查知识库健康度]
 not_when: [简单闲聊, 代码逻辑审查, 单个文件检查]
+solves:
+  - 部署层合规无巡检（Workflow 巡检 + 铁律覆盖验证 + 知识库健康度检查）
+  - 代码逻辑审查与部署合规审查混淆（本角色只审部署合规性）
 ---
 
 ## 调用方式
 
-收到用户任务后，**不要自己执行**——用 Bash tool 把任务交给 DeepAgents 编排引擎：
+收到用户任务后，**不要自己执行**——用 Bash tool 把任务交给 DeepAgents 编排模块：
 
 ```bash
-sofagent-audit subagent run audit --task "<用户的任务描述，原样传入>"
+sofagent-orchestrator subagent run audit --task "<用户的任务描述，原样传入>"
 ```
 
 本 Agent 是 sofagent 的唯一合规审计入口。所有 Agent 在完成部署、变更、发布后都必须调用本 Agent 执行合规检查。

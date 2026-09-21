@@ -21,7 +21,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$VERSION_STR = "1.4.3"
+$VERSION_STR = "1.5.0"
 try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch {}
 
 $cfg = Join-Path $PSScriptRoot "lib\config.ps1"
@@ -98,7 +98,7 @@ if ($Quick) {
     $skillQuickContent = if ($skillQuick) { [System.IO.File]::ReadAllText($skillQuick) } else { "" }
     if ($skillQuick -and ($skillQuickContent -match "4.*底线|6.*铁律")) { Check-Pass "SKILL.md 存在且含宪法（4底线+6则铁律）" } else { Check-Fail "SKILL.md 缺失或宪法关键词不全" }
     if (Test-Path $sofagentData) { Check-Pass ".sofagent/ 数据目录存在" } else { Check-Warn ".sofagent/ 数据目录不存在（首次使用会自动创建）" }
-    if (Get-Command sofagent-audit -ErrorAction SilentlyContinue) { Check-Pass "sofagent-audit 可用 — v$(sofagent-audit --version 2>$null)" } else { Check-Warn "sofagent-audit 不可用——审计引擎降级" }
+    if (Get-Command sofagent-audit -ErrorAction SilentlyContinue) { Check-Pass "sofagent-audit 可用 — v$(sofagent-audit --version 2>$null)" } else { Check-Warn "sofagent-audit 不可用——审计模块降级" }
     $rulesQuick = @("$OPENCLAW_DIR\skills\sofagent\fde.md", "$up\.workbuddy\skills\sofagent\fde.md", "$up\.openclaw\fde.md") | Where-Object { Test-Path $_ } | Select-Object -First 1
     if ($rulesQuick) { Check-Pass "fde.md 可读 — $rulesQuick" } else { Check-Warn "fde.md 未找到或不可读" }
     Write-Summary; exit $(if ($script:fail -gt 0) { 1 } else { 0 })
@@ -111,7 +111,7 @@ if ($Platform -eq "workbuddy") {
     if ((Test-Path $wbSkill) -and (Get-Item $wbSkill).Length -gt 0) {
         # PS 5.1 Select-String -Path 用系统编码读文件，改用 .NET API 读 UTF-8
         $wbSkillContent = [System.IO.File]::ReadAllText($wbSkill)
-        if ($wbSkillContent -match "4 底线|6 则铁律") { Check-Pass "SKILL.md 已部署且含宪法（4底线+6则铁律内联）" } else { Check-Warn "SKILL.md 已部署但宪法内容缺失" }
+        if ($wbSkillContent -match "4 底线|9 则铁律") { Check-Pass "SKILL.md 已部署且含宪法（4底线+9则铁律内联）" } else { Check-Warn "SKILL.md 已部署但宪法内容缺失" }
     } else { Check-Warn "SKILL.md 未部署到 ~/.workbuddy/skills/sofagent/" }
     $wbRules = "$up\.workbuddy\fde.md"
     if ((Test-Path $wbRules) -and (Get-Item $wbRules).Length -gt 0) { Check-Pass "fde.md 已部署（$(Get-CharCount $wbRules) 字符）" } else { Check-Warn "fde.md 未部署到 ~/.workbuddy/" }
@@ -219,10 +219,10 @@ if ($rulesCfg) {
     # PS 5.1 Select-String -Path 用系统编码读文件，改用 .NET API 读 UTF-8
     $rulesCfgContent = [System.IO.File]::ReadAllText($rulesCfg)
     $missing = 0
-    foreach ($key in @("log_sanitize", "log_sanitize_ips", "data_retention_days", "data_retention_max_entries", "data_cleanup_on_record", "data_cleanup_frequency", "audit_enabled")) {
+    foreach ($key in @("log_sanitize", "log_sanitize_ips", "data_retention_days", "data_retention_max_entries", "data_cleanup_frequency", "audit_enabled")) {
         if ($rulesCfgContent -notmatch "${key}:") { $missing++ }
     }
-    if ($missing -eq 0) { Check-Pass "fde.md 合规配置段完整（7/7 配置项）" } else { Check-Warn "fde.md 合规配置段不完整（缺少 $missing/7 项）" }
+    if ($missing -eq 0) { Check-Pass "fde.md 合规配置段完整（6/6 配置项）" } else { Check-Warn "fde.md 合规配置段不完整（缺少 $missing/6 项）" }
 } else { Check-Warn "fde.md 未找到，无法验证合规配置段" }
 
 # ════════ 总结 ════════

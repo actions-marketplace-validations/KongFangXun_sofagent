@@ -16,7 +16,7 @@
 
 | 检查项 | 命令 | 权限边界 | OpenClaw | WorkBuddy | Web | 结果标注 |
 |------|------|------|:--:|:--:|:--:|------|
-| AO 编排 | `command -v ao` | 不可谎称编排可用 | ✅ | ⚠️ | ❌ | AO=可用/手动 |
+| 编排 | `command -v sofagent-orchestrator` | 不可谎称编排可用 | ✅ | ⚠️ | ❌ | 编排=可用/手动 |
 | bash | `command -v bash` | 不可 `rm -rf /`/删非项目文件/改系统配置/`curl\|bash` | ✅ | ⚠️ | ❌ | ✅/❌/N/A |
 | git | `command -v git` | 不可 `push --force` 到 main/master/改 `.git/config` | ✅ | ⚠️ | ❌ | ✅/❌/N/A |
 | jq/node | `command -v jq\|node` | — | ✅ | ⚠️ | ❌ | ✅/❌/N/A |
@@ -62,7 +62,7 @@ Agent 接收任务后快速预判：
 | 🟡 中等 | 多步骤但有明确路径、少量依赖 | 修复已知 bug、添加简单功能 |
 | 🔴 复杂 | 多步骤、跨文件、需要拆解 | 重构模块、新功能开发、多仓库协调 |
 
-**编排引擎判定**：🔴 复杂 + FDE 场景 → 触发 engage.md；🔴 复杂 + 非 FDE → 手动拆解；🟢🟡 → 不触发（走 task-aware 闸门）。编排引擎定位为 FDE 部署场景专用——个人开发者只装约束规则。
+**编排模块判定**：🔴 复杂 + FDE 场景 → 触发 engage.md；🔴 复杂 + 非 FDE → 手动拆解；🟢🟡 → 不触发（走 task-aware 闸门）。编排模块定位为 FDE 部署场景专用——个人开发者只装约束规则。
 
 **反思已读**：检查 `think.md` 是否有同类任务反思记录 → 有则必须先读完再动手；无则标记「无同类反思」。
 
@@ -70,12 +70,12 @@ Agent 接收任务后快速预判：
 
 ```
 [OODA 决策] 🟢🟡 走 task-aware 闸门 / 🔴 触发 engage.md
-          复杂度：{🟢/🟡/🔴} | 编排引擎：{触发/跳过} | 反思：{已读/跳过}
+          复杂度：{🟢/🟡/🔴} | 编排模块：{触发/跳过} | 反思：{已读/跳过}
 ```
 
 执行路径：🟢🟡 → Read `task-aware.md` → 执行 / 🔴+FDE → Read `engage.md` → 编排 → 执行 / 🔴+非FDE → 手动拆解 + Read `task-aware.md` → 执行。
 
-<!-- 
+<!--
   7-Entry Pre-Flight Checklist 参照（Google Cloud Code）:
   ✅ recovery — 失败回退方案（已补入 LIMITATIONS + daemon 边界说明）
   ✅ loop — loop-check/evaluate/exit（已落地）

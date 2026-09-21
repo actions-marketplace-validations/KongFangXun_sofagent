@@ -24,7 +24,7 @@
 
 set -euo pipefail
 
-VERSION="1.4.3"
+VERSION="1.5.0"
 
 # ── 加载合规配置 ──
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -260,13 +260,4 @@ fi
 
 echo "  已记录: ${SANE_TASK_NAME} → ${LOG_FILE}"
 
-# ── 写后概率触发 cleanup.sh ──
-if [ "${SOFA_CLEANUP_ON_RECORD:-}" = "true" ]; then
-  FREQ="${SOFA_CLEANUP_FREQUENCY:-10}"
-  if [ "$((RANDOM % FREQ))" -eq 0 ]; then
-    CLEANUP_SCRIPT="${SCRIPT_DIR}/cleanup.sh"
-    if [ -x "$CLEANUP_SCRIPT" ]; then
-      bash "$CLEANUP_SCRIPT" --force 2>/dev/null || true
-    fi
-  fi
-fi
+# （写后概率触发清理已随 v1.5.0 死配置清扫移除——手动清理走 cleanup.sh）

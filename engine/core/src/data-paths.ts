@@ -1,6 +1,6 @@
 // ============================================================
 // data-paths.ts · 数据目录路径单一事实来源（SSOT）
-// v1.4.3 安装路径分离：代码仓库与运行时数据物理分离
+// v1.5.0 安装路径分离：代码仓库与运行时数据物理分离
 // ============================================================
 //
 // 核心原则：
@@ -36,8 +36,7 @@ import fs from 'fs';
 //   （冒号分隔，企业场景可显式扩展）。
 function sanitizeSofagentHome(raw: string | undefined): string {
   const userHome = os.homedir();
-  const fallback = path.join(userHome, '.sofagent');
-  if (raw === undefined || raw === '') return fallback;
+  if (raw === undefined || raw === '') return path.join(userHome, '.sofagent');
   const resolved = path.resolve(raw);
   const allowedPrefixes: string[] = [userHome, '/opt/sofagent', '/var/lib/sofagent'];
   const extra = process.env.SOFAGENT_HOME_ALLOWED_PREFIXES;
@@ -51,8 +50,21 @@ function sanitizeSofagentHome(raw: string | undefined): string {
     (prefix) => resolved === prefix || resolved.startsWith(prefix + path.sep)
   );
   if (!inAllowed) {
-    console.error(`⚠️ SOFAGENT_HOME 越界：${resolved} 不在允许前缀内，回退到 ${fallback}`);
-    return fallback;
+    // v1.4.8 R6: 越界回退 fail-loud——此前静默回退真实 ~/.sofagent，隔离测试
+    // （SOFAGENT_HOME=/tmp/...）会越界写进真实数据目录（「hook test leak」实锤：
+    // 一条测试记录进 46MB 真实 history.jsonl）。回退方向是「静默收窄隔离」而非
+    // 报错，违反 fail-loud 纪律。改抛错：测试/CI 场景立刻暴露配置缺口；确需
+    // 自定义根目录的企业场景用 SOFAGENT_HOME_ALLOWED_PREFIXES 显式放行（既有通道）。
+    // v1.4.8 阶段七：设专属退出码 3 再抛——node 未捕获异常默认 exit 1，与 audit CLI 的
+    // 「1=有警告」契约**撞码**：hook 的 `-eq 1` 分支会把它当「警告，放行 commit」⇒ 引擎崩溃
+    // 被静默放行（fail-open；实测密钥可入库）。设 exitCode=3（0=全绿/1=警告/2=违规之外）
+    // 让 hook 的 `-ne 0` 兜底分支识别为「引擎异常 ⇒ fail-loud 阻断」。
+    process.exitCode = 3;
+    throw new Error(
+      `SOFAGENT_HOME 越界：${resolved} 不在允许前缀内（fail-loud，不再静默回退）。` +
+      `如确需该根目录，请设置 SOFAGENT_HOME_ALLOWED_PREFIXES 显式放行（冒号分隔多前缀）。` +
+      `允许前缀：${allowedPrefixes.join(':')}`,
+    );
   }
   return resolved;
 }
@@ -221,4 +233,54 @@ export function resolveDaemonJson(overrideHome?: string): string {
  */
 export function getDataDir(explicitBase?: string): string {
   return explicitBase || process.env.SOFAGENT_DATA || resolveDataDir();
+}
+
+// ═══════════════════════════════════════════════════════════
+// G7 多租户抽象层 v0（v1.4.7）——路径与身份地基
+//
+// v0 能力边界：只做「路径命名空间 + 身份归属字段」——
+//   data/<tenant>/ 是数据落点隔离（不同租户的数据文件互不可见）；
+//   不做租户级鉴权/配额/跨租户策略引擎（属 v2.x，翻牌禁照抄）。
+//
+// 语义：
+//   - tenant 经 SOFAGENT_TENANT 环境变量或显式参数传入；
+//   - 缺省 'default'：resolveTenantDataDir() === getDataDir()，
+//     单租户部署零感知零迁移（既有调用方不动即兼容）；
+//   - 非法租户名（路径穿越/空串/斜杠）→ 抛错（fail-loud，
+//     不静默降级 default——静默降级会把 A 租户数据写进 B 的坑）。
+// ═══════════════════════════════════════════════════════════
+
+/** 租户 ID 校验：非空、无路径分隔符、无 .. 穿越、可打印 ASCII 词法 */
+export const TENANT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+/** 缺省租户名（单租户部署的隐式命名空间） */
+export const DEFAULT_TENANT = 'default';
+
+/**
+ * 校验并规范化租户 ID。
+ * @throws 名字非法时抛错（fail-loud——不静默降级，防跨租户数据误写）
+ */
+export function validateTenantId(tenant: string): string {
+  if (!TENANT_PATTERN.test(tenant)) {
+    throw new Error(
+      `validateTenantId: 非法租户 ID "${tenant}"——须为 1-64 位字母数字开头、可含 - _ 的标识符（禁路径分隔符/穿越）`,
+    );
+  }
+  return tenant;
+}
+
+/**
+ * G7 v0：解析租户数据目录——data/<tenant>/。
+ *
+ * @param tenant 租户 ID（缺省读 SOFAGENT_TENANT，再缺省 'default'）
+ * @param explicitBase 显式数据根（测试隔离；缺省走 getDataDir 优先级链）
+ * @returns data/<tenant>/ 绝对路径；tenant='default' 时返回 data/ 本身
+ *          （缺省租户零迁移——data/default/ 不物化，旧数据原地可读）
+ */
+export function resolveTenantDataDir(tenant?: string, explicitBase?: string): string {
+  const t = tenant ?? process.env.SOFAGENT_TENANT ?? DEFAULT_TENANT;
+  validateTenantId(t);
+  const base = getDataDir(explicitBase);
+  if (t === DEFAULT_TENANT) return base;
+  return path.join(base, t);
 }

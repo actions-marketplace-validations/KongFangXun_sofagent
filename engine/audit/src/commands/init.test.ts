@@ -238,9 +238,13 @@ describe('post-commit 对账 exitCode 三档分流 (B8)', () => {
   function runHook(historyContent: string): string {
     writeFileSync(join(sofagentHome, 'data/audit/history.jsonl'), historyContent);
     try {
+      // v1.4.8 F-17：post-commit 读侧与写侧 SSOT 同链——SOFAGENT_DATA 优先于
+      // SOFAGENT_HOME。全局 vitest-setup 预置了 SOFAGENT_DATA（隔离 tmp），
+      // fixture 必须显式同时设置两者并指向同一目录，防读侧命中全局隔离目录
+      // （空 history → 对账静默失败，B8 三档断言全灭）。
       return execFileSync('bash', [hookPath], {
         cwd: repoDir,
-        env: { ...process.env, SOFAGENT_HOME: sofagentHome },
+        env: { ...process.env, SOFAGENT_HOME: sofagentHome, SOFAGENT_DATA: join(sofagentHome, 'data') },
         encoding: 'utf-8',
       });
     } catch {
@@ -315,6 +319,12 @@ describe('commit-msg reset fail-loud（H-01 index.lock 竞态）', () => {
   const hookPath = join(__dirname, '..', '..', 'hooks', 'commit-msg');
 
   beforeEach(() => {
+    // v1.4.8：本组测试驱动**真实 hook 脚本**，因此必须隔离外部 CLI 注入变量——
+    // `SOFAGENT_AUDIT_ENTRY` 是 hook 的显式入口注入点（fail-loud：指向不存在即报错退出）。
+    // 若外部 shell（如验收脚本）export 了它，会泄漏进本测试的子进程，而该路径在测试的
+    // 临时目录语境下不适用 ⇒ 期望 exit 0 的用例收到 exit 1（实测 2 例失败）。
+    // 本组测的是 hook 自身逻辑，不该受注入变量摆布 ⇒ 先清空。
+    delete process.env.SOFAGENT_AUDIT_ENTRY;
     repoDir = join(tmpdir(), `sofagent-h01-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     sofagentHome = join(tmpdir(), `sofagent-h01-home-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(repoDir, { recursive: true });

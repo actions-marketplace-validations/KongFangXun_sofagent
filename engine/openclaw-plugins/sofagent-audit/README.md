@@ -1,12 +1,14 @@
 # sofagent-audit
 
-**变更机器审阅** · sofagent 约束层四能力在 OpenClaw 生态的插件形态（品牌色 #16B8F3）
+> **本包是 OpenClaw 插件，不是 sofagent CLI。** sofagent CLI 的正式包名是 `@sofagent/audit`（带 scope），安装走 bootstrap.sh / install.sh——不要 `npm i sofagent-audit` 裸装本插件当 CLI 用。
+
+**给 OpenClaw 加上审计** · sofagent 约束层五能力在 OpenClaw 生态的插件形态
 
 24 规则 + git diff 硬证据 + 危险工具拦截（rm/git push 等黑名单），复用 @sofagent/audit.runRules。
 
 ## 能力
 
-before_tool_execute hook + sofagent_audit 工具
+before_tool_call hook + sofagent_audit 工具
 
 ## 安装
 
@@ -50,4 +52,4 @@ clawhub package publish . --family code-plugin --name sofagent-audit --version 1
 
 ## 说明
 
-与 DSH 插件 `cordis-plugin-sofagent-audit` 同引擎、不同宿主：DSH 挂 `tools/pre-execute` 等生命周期事件，OpenClaw 挂 `before_prompt_build` / `before_tool_execute` 等事件。审计引擎（git diff 24 规则）在所有形态一样硬。
+与 DSH 插件 `cordis-plugin-sofagent-audit` 同引擎、不同宿主：DSH 侧挂 `tools/result` + `tools/pre-execute` + `fs/write-intent`（工具结果留证、执行前拦截、写入意图拦截），OpenClaw 侧挂 `before_tool_call`（调用前拦截，可拦停）。审计规则本身（git diff 24 规则）两侧共用同一引擎，口径一致。

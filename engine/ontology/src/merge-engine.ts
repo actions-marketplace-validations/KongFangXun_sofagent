@@ -1,6 +1,6 @@
 // ============================================================
-// ontology/merge-engine.ts · Ontology 合并引擎
-// v1.4.3 从 sofagent/audit/src/ontology/merge-engine.ts 迁出
+// ontology/merge-engine.ts · Ontology 合并逻辑
+// v1.5.0 从 sofagent/audit/src/ontology/merge-engine.ts 迁出
 //
 // 数据源：
 //   1. entities/ 页面的 frontmatter relations 字段 → objects.yml
@@ -16,8 +16,8 @@
 
 import { existsSync, readFileSync, mkdirSync, readdirSync, writeFileSync, renameSync, copyFileSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
-import { randomBytes } from 'crypto';
 import { load as yamlLoad } from 'js-yaml';
+import { atomicWriteSync } from '@sofagent/core';
 import {
   type OntologyObject,
   type OntologyAction,
@@ -26,28 +26,13 @@ import {
 } from './types';
 
 // ============================================================
-// 内联 atomicWriteSync（叶子包不依赖 @sofagent/core）
+// atomicWriteSync 收口至 @sofagent/core 共享实现（v1.4.7 批次 K：五处私有复制防漂移）
 // ============================================================
 
 /**
  * 原子写入——先写临时文件，再 rename 覆盖目标。
  * rename 在同文件系统上是原子操作，防止并发写脏读。
  */
-function atomicWriteSync(filePath: string, content: string): void {
-  const tmp = `${filePath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
-  writeFileSync(tmp, content, 'utf-8');
-  try {
-    renameSync(tmp, filePath);
-  } catch (err: any) {
-    if (err.code === 'EXDEV') {
-      copyFileSync(tmp, filePath);
-      unlinkSync(tmp);
-    } else {
-      throw err;
-    }
-  }
-}
-
 // ============================================================
 // 1. 扫描 entities/ 的 frontmatter relations
 // ============================================================
@@ -173,6 +158,13 @@ function scanEntityFrontmatter(knowledgeDir: string): OntologyObject[] {
           )
         : undefined;
 
+      // 双时态事实：validFrom/validTo（可选，缺省 = 永久有效）——stateAt 时点快照的判定依据。
+      // 注意：裸 ISO 时间串在部分 js-yaml 版本会解析为 Date 对象——统一 toISOString 归一。
+      const toIsoString = (v: unknown): string | undefined =>
+        v instanceof Date ? v.toISOString() : typeof v === 'string' && v ? v : undefined;
+      const validFrom = toIsoString(fm['validFrom']);
+      const validTo = toIsoString(fm['validTo']);
+
       objects.push({
         name,
         type,
@@ -188,6 +180,8 @@ function scanEntityFrontmatter(knowledgeDir: string): OntologyObject[] {
         status,
         stale_after: staleAfter,
         verified,
+        validFrom,
+        validTo,
       });
   }
 
@@ -378,6 +372,8 @@ export function mergeOntology(configDir: string): MergedOntology {
       status: o.status,
       stale_after: o.stale_after,
       verified: o.verified,
+      validFrom: o.validFrom,
+      validTo: o.validTo,
     }) as unknown as Record<string, unknown>))
   );
 
@@ -511,7 +507,7 @@ export interface LifecycleMigrationResult {
 /**
  * branch → trunk 状态迁移（审阅门）。
  *
- * 审阅门语义（对齐 v1.3.6 workflow approver + 审计引擎硬证据）：
+ * 审阅门语义（对齐 v1.3.6 workflow approver + 审计模块硬证据）：
  *   - approver 必填（空审阅人 = 非法迁移）
  *   - 仅 branch 态可迁移（trunk → trunk 幂等拒绝；未知实体拒绝）
  *   - 迁移在 frontmatter 写入 lifecycle: trunk + verified 追加记录

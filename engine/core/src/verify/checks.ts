@@ -1,6 +1,6 @@
 // ============================================================
 // verify/checks.ts · 验证检查逻辑（§1-§11 + quick + WorkBuddy）
-// v1.4.3 从 sofagent/audit/src/verify/checks.ts 迁出
+// v1.5.0 从 sofagent/audit/src/verify/checks.ts 迁出
 // ============================================================
 // 从 verify.ts main() 函数中提取的检查逻辑。
 // 每个函数接收 Verifier 实例和上下文参数，调用 v.checkPass/Fail/Warn。
@@ -61,11 +61,11 @@ export function runQuickChecks(
     v.checkWarn('data/ 数据目录不存在（首次使用会自动创建）');
   }
 
-  // 3. createReactAgent 编排引擎可用
+  // 3. createReactAgent 编排模块可用
   if (commandAvailable('node')) {
-    v.checkPass('Node.js 可用——编排引擎就绪（createReactAgent）');
+    v.checkPass('Node.js 可用——编排模块就绪（createReactAgent）');
   } else {
-    v.checkWarn('Node.js 不可用——编排引擎降级');
+    v.checkWarn('Node.js 不可用——编排模块降级');
   }
 
   // 4. fde.md 可读
@@ -119,8 +119,8 @@ export function runWorkBuddyChecks(
   const wbSkill = join(HOME, '.workbuddy', 'skills', 'sofagent', 'SKILL.md');
   if (existsSync(wbSkill) && statSync(wbSkill).size > 0) {
     const content = readFileContent(wbSkill);
-    if (/4 底线|7 则铁律/.test(content)) {
-      v.checkPass('SKILL.md 已部署且含宪法（4底线+6则铁律内联）');
+    if (/4 底线|9 则铁律/.test(content)) {
+      v.checkPass('SKILL.md 已部署且含宪法（4底线+9则铁律内联）');
     } else {
       v.checkWarn('SKILL.md 已部署但宪法内容缺失');
     }
@@ -378,10 +378,10 @@ export function runAllChecks(
   // ════════════════════════════════════════
   v.section('外部依赖');
 
-  // v1.0.7: createReactAgent 为正式编排引擎（ao 已退役）
+  // v1.0.7: createReactAgent 为正式编排模块（ao 已退役）
   if (commandAvailable('node')) {
     const nodeVer = tryExec('node', ['--version']) || '?';
-    v.checkPass(`Node.js ${nodeVer}（编排引擎: createReactAgent）`);
+    v.checkPass(`Node.js ${nodeVer}（编排模块: createReactAgent）`);
   } else {
     v.checkFail('Node.js 不可用');
   }
@@ -724,11 +724,11 @@ export function runAllChecks(
   // 10.5 默认关闭确认
   {
     // SOFAGENT_* 主名优先，SOFA_* 别名兜底
+    // v1.5.0 TASK-27: SOFAGENT_CLEANUP_ON_RECORD 死配置已移除（从未接线）
     const sofaSanitize = resolveEnvVar('SOFAGENT_SANITIZE', 'SOFA_SANITIZE');
     const sofaAuditEnabled = resolveEnvVar('SOFAGENT_AUDIT_ENABLED', 'SOFA_AUDIT_ENABLED');
-    const sofaCleanupOnRecord = resolveEnvVar('SOFAGENT_CLEANUP_ON_RECORD', 'SOFA_CLEANUP_ON_RECORD');
 
-    if (sofaSanitize !== 'true' && sofaAuditEnabled !== 'true' && sofaCleanupOnRecord !== 'true') {
+    if (sofaSanitize !== 'true' && sofaAuditEnabled !== 'true') {
       v.checkPass('默认关闭: 合规功能全部关闭（向后兼容）');
     } else {
       if (sofaSanitize === 'true') {
@@ -736,9 +736,6 @@ export function runAllChecks(
       }
       if (sofaAuditEnabled === 'true') {
         v.checkWarn('审计已启用 (audit_enabled=true)');
-      }
-      if (sofaCleanupOnRecord === 'true') {
-        v.checkWarn('清理触发已启用 (data_cleanup_on_record=true)');
       }
     }
   }
@@ -750,7 +747,6 @@ export function runAllChecks(
       'log_sanitize_ips',
       'data_retention_days',
       'data_retention_max_entries',
-      'data_cleanup_on_record',
       'data_cleanup_frequency',
       'audit_enabled',
     ];
@@ -777,9 +773,9 @@ export function runAllChecks(
         }
       }
       if (missing === 0) {
-        v.checkPass('fde.md 合规配置段完整（7/7 配置项）');
+        v.checkPass('fde.md 合规配置段完整（6/6 配置项）');
       } else {
-        v.checkWarn(`fde.md 合规配置段不完整（缺少 ${missing}/7 项）`);
+        v.checkWarn(`fde.md 合规配置段不完整（缺少 ${missing}/6 项）`);
       }
     } else {
       v.checkWarn('fde.md 未找到，无法验证合规配置段');

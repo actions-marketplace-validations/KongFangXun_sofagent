@@ -32,7 +32,7 @@ export LC_ALL="${LC_ALL:-en_US.UTF-8}"
 #  14. 文档示例版本号占位符（docs/ 下 @sofagent/*@<真实版本> = bug，应用 <LATEST>）
 #  15-24. ROADMAP/WIKI/MCP 工具数/安装入口 tag/构建产物/lock 同步/CHANGELOG 顶版漂移等
 #  25. 待发版窗口三态一致性（B1：CHANGELOG 收录 × 双语 README 状态行 × 安装 URL 配套齐）
-#  26. 工具数全仓口径（B8：六文档工具数叙事必含当前实数，防口径漏改）
+#  26. 工具数全仓口径（B8：11 处活文档工具数叙事必含当前实数，防口径漏改）
 #
 # 排除目录: docs/changelog/, node_modules/, .git/, dist/
 #
@@ -68,12 +68,23 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+# ── 覆盖度行范式（v1.4.9 G-2②）──
+# 必须在取 PROJECT_ROOT 之前定位自身目录（cd/相对路径问题在此脚本内表现为 $0 相对路径）。
+_SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=/dev/null
+. "${_SELF_DIR}/lib/coverage-line.sh"
+
 # ── 项目根目录 ────────────────────────────────────────────────
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 ERRORS=0
 CHECKS=0
 WARNINGS=0
+# SKIPS（v1.4.9 G-2②）：显式「降级跳过」计数——与 WARNINGS **分列**。
+# 理由：合法的窗口态降级（如 §27 待发版窗口白名单）计入 WARNINGS 会让 --strict
+# 在发版窗口自锁（窗口态每次发版窗口必然出现，非「问题」）；分列后 --strict 只阻断
+# 真问题，跳过项则由覆盖度行暴露、由发版 SOP「SKIP 数逐条裁决」步骤裁定。
+SKIPS=0
 STRICT=false
 
 # ── 参数解析 ──
@@ -148,11 +159,63 @@ extract_version() {
   echo "$1" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1
 }
 
+# ── rhythm 段读取辅助（v1.4.8 第七章/第〇批）─────────────────────
+# tools/check/dependency-direction.yml 的 rhythm 段 = 版本节奏 SSOT（sync/independent/detached）。
+# 读 YAML 的依赖事实：js-yaml 经 @sofagent/audit 依赖链进入根 node_modules；本脚本直接
+# require，缺依赖时报解析器缺失（环境缺 node_modules，非 YAML 配置问题）。
+DD_YML="${PROJECT_ROOT}/tools/check/dependency-direction.yml"
+
+# rhythm_dump → 逐行打印 CSV 风格行（制表符分隔）：
+#   "SYNC<TAB>包名<TAB>包路径"   —— 严格同频包（§9b 据此生成校验清单）
+#   "GLOB<TAB>段名<TAB>路径glob" —— independent / detached 段路径 glob（§9e 覆盖判定用）
+# 包路径解析：优先取 packages 段的 path（load-chain → engine/hooks/sofagent-load-chain），
+# 缺省回退 "engine/<包名>"（umbrella）。SSOT 缺失/解析失败时输出为空，由调用方 fail-loud。
+# 解析器可用性一次性预检（顶层执行）：$(rhythm_dump) 内的 exit 只退出子 shell
+# 杀不死主流程，会继续走到「段缺失」误导行——故在首次使用前于顶层探测，
+# 命中哨兵即整脚本退出，只报「环境缺依赖」一行。
+_YAML_PROBE_ERR=$(node -e '
+  try { require("js-yaml"); }
+  catch {
+    try { require(require("path").join(process.argv[1], "node_modules/js-yaml")); }
+    catch { process.stderr.write("SOFAGENT_YAML_PARSER_MISSING"); process.exit(3); }
+  }
+' "${PROJECT_ROOT}" 2>&1 1>/dev/null) || true
+if [[ "${_YAML_PROBE_ERR}" == *SOFAGENT_YAML_PARSER_MISSING* ]]; then
+  echo "✗ js-yaml 不可用——本脚本的 rhythm 段解析依赖根 node_modules/js-yaml，先在仓库根执行 npm install（环境缺依赖，非 YAML 配置问题）" >&2
+  exit 1
+fi
+
+rhythm_dump() {
+  node -e '
+    const fs = require("fs");
+    const path = require("path");
+    let yaml;
+    try { yaml = require("js-yaml"); }
+    catch { yaml = require(path.join(process.argv[1], "node_modules/js-yaml")); }
+    const spec = yaml.load(fs.readFileSync(process.argv[2], "utf8")) || {};
+    const rhythm = spec.rhythm || {};
+    const pkgs = spec.packages || {};
+    const asPath = (e) => (typeof e === "string" ? e : (e && e.path) || "");
+    for (const name of rhythm.sync || []) {
+      const p = (pkgs[name] && pkgs[name].path) || "engine/" + name;
+      console.log(["SYNC", name, p].join("\t"));
+    }
+    for (const seg of ["independent", "detached"]) {
+      for (const entry of rhythm[seg] || []) {
+        console.log(["GLOB", seg, asPath(entry)].join("\t"));
+      }
+    }
+  ' "${PROJECT_ROOT}" "${DD_YML}" 2>/dev/null || true
+}
+
 # ── 2. 检查 .ts 文件 const VERSION = 'X.Y'（动态扫描，不硬编码文件列表）
 echo -e "${BOLD}── [1/14] TypeScript 常量 ──${NC}"
-# 动态扫描 12 个子包目录（v1.1.0 多包结构）
+# 动态扫描 12 个子包目录（v1.1.0 多包结构；v1.4.8 修正：原注释误写「12 个」，实测曾为 11 项；
+#   v1.4.8 第 7 批 train 拆包后为 12 项 = 原 11 项 + train。train 含
+#   train-deliverable.ts 的 TRAIN_DELIVERABLE_GENERATOR_VERSION——不纳入会**丢失既有覆盖**。）
+# ⚠️ 残留：本处清单与 §9b（已由 rhythm.sync 驱动）仍是两处硬编码，未随本批收编（避免越界重构）。
 SCAN_DIRS=()
-for pkg in harness ontology eval core audit mcp orchestrator daemon ab-test think skillopt; do
+for pkg in harness ontology eval core audit mcp orchestrator train daemon ab-test think evolve; do
   PKG_SRC="${PROJECT_ROOT}/engine/${pkg}/src"
   if [[ -d "${PKG_SRC}" ]]; then
     SCAN_DIRS+=("${PKG_SRC}")
@@ -182,9 +245,9 @@ done < <(grep -rl "const [A-Z_]*VERSION = '" \
   2>/dev/null || true)
 echo ""
 
-# ── 3. 检查 index.ts vOLD 引用（12 子包遍历）────────────────
+# ── 3. 检查 index.ts vOLD 引用（13 子包遍历）────────────────
 echo -e "${BOLD}── [2/14] index.ts 版本引用 ──${NC}"
-for pkg in harness ontology eval core audit mcp orchestrator daemon ab-test think skillopt; do
+for pkg in harness ontology eval core audit mcp orchestrator train daemon ab-test think evolve; do
   INDEX_TS="${PROJECT_ROOT}/engine/${pkg}/src/index.ts"
   if [[ ! -f "${INDEX_TS}" ]]; then
     continue
@@ -419,7 +482,12 @@ done < <(find "${PROJECT_ROOT}" \
   -not -path '*/.sofagent/*' \
   -not -path '*/.workbuddy/*' \
   -not -path '*/engine/daemon/data/*' \
+  -not -path '*/vendor/*/upstream/*' \
   -type f)
+# 🔴 `vendor/*/upstream/` 豁免（2026-09 复核查实）：该面是**上游原样 vendored**的第三方 skill
+# （pin/哈希/本地偏差见同级 PROVENANCE.md），上游 SKILL.md 无 `version:` frontmatter 属其固有格式，
+# 且不随本仓 SSOT 版本走——纳入判定只会产生每版固定误报（曾连续报 5 处「无 version 字段」）。
+# 只豁免 upstream 子目录：vendor 下的本地适配层文件仍受检。
 echo ""
 
 # ── 9. 检查 package.json SSOT 格式（必须 3 段）─────────────────
@@ -433,23 +501,39 @@ else
 fi
 echo ""
 
-# ── 9b. 检查 12 个子包 package.json version 与 SSOT 一致 ─
+# ── 9b. 检查 rhythm.sync 段内子包 package.json version 与 SSOT 一致（v1.4.8：清单由 SSOT 驱动）──
+# v1.4.8 第七章/第〇批：原**硬编码**包清单改为读 tools/check/dependency-direction.yml 的
+#   rhythm.sync 段生成清单——「同频」由隐式（全同频）改为**显式声明**，本处不再持有任何包清单。
+# 既有 bug 修正：原注释写「检查 12 个子包」，实际循环仅 11 项（harness ontology eval core audit
+#   mcp orchestrator daemon ab-test think evolve）——已随本批把该注释修正为真实值；
+#   v1.4.8 第 7 批 train 拆包后 §1/§2 的硬编码循环为 **12 项**（+ train）。
+#   rhythm.sync 现为 15 包 = 原 11 包 + rules（原漏登记）+ umbrella（第 13 个 engine 包）
+#   + engine/hooks/sofagent-load-chain（build 序列末位）+ train（第 7 批拆包），五者实测同为 SSOT 版本。
+# 覆盖不变量（rhythm ⊇ workspace 26 项）由 §9e 断言；清单声明了却不存在的包在此 fail-loud。
 echo -e "${BOLD}── [9/14] 子包版本号一致性 ──${NC}"
-for pkg in harness ontology eval core audit mcp orchestrator daemon ab-test think skillopt; do
-  PKG_JSON="${PROJECT_ROOT}/engine/${pkg}/package.json"
-  if [[ ! -f "${PKG_JSON}" ]]; then
-    continue
-  fi
-  pkg_ver=$(grep -o '"version": "[^"]*"' "${PKG_JSON}" | head -1 | sed 's/"version": "//;s/"//')
-  if [[ -z "${pkg_ver}" ]]; then
-    continue
-  fi
-  if [[ "${pkg_ver}" != "${SSOT_VERSION}" ]]; then
-    report_error "engine/${pkg}/package.json" "version: ${pkg_ver}" "version: ${SSOT_VERSION}"
-  else
-    report_ok "engine/${pkg}/package.json" "${pkg_ver}"
-  fi
-done
+RHYTHM_SYNC_9B="$(rhythm_dump | awk -F'\t' '$1=="SYNC"{print $2"\t"$3}')"
+if [[ -z "${RHYTHM_SYNC_9B}" ]]; then
+  report_error "tools/check/dependency-direction.yml" "rhythm.sync 段缺失或解析失败" "非空 rhythm.sync 包清单"
+else
+  while IFS=$'\t' read -r sync_pkg sync_path; do
+    [[ -z "${sync_pkg}" ]] && continue
+    PKG_JSON="${PROJECT_ROOT}/${sync_path}/package.json"
+    if [[ ! -f "${PKG_JSON}" ]]; then
+      # v1.4.8：原实现对缺文件静默 continue（漏包不报）→ 改 fail-loud（SSOT 声明了却不存在 = 真错）
+      report_error "${sync_path}/package.json" "文件缺失（rhythm.sync 已声明 ${sync_pkg}）" "version: ${SSOT_VERSION}"
+      continue
+    fi
+    pkg_ver=$(grep -o '"version": "[^"]*"' "${PKG_JSON}" | head -1 | sed 's/"version": "//;s/"//')
+    if [[ -z "${pkg_ver}" ]]; then
+      continue
+    fi
+    if [[ "${pkg_ver}" != "${SSOT_VERSION}" ]]; then
+      report_error "${sync_path}/package.json" "version: ${pkg_ver}" "version: ${SSOT_VERSION}"
+    else
+      report_ok "${sync_path}/package.json" "${pkg_ver}"
+    fi
+  done <<< "${RHYTHM_SYNC_9B}"
+fi
 echo ""
 
 # ── 9c. 检查 OpenClaw plugin 家族 version 与 SSOT 一致（v1.4.1 补漏：sofagent-audit 漏 bump 教训）──
@@ -483,6 +567,56 @@ if [[ -n "${DD_HITS}" ]]; then
   report_error "engine/mcp+think" "本地 dataDir 函数残留:${DD_NAMES}" "import { getDataDir } from '@sofagent/core'（SSOT）"
 else
   report_ok "engine dataDir SSOT" "零本地定义（mcp+think 全域清零，v1.4.2 收编 30 处）"
+fi
+echo ""
+
+# ── 9e. rhythm 段覆盖全部 workspace 项（防漏登记 · v1.4.8 第七章/第〇批）──
+# 不变量：rhythm.sync ∪ independent ∪ detached 必须覆盖**全部 workspace 项**（实为 26 项）。
+# 枚举源：package.json 的 workspaces 字段——**不得**用 `ls -d engine/*/`
+#   （那只得 19 个目录，漏 10 项：engine/hooks/sofagent-load-chain + 插件家族更深一层目录）。
+# 命中规则：sync 段按「包路径精确相等」命中；independent / detached 段按「路径 glob」命中。
+# 与 §9b（读 rhythm.sync 生成清单）、§12b（按 rhythm 分段过滤）同源，故并入本脚本一处审阅。
+echo -e "${BOLD}── 检查 rhythm 段覆盖全部 workspace 项（防漏登记）──${NC}"
+RHYTHM_DUMP_9E="$(rhythm_dump)"
+WS_LIST_9E="$(node -e 'process.stdout.write(((require(process.argv[1]).workspaces) || []).join("\n"))' "${PROJECT_ROOT}/package.json" 2>/dev/null || true)"
+SYNC_PATHS_9E="$(printf '%s\n' "${RHYTHM_DUMP_9E}" | awk -F'\t' '$1=="SYNC"{print $3}')"
+GLOBS_9E="$(printf '%s\n' "${RHYTHM_DUMP_9E}" | awk -F'\t' '$1=="GLOB"{print $3}')"
+
+if [[ -z "${RHYTHM_DUMP_9E}" ]]; then
+  report_error "tools/check/dependency-direction.yml" "rhythm 段缺失或解析失败" "含 rhythm.sync / independent / detached 三段"
+elif [[ -z "${WS_LIST_9E}" ]]; then
+  report_error "package.json" "workspaces 为空或解析失败" "非空 workspaces 列表（枚举源）"
+else
+  RHYTHM_UNCOVERED=0
+  RHYTHM_WS_TOTAL=0
+  while IFS= read -r ws; do
+    [[ -z "${ws}" ]] && continue
+    RHYTHM_WS_TOTAL=$((RHYTHM_WS_TOTAL + 1))
+    covered=false
+    while IFS= read -r sp; do
+      [[ -z "${sp}" ]] && continue
+      if [[ "${ws}" == "${sp}" ]]; then covered=true; break; fi
+    done <<< "${SYNC_PATHS_9E}"
+    if [[ "${covered}" == "false" ]]; then
+      while IFS= read -r glob; do
+        [[ -z "${glob}" ]] && continue
+        # shellcheck disable=SC2053  # 故意不给 RHS 加引号：这里要的正是 glob 匹配（如 engine/dsh-plugins/*）
+        if [[ "${ws}" == ${glob} ]]; then covered=true; break; fi
+      done <<< "${GLOBS_9E}"
+    fi
+    if [[ "${covered}" == "false" ]]; then
+      report_error "${ws}" "未被 rhythm 任何段覆盖" "登记进 rhythm.sync / independent / detached"
+      RHYTHM_UNCOVERED=$((RHYTHM_UNCOVERED + 1))
+    fi
+  done <<< "${WS_LIST_9E}"
+
+  if [[ "${RHYTHM_UNCOVERED}" -eq 0 ]]; then
+    RHYTHM_N_SYNC=$(printf '%s\n' "${SYNC_PATHS_9E}" | grep -c . || true)
+    RHYTHM_N_GLOB=$(printf '%s\n' "${GLOBS_9E}" | grep -c . || true)
+    report_ok "rhythm 覆盖率" "全部 ${RHYTHM_WS_TOTAL} 个 workspace 项已声明（sync ${RHYTHM_N_SYNC} 包 + independent/detached ${RHYTHM_N_GLOB} 条 glob）"
+  else
+    echo -e "    ${RED}rhythm 段漏登记 ${RHYTHM_UNCOVERED}/${RHYTHM_WS_TOTAL} 项 workspace——「不同频」必须先显式声明节奏归属${NC}"
+  fi
 fi
 echo ""
 
@@ -708,13 +842,28 @@ echo ""
 #   ② 原结构 `done < <(find ...) | while read` 管道使 while 在子 shell 执行，
 #      INTERNAL_DEPS_OK=false 传不回父 shell → 改用命令替换收集输出后统一判定
 #   ③ node stderr 被 2>/dev/null 吞掉 → 改 2>&1 保留报错信息
+# v1.4.8 第七章/第〇批：按 rhythm 分段过滤——只有 rhythm.sync 段内的包参与**精确校验**；
+#   independent（DSH/OpenClaw 插件家族）/ detached（FORGE，非 workspace）段豁免，
+#   即「独立节奏 / 完全脱离」的声明同时解除其内部依赖的精确版本约束（各走各的发布通道）。
 echo -e "${BOLD}── 检查子包内部依赖版本 ──${NC}"
 INTERNAL_DEPS_OK=true
 
-# 收集所有 workspace package.json 中的版本不一致（含 node stderr，不再吞）
+# rhythm SSOT → sync 段包路径集合（逐行一条；供 node 侧过滤）。
+# ROOT 经环境变量传入，避免污染 node -e 的 argv（argv[1] 已用于传 package.json 路径）。
+RHYTHM_SYNC_PATHS_12B="$(rhythm_dump | awk -F'\t' '$1=="SYNC"{print $3}')"
+export SOFAGENT_RHYTHM_ROOT="${PROJECT_ROOT}"
+export SOFAGENT_RHYTHM_SYNC="${RHYTHM_SYNC_PATHS_12B}"
+echo -e "  ${CYAN}·${NC} 精确校验范围：rhythm.sync 段 $(printf '%s\n' "${RHYTHM_SYNC_PATHS_12B}" | grep -c . || true) 包（independent / detached 段豁免）"
+
+# 收集 sync 段内各 workspace package.json 中的版本不一致（含 node stderr，不再吞）
 MISMATCHES=$(while IFS= read -r -d '' pkg_json; do
   node -e "
     const fs = require('fs');
+    const path = require('path');
+    // v1.4.8：非 rhythm.sync 段（independent / detached）跳过精确校验
+    const rel = path.relative(process.env.SOFAGENT_RHYTHM_ROOT, path.dirname(process.argv[1])).split(path.sep).join('/');
+    const syncPaths = (process.env.SOFAGENT_RHYTHM_SYNC || '').split('\n').filter(Boolean);
+    if (!syncPaths.includes(rel)) { process.exit(0); }
     const pkg = JSON.parse(fs.readFileSync(process.argv[1], 'utf-8'));
     const pkgName = pkg.name;
     for (const field of ['dependencies', 'optionalDependencies']) {
@@ -864,7 +1013,20 @@ fi
 # v1.3.6 开发中：文档头统一沿用上一版发版日期 2026-08-16，发版时随 CHANGELOG 段更新
 LAST_KNOWN_DATE="2026-08-16"
 if [ -z "$EXPECTED_DOC_DATE" ]; then
-  echo "  ⚠ CHANGELOG 未找到 v${CUR_VER} 发版日期，退回 LAST_KNOWN_DATE=${LAST_KNOWN_DATE}（开发中版本可能如此）"
+  # 🔴 v1.4.8 实锤：CHANGELOG 的当前版本索引行若**没写发版日期**，这里会静默退回一个硬编码旧值，
+  # 于是**全部文档头**报「日期 ≠ 发版日期」——真因（索引行缺日期）被淹没成一堆下游噪声。
+  # 故按「已发版 / 开发中」分流：
+  #   已发版（存在 git tag v$CUR_VER）⇒ 索引行**必须有**日期，缺 = 真错，报 ❌ 并指名修法；
+  #   开发中（无 tag）⇒ 退回上一版日期合理，但仍给出醒目提示与修法指引。
+  if git -C "${PROJECT_ROOT}" rev-parse -q --verify "refs/tags/v${CUR_VER}" >/dev/null 2>&1; then
+    echo "  ❌ CHANGELOG 的 v${CUR_VER} 索引行缺发版日期（该版本已有 tag v${CUR_VER} = 已发版）——"
+    echo "     行尾须为「… · YYYY-MM-DD 已发版 · [开发日志](…)」；否则文档头日期校验会拿旧值兜底造成全量误报"
+    DOC_DATE_OK=false
+    ERRORS=$((ERRORS + 1))
+  else
+    echo "  ⚠ CHANGELOG 未找到 v${CUR_VER} 发版日期（该版本尚无 tag = 开发中），退回 LAST_KNOWN_DATE=${LAST_KNOWN_DATE}"
+    echo "     → 发版时请在索引行尾补「· YYYY-MM-DD 已发版」，本项即转为硬校验"
+  fi
   EXPECTED_DOC_DATE="$LAST_KNOWN_DATE"
 fi
 while IFS= read -r md; do
@@ -898,7 +1060,78 @@ else
 fi
 echo ""
 
-# ── F-08: ROADMAP 版本头描述 vs CHANGELOG 标题一致性（WARN 级）──
+# ── 14b. 非顶版发版日期 vs git tag（v1.4.9 P2-1 回归锁）──
+# 背景（P2-1 根因）：CHANGELOG 的 v1.4.7 索引行原写「2026-09-11 已发版」，v1.4.8 发版
+#   同步批的「日期同步」步骤把它**误改成 2026-09-13**（按「最新发版日」批量替换误伤上一版行，
+#   考古实证：`git show 1410794c` 的 diff）。§14 只认当前版本的文档头日期，看不到**非顶版行**，
+#   于是错日期随发版出门（WIKI 版本表仍写 v1.4.7 = 2026-09-11，两处互不一致）。
+# 判据：CHANGELOG 里每个「· YYYY-MM-DD 已发版」行，若该版本**存在 git tag**，其日期必须
+#   == 该 tag 的 creatordate（tag 是发版真值）。无 tag 的历史行不判（口径：tag 缺失即无真值可比）。
+# 守卫不空转：可判行数 == 0 ⇒ FAIL（说明判据正则失效或 CHANGELOG 结构变了，而不是「全过」）。
+TAG_DATE_OK=true
+TAG_DATE_CHECKED=0
+while IFS= read -r _cl_line; do
+  _cl_ver=$(printf '%s' "$_cl_line" | grep -oE '^- \*\*v[0-9]+\.[0-9]+\.[0-9]+\*\*' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+  _cl_date=$(printf '%s' "$_cl_line" | grep -oE '· [0-9]{4}-[0-9]{2}-[0-9]{2} 已发版' | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1)
+  [ -z "$_cl_ver" ] || [ -z "$_cl_date" ] && continue
+  # 🔴 固定发版时区提取（CI 时区脆弱性实锤 ×2）：%(creatordate:short) 按运行环境 TZ 渲染，
+  #   且 TZ=Asia/Shanghai 前缀对 git 的 ref 过滤器在 CI（浅克隆+特定 git 版本）仍不可靠。
+  #   治本：取 %(creatordate:unix) 原始时间戳（TZ 无关）再显式转上海日期。
+  #   跨平台坑（×3 实锤）：BSD date 用 `-r <ts>`、GNU date 用 `-d @<ts>`——CI 是 Linux（GNU）、
+  #   本仓开发机是 macOS（BSD），两条都试，谁成功用谁。
+  # 🔴 固定发版时区提取（CI 时区脆弱性实锤 ×4 收官）：TZ 环境变量形态在 CI runner
+  #   不可靠（TZ=Asia/Shanghai 前缀对 git ref 过滤器无效 ×1、GNU date -r 语义是
+  #   --reference 文件 ×2、TZ 生效性依赖 runner tzdata/shell 传递 ×3——三层全部踩过）。
+  #   治本：彻底摆脱 date/TZ——取 %(creatordate:unix) 原始时间戳，用纯 shell 算术
+  #   加 8 小时（28800 秒 = UTC+8 固定偏移，中国无夏令时）后取 UTC 日期前 10 字符。
+  #   零外部命令语义分歧、零 TZ 依赖、BSD/GNU 全同值。
+  _tag_ts=$(git -C "${PROJECT_ROOT}" for-each-ref --format='%(creatordate:unix)' "refs/tags/v${_cl_ver}" 2>/dev/null | head -1)
+  _tag_date=""
+  if [ -n "${_tag_ts}" ] && command -v date >/dev/null 2>&1; then
+    _tag_date=$(TZ='UTC-8' date -u -r $(( _tag_ts + 28800 )) '+%Y-%m-%d' 2>/dev/null \
+      || TZ='UTC-8' date -u -d "@$(( _tag_ts + 28800 ))" '+%Y-%m-%d' 2>/dev/null \
+      || true)
+  fi
+  if [ -z "${_tag_date}" ]; then
+    _tag_date=$(TZ='Asia/Shanghai' git -C "${PROJECT_ROOT}" for-each-ref --format='%(creatordate:short)' "refs/tags/v${_cl_ver}" 2>/dev/null | head -1)
+  fi
+  [ -z "$_tag_date" ] && continue
+  TAG_DATE_CHECKED=$((TAG_DATE_CHECKED + 1))
+  # 🔴 ±1 天容差（CI 时区收尾）：tag 日期在本地（annotated tag object 时间，上海时区）
+  #   与 CI（fetch 语义差异下可能落到 commit 时间戳 / UTC 渲染）可差一日——这是
+  #   时区/对象层的边界差，不是 P2-1 要抓的「日期被后续发版批改坏」（那会差出
+  #   完全不同的日子）。
+  #   🔴 fail-closed 纪律：任一侧日期无法转 unix 时**不得回退成 0 参与比较**
+  #   （那会让 gap 恒 0 = 容差吞掉一切漂移，正是负向探针抓出的 fail-open）——
+  #   转换失败即回退**字符串全等比较**（严于容差，保全检测力）。
+  _cl_ts=$(date -j -f "%Y-%m-%d" "$_cl_date" "+%s" 2>/dev/null || date -d "$_cl_date" "+%s" 2>/dev/null || echo "")
+  _tag_ts2=$(date -j -f "%Y-%m-%d" "$_tag_date" "+%s" 2>/dev/null || date -d "$_tag_date" "+%s" 2>/dev/null || echo "")
+  _date_mismatch=false
+  if [ -n "$_cl_ts" ] && [ -n "$_tag_ts2" ]; then
+    _cl_day_gap=$(( _cl_ts - _tag_ts2 ))
+    [ "$_cl_day_gap" -lt 0 ] && _cl_day_gap=$(( 0 - _cl_day_gap ))
+    [ "$_cl_day_gap" -gt 86400 ] && _date_mismatch=true
+  else
+    # 转换不可用 → 字符串严格比较（不放宽）
+    [ "$_cl_date" != "$_tag_date" ] && _date_mismatch=true
+  fi
+  if $_date_mismatch; then
+    echo -e "  ${RED}✗${NC} CHANGELOG v${_cl_ver} 索引行日期 ${_cl_date} ≠ tag v${_cl_ver} 日期 ${_tag_date}"
+    echo -e "     发版真值 = tag；非顶版行的「已发版」日期不得随后续发版批变动（P2-1 复发防御）"
+    TAG_DATE_OK=false
+    ERRORS=$((ERRORS + 1))
+  fi
+done < "${PROJECT_ROOT}/CHANGELOG.md"
+if [ "$TAG_DATE_CHECKED" -eq 0 ]; then
+  echo -e "  ${RED}✗${NC} 非顶版发版日期 vs tag：可判行数为 0（判据未命中任何行）——守卫空转，判 FAIL"
+  ERRORS=$((ERRORS + 1))
+elif $TAG_DATE_OK; then
+  echo -e "  ${GREEN}✓${NC} 非顶版发版日期与 tag 一致（可判 ${TAG_DATE_CHECKED} 行）"
+  CHECKS=$((CHECKS + 1))
+fi
+echo ""
+
+# ── F-08: ROADMAP 版本头描述 vs CHANGELOG 标题一致性（v1.4.9 P1-7 起 FAIL 级）──
 echo "=== 15. ROADMAP 版本头描述 vs CHANGELOG 标题一致性 ==="
 ROADMAP_HEADER=$(sed -n '4p' "${ROADMAP}" 2>/dev/null || echo "")
 if [[ -n "${ROADMAP_HEADER}" ]]; then
@@ -907,12 +1140,31 @@ if [[ -n "${ROADMAP_HEADER}" ]]; then
   # 提取 CHANGELOG 当前版本标题
   # v1.2.5 起 CHANGELOG.md 改为纯目录索引格式（- **vX.Y.Z** — 摘要），旧格式 ### [vX.Y.Z] 已废弃
   CHANGELOG_TITLE=$(grep -m1 -E "^(- \*\*|### \[)v" "${PROJECT_ROOT}/CHANGELOG.md" 2>/dev/null || echo "")
+  # 🔴 待发版窗口感知（与 §24-27 同口径）：CHANGELOG 顶版超前 SSOT 一版（minor/patch 后继）
+  # 时处于「CHANGELOG 已收录新版、ROADMAP 版本头仍指 SSOT 旧版」的合法中间态——ROADMAP
+  # 五步同步挂账 bump 后同批执行（06-doc-finalize 时序定谳），窗口内本项对「顶版 ≠ SSOT」
+  # 降级跳过；仅顶版 = SSOT（发版后常态）才真比对。防窗口态假红（§15 先前无窗口感知，
+  # CHANGELOG 一收录即撞「版本名疑似错版」）。
+  _top_ver=$(echo "${CHANGELOG_TITLE}" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+  _s15_window_skip=false
+  if [[ -n "${_top_ver}" && "${_top_ver}" != "v${SSOT_VERSION}" ]]; then
+    echo -e "  ${YELLOW}⏭️${NC} 待发版窗口态：CHANGELOG 顶版 ${_top_ver} ≠ SSOT v${SSOT_VERSION}——ROADMAP 版本头随 bump 后五步同步，本项跳过（§24-27 同口径）"
+    SKIPS=$((SKIPS + 1))
+    CHECKS=$((CHECKS + 1))
+    _s15_window_skip=true
+  fi
+  if ${_s15_window_skip}; then
+    : # 窗口态整段跳过比对（清空标题后空串仍会走循环假红，故显式短路）
+  elif [[ -z "${CHANGELOG_TITLE}" ]]; then
+    echo -e "  ${YELLOW}⚠${NC} CHANGELOG 顶版标题提取失败"
+    WARNINGS=$((WARNINGS + 1))
+  else
   ROADMAP_WARN=true
   while IFS= read -r kw; do
     [[ -z "${kw}" ]] && continue
     # 跳过太短的关键词（≤2 字符）
     [[ ${#kw} -lt 3 ]] && continue
-    if echo "${CHANGELOG_TITLE}" | grep -qF "${kw}"; then
+    if grep -qF "${kw}" <<< "${CHANGELOG_TITLE}"; then
       ROADMAP_WARN=false
       break
     fi
@@ -920,22 +1172,27 @@ if [[ -n "${ROADMAP_HEADER}" ]]; then
   if ${ROADMAP_WARN}; then
     # 尝试更宽松匹配：取核心名词
     for kw in "产品叙事" "USB" "A/B" "控制图" "BugFix"; do
-      if echo "${ROADMAP_HEADER}" | grep -qF "${kw}" && echo "${CHANGELOG_TITLE}" | grep -qF "${kw}"; then
+      if grep -qF "${kw}" <<< "${ROADMAP_HEADER}" && grep -qF "${kw}" <<< "${CHANGELOG_TITLE}"; then
         ROADMAP_WARN=false
         break
       fi
     done
   fi
   if ${ROADMAP_WARN}; then
-    echo -e "  ${YELLOW}⚠ ROADMAP 版本头描述与 CHANGELOG 标题关键词重合度低${NC}"
-    echo -e "    ROADMAP:  ${ROADMAP_HEADER:0:80}..."
-    echo -e "    CHANGELOG: ${CHANGELOG_TITLE:0:80}"
-    echo -e "    建议检查 ROADMAP L4 描述是否与当前版本一致"
-    WARNINGS=$((WARNINGS + 1))
+    # v1.4.9 P1-7：由 WARN 升为 FAIL。本条早已能精确抓到 ROADMAP 版本头错版
+    # （v1.4.8 头部长期挂着 v1.4.7 的版本名「商业平台接口版」），却只计 WARNING、
+    # 非 --strict 即放行 ⇒ 已知告警随发版出门。ROADMAP L4 是用户第一眼看到的能力叙事，
+    # 错版 = 把上一版的名字贴在本版头上 = 事实性错误（不是风格问题）→ 阻断。
+    echo -e "  ${RED}❌ ROADMAP 版本头描述与 CHANGELOG 标题关键词重合度低（版本名疑似错版）${NC}"
+    echo -e "    ${RED}ROADMAP:  ${ROADMAP_HEADER:0:80}...${NC}"
+    echo -e "    ${RED}CHANGELOG: ${CHANGELOG_TITLE:0:80}${NC}"
+    echo -e "    修法：把 docs/ROADMAP.md L4 版本名改成与 CHANGELOG 当前版本标题一致（勿沿用上一版名字）"
+    ERRORS=$((ERRORS + 1))
   else
     echo -e "  ${GREEN}✓${NC} ROADMAP 版本头描述与 CHANGELOG 标题关键词重合"
     CHECKS=$((CHECKS + 1))
   fi
+  fi # _s15_window_skip / 标题提取失败 / 正常比对 三分支收口
 else
   echo -e "  ${YELLOW}⚠${NC} 无法读取 ROADMAP L4"
 fi
@@ -946,14 +1203,26 @@ echo "=== 16. WIKI 状态表版本号扫描 ==="
 WIKI_FILE="${PROJECT_ROOT}/docs/WIKI.md"
 if [[ -f "${WIKI_FILE}" ]]; then
   WIKI_DRIFT_OK=true
+  # v1.5.0：待发版语义行的跳过计数——下述排除不是静默跳过，行数在段尾显式打印
+  WIKI_PENDING_SKIPPED=0
   # 扫描 WIKI.md 中所有 vX.Y.Z 格式版本号（排除历史叙述和 CHANGELOG 引用）
   while IFS=: read -r line_num line_content; do
     found_vers=$(echo "$line_content" | grep -oE 'v[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
     [[ -z "$found_vers" ]] && continue
     found_ver=$(echo "$found_vers" | sed 's/^v//')
     # 跳过旧版本历史叙述（如"v1.2.5 引入了..."）
+    # v1.5.0：先排除「待发版 / 排期中 / 下一版」语义行——这些行里的版本号是待发版号，
+    #   天然不等于当前 SSOT，要求它相等是假阳性（实案：「能力全景」节的说明句
+    #   「状态：✅ 已交付 · 🚀 待发版（v1.5.0） · 📋 排期中」被"状态"关键字抓成状态表行，
+    #   使本节长期报 1 处不一致）。
+    #   这是「排除」而非「收窄关键字」：真正声称当前版本的行——表格行
+    #   「| 当前版本 | **v1.4.9**」与散文行「当前 v1.4.9」——都仍受检，检测力不损失。
+    if grep -qE '待发版|排期中|下一版' <<< "$line_content"; then
+      WIKI_PENDING_SKIPPED=$((WIKI_PENDING_SKIPPED + 1))
+      continue
+    fi
     # 只检查状态表行（含"当前"或含"状态"或含"版本"关键字的行）
-    if echo "$line_content" | grep -qE '当前|状态|版本'; then
+    if grep -qE '当前|状态|版本' <<< "$line_content"; then
       # v1.3.8 P1-C：完整三段比较（此前只比前两段——v1.3.7 vs v1.3.8 同为 1.3，
       # 补丁号漂移漏检；SSOT 是三段全格式，直接全量比对）
       if [[ "$found_ver" != "$SSOT_VERSION" ]]; then
@@ -965,6 +1234,26 @@ if [[ -f "${WIKI_FILE}" ]]; then
   done < <(grep -nE 'v[0-9]+\.[0-9]+' "${WIKI_FILE}" 2>/dev/null | grep -v 'changelog' || true)
   if $WIKI_DRIFT_OK; then
     echo -e "  ${GREEN}✓${NC} WIKI.md 状态表版本号一致"
+    CHECKS=$((CHECKS + 1))
+  fi
+  # 跳过数显式打印——排除规则不允许静默生效（假门禁形态：锚串消失后静默跳过）
+  if [[ "${WIKI_PENDING_SKIPPED}" -gt 0 ]]; then
+    echo -e "  ${GREEN}✓${NC} WIKI.md 跳过 ${WIKI_PENDING_SKIPPED} 行待发版语义（版本号为待发版号，不比对当前 SSOT）"
+  fi
+  # v1.4.9 P1-7：「下一版 == 当前版本」是硬性自相矛盾（同一版既「当前」又「下一版」）。
+  # 上面 §16 的漂移扫描只认含「当前|状态|版本」的行 ⇒ 「下一版」行天然漏检
+  # （v1.4.8 状态表「当前版本 v1.4.8 / 下一版 v1.4.8」两侧同号长期并存正是此盲区）。
+  # 故单列一条断言：WIKI「下一版」值必须 ≠ SSOT 当前版本。
+  WIKI_NEXT_VER=$(grep -E '^\| *下一版 *\|' "${WIKI_FILE}" 2>/dev/null | head -1 | grep -oE 'v[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 | sed 's/^v//')
+  if [[ -z "${WIKI_NEXT_VER}" ]]; then
+    echo -e "  ${YELLOW}⚠${NC} WIKI.md 未找到状态表「下一版」行（表结构变更？请核对 docs/WIKI.md「六、当前状态」）"
+    WARNINGS=$((WARNINGS + 1))
+  elif [[ "${WIKI_NEXT_VER}" == "${SSOT_VERSION}" ]]; then
+    echo -e "  ${RED}❌ WIKI.md 状态表「下一版」= ${WIKI_NEXT_VER}，与当前版本 ${SSOT_VERSION} 同号——自相矛盾${NC}"
+    echo -e "    修法：docs/WIKI.md「下一版」应指向真正未发布的下一版（如 v1.4.9）"
+    ERRORS=$((ERRORS + 1))
+  else
+    echo -e "  ${GREEN}✓${NC} WIKI.md 状态表「下一版」${WIKI_NEXT_VER} ≠ 当前 ${SSOT_VERSION}"
     CHECKS=$((CHECKS + 1))
   fi
 fi
@@ -998,7 +1287,7 @@ if [[ -d "${MCP_SRC_DIR}" ]] && [[ -f "${SKILL_FILE}" ]]; then
   if [[ -f "${ARCH_FILE}" ]]; then
     # 提取能力总览段（## 能力与状态总览 → ### 对外核心能力）中的「（N tools）」声称
     ARCH_CLAIMED=$(sed -n '/^## 能力与状态总览/,/^### 对外核心能力/p' "${ARCH_FILE}" 2>/dev/null \
-      | grep -oE '（[0-9]+ tools）' | grep -oE '[0-9]+' | head -1)
+      | grep -oE '[（(][0-9]+ tools[）)]' | grep -oE '[0-9]+' | head -1)
     if [[ -n "${ARCH_CLAIMED}" ]] && [[ "${ARCH_CLAIMED}" != "${REGISTERED_COUNT}" ]]; then
       echo "  ❌ ARCHITECTURE 能力总览表声称 ${ARCH_CLAIMED} tools，mcp/src/ 注册 ${REGISTERED_COUNT} 个"
       ERRORS=$((ERRORS + 1))
@@ -1104,9 +1393,73 @@ else
 fi
 echo ""
 
+# ── 20b. bootstrap lib 哈希对账（v1.4.5 P0 防复发）────────────────────────
+# 第 20 项只管「refs/tags/vX.Y.Z 版本号字符串」，管不到「被钉文件的实际内容」。
+# v1.4.5 实锤：INSTALL_SHA256 回填之后又改了 config.sh（set -u 炸弹修复），
+# 主安装路径 fail-closed 100% 装不上（用户看到「可能被劫持」红色告警），
+# 而本脚本当时报全绿——7 个哈希里只有 1 个有验收式。此处逐一对账全部 lib。
+echo "=== 20b. bootstrap lib 哈希对账（钉值 vs tag 实际内容） ==="
+BOOTSTRAP_LIB_MISS=0
+if ! git rev-parse "refs/tags/v${SSOT_VERSION}" >/dev/null 2>&1; then
+  echo -e "  ${YELLOW}⚠${NC} 本地无 tag v${SSOT_VERSION}，跳过 lib 哈希对账（发版后自动生效）"
+  WARNINGS=$((WARNINGS + 1))
+else
+  B_LIB_FILES=$(sed -n 's/^LIB_FILES="\(.*\)"$/\1/p' "${PROJECT_ROOT}/bootstrap.sh" 2>/dev/null | head -1 || true)
+  # 提取 LIB_SHA256S 多行块（首行带 `LIB_SHA256S="` 前缀，末行带 `"` 后缀）
+  B_LIB_HASHES=$(awk '/^LIB_SHA256S="/{f=1} f{line=$0; gsub(/LIB_SHA256S="|"/,"",line); if (line != "") print line} f&&/"$/{exit}' "${PROJECT_ROOT}/bootstrap.sh" 2>/dev/null || true)
+  B_INST_HASH=$(sed -n 's/^INSTALL_SHA256="\([0-9a-f]*\)".*$/\1/p' "${PROJECT_ROOT}/bootstrap.sh" 2>/dev/null | head -1 || true)
+  if [[ -z "$B_LIB_FILES" || -z "$B_LIB_HASHES" ]]; then
+    echo -e "  ${YELLOW}⚠${NC} bootstrap.sh 未解析到 LIB_FILES / LIB_SHA256S（格式变化？人工确认）"
+    WARNINGS=$((WARNINGS + 1))
+  else
+    B_FILE_ARR=()
+    for _lf in $B_LIB_FILES; do B_FILE_ARR+=("$_lf"); done
+    B_HASH_ARR=()
+    while IFS= read -r _lh; do
+      [[ -n "$_lh" ]] && B_HASH_ARR+=("$_lh")
+    done <<< "$B_LIB_HASHES"
+    if [[ ${#B_FILE_ARR[@]} -ne ${#B_HASH_ARR[@]} ]]; then
+      echo -e "  ${RED}✗${NC} LIB_FILES(${#B_FILE_ARR[@]}) 与 LIB_SHA256S(${#B_HASH_ARR[@]}) 数量不等——顺序/条数失配"
+      ERRORS=$((ERRORS + 1))
+    else
+      # install.sh 本体哈希（与 6 个 lib 同一类契约，一并对账）
+      if [[ -n "$B_INST_HASH" ]]; then
+        B_INST_ACTUAL=$(git show "refs/tags/v${SSOT_VERSION}:install.sh" 2>/dev/null | shasum -a 256 | cut -d' ' -f1 || true)
+        if [[ "$B_INST_HASH" == "$B_INST_ACTUAL" ]]; then
+          echo -e "  ${GREEN}✓${NC} install.sh 哈希与 v${SSOT_VERSION} tag 一致"
+          CHECKS=$((CHECKS + 1))
+        else
+          echo -e "  ${RED}✗${NC} install.sh 哈希漂移：钉值 ${B_INST_HASH:0:12}… ≠ tag 实际 ${B_INST_ACTUAL:0:12}…——重算回填（回填后不得再改该文件）"
+          ERRORS=$((ERRORS + 1))
+        fi
+      fi
+      B_IDX=0
+      for _lfname in "${B_FILE_ARR[@]}"; do
+        B_EXPECT="${B_HASH_ARR[$B_IDX]}"
+        B_ACTUAL=$(git show "refs/tags/v${SSOT_VERSION}:engine/scripts/lib/${_lfname}" 2>/dev/null | shasum -a 256 | cut -d' ' -f1 || true)
+        if [[ -z "$B_ACTUAL" ]]; then
+          echo -e "  ${RED}✗${NC} tag v${SSOT_VERSION} 上无 engine/scripts/lib/${_lfname}——钉了不存在的文件"
+          ERRORS=$((ERRORS + 1))
+        elif [[ "$B_EXPECT" == "$B_ACTUAL" ]]; then
+          CHECKS=$((CHECKS + 1))
+        else
+          echo -e "  ${RED}✗${NC} ${_lfname} 哈希漂移：钉值 ${B_EXPECT:0:12}… ≠ tag 实际 ${B_ACTUAL:0:12}…——回填后又改过该文件，重算回填"
+          ERRORS=$((ERRORS + 1))
+          BOOTSTRAP_LIB_MISS=$((BOOTSTRAP_LIB_MISS + 1))
+        fi
+        B_IDX=$((B_IDX + 1))
+      done
+      if [[ $BOOTSTRAP_LIB_MISS -eq 0 ]]; then
+        echo -e "  ${GREEN}✓${NC} ${#B_FILE_ARR[@]} 个 lib 哈希与 v${SSOT_VERSION} tag 全部一致（主安装链完整）"
+      fi
+    fi
+  fi
+fi
+echo ""
+
 # ── 末尾独立断言：env.local 保险（不参与编号段）────────────────
-# FORGE/env.local 含真实 GLM API Key，正常靠 FORGE/.gitignore 挡住。
-# 本断言防两道万一：gitignore 被误改 / git add -f 误提交。
+# 真实 key 文件已移出仓库目录（现为 ~/.sofagent/env.local，2026-09-12 收面批）。
+# 本断言防两道万一：文件被误放回仓内 / git add -f 误提交。
 # 注意：env.local.template 是模板（不含真实 key），必须排除——
 # 精确匹配「以 env.local 结尾且非 template」的已跟踪文件。
 echo "=== 断言. env.local 未入库（真实 key 防误提交）==="
@@ -1153,7 +1506,7 @@ if [[ "${MCP_REG}" =~ ^[0-9]+$ ]] && [[ "${MCP_REG}" -gt 0 ]]; then
   # 文档声称数（DEVELOPMENT.md 的「当前 N 个 MCP tools」表述）
   DOC_MCP=$(grep -oE '当前 [0-9]+ 个 MCP tools' "${PROJECT_ROOT}/docs/DEVELOPMENT.md" 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
   if [[ -n "$DOC_MCP" ]] && [[ "$DOC_MCP" != "$MCP_REG" ]]; then
-    echo -e "  ${RED}✗${NC} DEVELOPMENT.md 声称 $DOC_MCP 个 MCP tools，实际 $MCP_REG——活文档数字漂移（F-05 防复发）"
+    echo -e "  ${RED}✗${NC} DEVELOPMENT.md 声称 $DOC_MCP 个 MCP tools，实际 ${MCP_REG}——活文档数字漂移（F-05 防复发）"
     ERRORS=$((ERRORS + 1))
   else
     echo -e "  ${GREEN}✓${NC} DEVELOPMENT.md MCP 数一致"
@@ -1163,7 +1516,71 @@ else
   echo -e "  ${YELLOW}⚠${NC} tool-registry.ts 工具数解析失败（格式变化？人工确认）"
   WARNINGS=$((WARNINGS + 1))
 fi
+
+# README 双语工具数对账（v1.4.5 fresh-eyes round-1 防复发）：
+# README.md / README.en.md 中所有「N MCP tools」「N 个 MCP tool」声称数逐项与 registry SSOT 核对，
+# 任一处漂移即报错——防「正文已改、表格/附录残留旧值」的局部漏改（本次 80→83 表格漏改即案例）。
+if [[ "${MCP_REG}" =~ ^[0-9]+$ ]] && [[ "${MCP_REG}" -gt 0 ]]; then
+  # -a 强制文本模式：macOS BSD grep 对含中文行做 -o 提取时可能误判 binary（fresh-eyes 实锤），-a 通吃
+  README_CLAIMS=$(grep -hoaE '[0-9]+( 个)? MCP tools?' "${PROJECT_ROOT}/README.md" "${PROJECT_ROOT}/README.en.md" 2>/dev/null | grep -oE '^[0-9]+' || true)
+  README_DRIFT=0
+  README_CLAIM_TOTAL=0
+  while IFS= read -r _claim_num; do
+    [[ -z "${_claim_num}" ]] && continue
+    README_CLAIM_TOTAL=$((README_CLAIM_TOTAL + 1))
+    if [[ "${_claim_num}" != "${MCP_REG}" ]]; then
+      echo -e "  ${RED}✗${NC} README 工具数漂移：声称 ${_claim_num}，registry 实际 ${MCP_REG}——README 双语工具数对账（fresh-eyes round-1 防复发）"
+      ERRORS=$((ERRORS + 1))
+      README_DRIFT=1
+    fi
+  done <<< "${README_CLAIMS}"
+  if [[ "${README_CLAIM_TOTAL}" -eq 0 ]]; then
+    echo -e "  ${YELLOW}⚠${NC} README 未提取到任何工具数声称（格式变化？人工确认）"
+    WARNINGS=$((WARNINGS + 1))
+  elif [[ "${README_DRIFT}" -eq 0 ]]; then
+    echo -e "  ${GREEN}✓${NC} README.md / README.en.md 共 ${README_CLAIM_TOTAL} 处工具数声称与 registry（${MCP_REG}）一致"
+    CHECKS=$((CHECKS + 1))
+  fi
+fi
 echo ""
+
+# ── 22b. API.md 版本头工具数对账（v1.4.9 汇总报告零信任复验发现 · 防复发）──────
+# 批 5 同步曾漏改 API.md 版本头行（「版本：vX.Y · N tools / M 面」格式），
+# §22 既有正则只捕「当前 N 个 MCP tools」「N MCP tools?」，该行不匹配——版本头是对账盲区。
+# SSOT 仍为 tool-registry.ts 实际注册数；本段锚定 API.md 头部 20 行内的版本头行。
+echo "=== 22b. API.md 版本头工具数对账 ==="
+if [[ "${MCP_REG}" =~ ^[0-9]+$ ]] && [[ "${MCP_REG}" -gt 0 ]]; then
+  # 版本头格式「· N tools / M 面」；head -20 限定头部，避免误捕正文历史沿革叙述
+  API_HEAD_TOOLS=$(sed -n '1,20p' "${PROJECT_ROOT}/docs/API.md" 2>/dev/null | grep -oE '· [0-9]+ tools? /' | grep -oE '[0-9]+' | head -1 || true)
+  if [[ -z "${API_HEAD_TOOLS}" ]]; then
+    echo -e "  ${RED}✗ ${NC}API.md 头部未提取到版本头工具数（格式变化？）——锚点失效须人工修，不得静默跳过"
+    ERRORS=$((ERRORS + 1))
+  elif [[ "${API_HEAD_TOOLS}" != "${MCP_REG}" ]]; then
+    echo -e "  ${RED}✗ ${NC}API.md 版本头工具数漂移：声称 ${API_HEAD_TOOLS}，registry 实际 ${MCP_REG}——版本头行与 :3 总述行须同批同步"
+    ERRORS=$((ERRORS + 1))
+  else
+    echo -e "  ${GREEN}✓${NC} API.md 版本头工具数一致（${API_HEAD_TOOLS}）"
+    CHECKS=$((CHECKS + 1))
+  fi
+  # ── 版本号字段对账（v1.4.9 阶段六复跑发现）────────────────────────
+  # 本行「版本：vX.Y.Z（状态）· N tools / M 面」共三个字段：工具数（上一段对账）、
+  # 版本号、状态措辞。后两者长期无人对账——曾出现 v1.4.8 版本头带「（已发版）」字样
+  # 滞留至 1.4.9 待发版窗口（bump 不认此形态 + 状态措辞系上版机械沿用）。
+  API_HEAD_VER=$(sed -n '1,20p' "${PROJECT_ROOT}/docs/API.md" 2>/dev/null | grep -oE '版本：v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+  if [[ -z "${API_HEAD_VER}" ]]; then
+    echo -e "  ${RED}✗ ${NC}API.md 头部未提取到版本头版本号（格式变化？）——锚点失效须人工修，不得静默跳过"
+    ERRORS=$((ERRORS + 1))
+  elif [[ "${API_HEAD_VER}" != "${SSOT_VERSION}" ]]; then
+    echo -e "  ${RED}✗ ${NC}API.md 版本头版本号漂移：声称 v${API_HEAD_VER}，SSOT v${SSOT_VERSION}——bump 不认「版本：vX.Y.Z」形态，须手工同步"
+    ERRORS=$((ERRORS + 1))
+  else
+    echo -e "  ${GREEN}✓${NC} API.md 版本头版本号一致（v${API_HEAD_VER}）"
+    CHECKS=$((CHECKS + 1))
+  fi
+else
+  echo -e "  ${YELLOW}⚠${NC} registry 工具数不可用，API.md 版本头对账跳过"
+  WARNINGS=$((WARNINGS + 1))
+fi
 
 # ── 23. lock 与 workspace 同步（v1.4.0 发版 CI 4 红防复发 · checklist 维度 122）──
 # 新增/删除 workspace 包后 lock file 必须重新生成——本地 npm install 会静默补齐掩盖问题，
@@ -1207,11 +1624,17 @@ else
   node -e "
 const top = '${CHANGELOG_TOP_VERSION}'.slice(1).split('.').map(Number);
 const pkg = '${PKG_VERSION}'.slice(1).split('.').map(Number);
-// 顶版超前包版本最多 1 个 patch 位（开发完成待发版窗口）；超过 = 漂移
-const drift = (top[0]-pkg[0]) * 10000 + (top[1]-pkg[1]) * 100 + (top[2]-pkg[2]);
-if (drift > 1) { console.log('DRIFT:' + '${CHANGELOG_TOP_VERSION}' + '>' + '${PKG_VERSION}'); process.exit(1); }
+// 顶版超前包版本最多 1 个版本位（patch 或 minor/major 后继——开发完成待发版窗口）；
+// 超过一版 = 漂移。后继版本判定（非数值差）：minor 进位时 patch 归零（1.4.9→1.5.0）、
+// major 进位时 minor/patch 归零——数值差会把 minor 后继误算成 91 倍漂移。
+const isSucc = (t, p) =>
+  (t[0] === p[0] && t[1] === p[1] && t[2] === p[2]) ||               // 相等（发版后常态）
+  (t[0] === p[0] && t[1] === p[1] && t[2] === p[2] + 1) ||            // patch 后继
+  (t[0] === p[0] && t[1] === p[1] + 1 && t[2] === 0) ||               // minor 后继（patch 归零）
+  (t[0] === p[0] + 1 && t[1] === 0 && t[2] === 0);                    // major 后继（minor/patch 归零）
+if (!isSucc(top, pkg)) { console.log('DRIFT:' + '${CHANGELOG_TOP_VERSION}' + '>' + '${PKG_VERSION}'); process.exit(1); }
 console.log('OK:' + '${CHANGELOG_TOP_VERSION}' + ' vs ' + '${PKG_VERSION}');
-" 2>/dev/null && { echo -e "  ${GREEN}✓${NC} CHANGELOG 顶版与包版本差 ≤1 patch（待发版窗口合法）"; CHECKS=$((CHECKS + 1)); } || {
+" 2>/dev/null && { echo -e "  ${GREEN}✓${NC} CHANGELOG 顶版为包版本后继一版（patch/minor 待发版窗口合法）"; CHECKS=$((CHECKS + 1)); } || {
     echo -e "  ${RED}✗${NC} CHANGELOG 顶版 ${CHANGELOG_TOP_VERSION} 超前包版本 ${PKG_VERSION} 超一版——上一版发完未 bump 或跳版收录"
     echo -e "  ${RED}修复：bash tools/release/bump-version.sh <旧> <新> 后随代码同 commit${NC}"
     ERRORS=$((ERRORS + 1))
@@ -1219,11 +1642,92 @@ console.log('OK:' + '${CHANGELOG_TOP_VERSION}' + ' vs ' + '${PKG_VERSION}');
 fi
 echo ""
 
-echo "=== 25. 待发版窗口三态一致性（B1 防复发：CHANGELOG 收录 × README 状态行 × 安装 URL） ==="
+echo "=== 25. 待发版窗口三态一致性（B1 防复发：CHANGELOG 收录 × badge→CHANGELOG 动线 × 安装 URL） ==="
 # v1.4.1 fresh-eyes F01/B1：开发完成→发版之间，「tag/npm=旧版、代码=新版、文档=待发版标注」
-# 三处状态信号必须配套齐——CHANGELOG 收录了新版但 README 无状态行解释，或安装 URL 已指向
+# 三处状态信号必须配套齐——CHANGELOG 收录了新版但版本动向无解释，或安装 URL 已指向
 # 未打的 tag，都是三态缺角（陌生人视角必误报/安装链必断）。
+# v1.4.6 拍板（2026-09-07）：旧检查要求「README 头部待发版状态行」，与 06-doc-finalize.md
+# 「README 头部禁止版本状态播报行」铁律（2026-09-06 拍板）直接冲突——待发版窗口内门禁红灯
+# 但按铁律不能修，形成死锁。按铁律更新：版本动向不走状态行，走 badge→CHANGELOG 动线，
+# 本项检查相应改为「badge 与 CHANGELOG 链接同排存在」。
 # 前置条件：第 24 项已算出顶版 > SSOT（drift=1）才进入；非待发版窗口三态天然一致，跳过。
+# ── 已发版态判定（§26/§27 共用口径：tag/npm 任一达 SSOT = 已发版）──
+# 「待发版」标注的合法性由发版状态决定，两类窗口内活文档如实标注都不是漏翻：
+#   a) 开发态（tag/npm 均未达 SSOT）—— bump→tag 间合法中间态；
+#   b) 待发版窗口白名单（§27 F6 先例）—— 已发版态 + 下一版开发日志在位（下一版开发完成、
+#      CHANGELOG 尚未收录、ROADMAP 如实标「开发完成（待发版）」）。
+# 本判定上移供 §26/§27 共用，杜绝同一内容两套口径（检查 26 原不分窗口扫描曾在开发态
+# 与 §27「开发态标注合法」同内容对撞）。
+F6_RELEASED=false
+if git rev-parse "v${SSOT_VERSION}" >/dev/null 2>&1; then
+  F6_RELEASED=true
+  F6_WHY="git tag v${SSOT_VERSION} 已存在"
+fi
+F6_NPM_VER=$(npm view @sofagent/audit version 2>/dev/null | head -1 || true)
+if [ -n "$F6_NPM_VER" ] && [ "$F6_NPM_VER" = "$SSOT_VERSION" ]; then
+  F6_RELEASED=true
+  F6_WHY="npm registry @sofagent/audit@${SSOT_VERSION} 已发布${F6_WHY:+（${F6_WHY}）}"
+fi
+# 待发版窗口白名单条件（双判据缺一不可）：存在 docs/changelog/vX.Y/ 目录内 devlog
+# （版本号 = SSOT 的后继一版）且非空——防「上一版忘翻牌」借窗口逃检。
+# 后继候选三类：patch 后继（同目录段）/ minor 后继（patch 归零，目录段进位 v1.4→v1.5）/
+# major 后继（minor/patch 归零，目录段进位 v1→v2）——任一候选 devlog 在位即窗口开。
+# 不假设「patch 上限 9」等版本惯例：三个候选路径逐一探测，实际存在者为窗口对象。
+F6_NEXT_PATCH=""
+F6_NEXT_CANDIDATES=$(node -e "
+const p='${SSOT_VERSION}'.split('.').map(Number);
+const cands = [
+  [p[0], p[1], p[2]+1].join('.'),   // patch 后继
+  [p[0], p[1]+1, 0].join('.'),      // minor 后继
+  [p[0]+1, 0, 0].join('.')          // major 后继
+];
+console.log(cands.join(' '));" 2>/dev/null || echo "")
+for _cand in ${F6_NEXT_CANDIDATES}; do
+  _seg=$(echo "${_cand}" | cut -d. -f1-2)
+  if [ -s "${PROJECT_ROOT}/docs/changelog/v${_seg}/v${_cand}.md" ]; then
+    F6_NEXT_PATCH="${_cand}"
+    F6_DEVLOG_DIR="${PROJECT_ROOT}/docs/changelog/v${_seg}"
+    F6_NEXT_DEVLOG="${F6_DEVLOG_DIR}/v${_cand}.md"
+    break
+  fi
+done
+F6_WINDOW=false
+if [ -n "$F6_NEXT_PATCH" ] && [ -s "$F6_NEXT_DEVLOG" ]; then
+  F6_WINDOW=true
+fi
+# 🔴 26. 活文档「待发版」残留（v1.4.8 实锤 · 已发版态扫描）
+# 上面第 25 项只在**待发版窗口**（顶版 ≠ SSOT）生效 ⇒ **发版后窗口关闭，残留的「待发版」不再被查**。
+# v1.4.8 实锤：`docs/ROADMAP.md` 的版本规划表行写的是「📋 规划中/待发版」这类写法（与 CHANGELOG 顶版
+# 行、文档头「> vX.Y · 待发版」三种写法并列），发版翻转时只翻了后两者，ROADMAP 表行**漏翻**，
+# 而门禁因窗口关闭而不报。故本项扫活文档（排除 changelog/ 与 archive/，那里的「待发版」
+# 是历史当时的正确状态）；窗口语义与 §27 同口径——开发态/白名单窗口内「待发版」合法
+# （降级跳过，计 SKIPS 由发版 SOP「SKIP 数逐条裁决」步骤裁定），仅已发版态真扫描。
+echo "=== 26. 活文档「待发版」残留（已发版态扫描） ==="
+if $F6_RELEASED && ! $F6_WINDOW; then
+  # 排除两类**合法**的「待发版」出现：a) 索引规则自身的说明文字（CHANGELOG 头部「…附「待发版」状态标注」）；
+  # b) 描述本检查项本身的文档。判据：只认**状态位语境**的命中——行首 emoji 前缀（⏳/📋）或行首分隔位。
+  _DOCS_HIT=$(grep -rlE "待发版" --include="*.md" "${PROJECT_ROOT}/docs" 2>/dev/null \
+    | grep -v "/changelog/" | grep -v "/archive/" \
+    | xargs -r grep -lE "^- | ^> |[|]" 2>/dev/null || true)   # 只认行首状态位语境（表格行/引用行/列表行）
+  _STALE_ROOT=$(grep -nE "^- \*\*v[0-9.]+\*\* *— *(⏳|📋)? *待发版" "${PROJECT_ROOT}/CHANGELOG.md" 2>/dev/null || true)
+  if [ -n "${_DOCS_HIT}${_STALE_ROOT}" ]; then
+    echo -e "  ${RED}✗${NC} 活文档仍含「待发版」（发版后应已翻转为「已发版」）："
+    printf '%s\n' ${_DOCS_HIT} ${_STALE_ROOT} | sed 's/^/      /'
+    ERRORS=$((ERRORS + 1))
+  else
+    echo -e "  ${GREEN}✓${NC} 已发版态（${F6_WHY}），活文档无「待发版」残留（changelog/archive 的历史标注不计）"
+    CHECKS=$((CHECKS + 1))
+  fi
+elif $F6_RELEASED; then
+  echo -e "  ${YELLOW}⏭️${NC} 待发版窗口态：v${F6_NEXT_PATCH} 开发日志在位——活文档「待发版」为合法状态，跳过（与 §27 白名单同口径）"
+  SKIPS=$((SKIPS + 1))
+  CHECKS=$((CHECKS + 1))
+else
+  echo -e "  ${YELLOW}⏭️${NC} 开发态（tag/npm 均未达 v${SSOT_VERSION}）——活文档「待发版」为 bump→tag 间合法中间态，跳过（§27 同口径）"
+  SKIPS=$((SKIPS + 1))
+  CHECKS=$((CHECKS + 1))
+fi
+
 if [[ -n "${CHANGELOG_TOP_VERSION}" ]] && [[ "${CHANGELOG_TOP_VERSION}" != "${PKG_VERSION}" ]]; then
   # a. CHANGELOG 顶版行必须带「待发版」状态标注（索引规则自我一致：收录了就要标）
   if grep -m1 -F -- "- **${CHANGELOG_TOP_VERSION}**" "${PROJECT_ROOT}/CHANGELOG.md" 2>/dev/null | grep -q "待发版"; then
@@ -1233,19 +1737,20 @@ if [[ -n "${CHANGELOG_TOP_VERSION}" ]] && [[ "${CHANGELOG_TOP_VERSION}" != "${PK
     echo -e "  ${RED}✗${NC} CHANGELOG 顶版 ${CHANGELOG_TOP_VERSION} 已收录但缺「待发版」标注——索引规则与收录条目互斥（B1）"
     ERRORS=$((ERRORS + 1))
   fi
-  # b/c. 双语 README 头部状态行（中间态的对外解释，缺一即陌生人视角版本族误报源）
-  if head -20 "${PROJECT_ROOT}/README.md" 2>/dev/null | grep -q "待发版"; then
-    echo -e "  ${GREEN}✓${NC} README.md 头部状态行含「待发版」"
+  # b/c. 版本动向读者动线（铁律：不走状态行，走 badge→CHANGELOG）——badge（Version-vX.Y）
+  # 与 CHANGELOG 链接必须同排出现（读者循 badge 找到版本历史），双语各查一次。
+  if head -20 "${PROJECT_ROOT}/README.md" 2>/dev/null | grep -qE 'CHANGELOG\.md.*Version-v|Version-v.*CHANGELOG\.md'; then
+    echo -e "  ${GREEN}✓${NC} README.md 版本动线经 badge→CHANGELOG（状态行铁律合规）"
     CHECKS=$((CHECKS + 1))
   else
-    echo -e "  ${RED}✗${NC} README.md 头部 20 行内无「待发版」状态行——三态缺角（B1）"
+    echo -e "  ${RED}✗${NC} README.md 头部缺 badge→CHANGELOG 版本动线（铁律：版本动向走 badge 不走状态行）"
     ERRORS=$((ERRORS + 1))
   fi
-  if head -20 "${PROJECT_ROOT}/README.en.md" 2>/dev/null | grep -qiE "pending release|pre-release"; then
-    echo -e "  ${GREEN}✓${NC} README.en.md 头部状态行含 pending/pre-release"
+  if head -20 "${PROJECT_ROOT}/README.en.md" 2>/dev/null | grep -qE 'CHANGELOG\.md.*Version-v|Version-v.*CHANGELOG\.md'; then
+    echo -e "  ${GREEN}✓${NC} README.en.md 版本动线经 badge→CHANGELOG"
     CHECKS=$((CHECKS + 1))
   else
-    echo -e "  ${RED}✗${NC} README.en.md 头部 20 行内无 pending/pre-release 状态行——双语漂移（B1）"
+    echo -e "  ${RED}✗${NC} README.en.md 头部缺 badge→CHANGELOG 版本动线——双语动线漂移（B1）"
     ERRORS=$((ERRORS + 1))
   fi
   # d. 安装 URL refs/tags 不得指向未发布的新版 tag（指向未来 = 安装链断）
@@ -1281,12 +1786,18 @@ echo "=== 26. 工具数口径：全仓文档声称 vs registry SSOT（B8 漏改�
 # 口径：工具数变更时全仓一次全量清点——白名单内每个声称过工具数的文档，当前口径数字
 # （registry 实数）必须至少出现一次；历史双态表述（66/67 并列）不豁免「缺当前数」。
 # 白名单语义：这些文档实际写着工具数叙事，口径必须跟住；叙事删除时应有意识地移白名单，不静默漏。
+# v1.4.6（2026-09-07 拍板）：白名单由 6 处扩至 11 处活文档（补 SKILL/AGENTS.md、docs/API.md、docs/WIKI.md、GEMINI.md、CHANGELOG.md）——不再手数处数，以本白名单为唯一同步面。
 if [[ "${MCP_REG:-0}" =~ ^[0-9]+$ ]] && [[ "${MCP_REG}" -gt 0 ]]; then
   B8_DOC_MISS=0
-  for _td in SKILL/SKILL.md docs/HANDBOOK.md docs/ARCHITECTURE.md AGENTS.md README.md README.en.md; do
+  for _td in SKILL/SKILL.md docs/HANDBOOK.md docs/ARCHITECTURE.md AGENTS.md README.md README.en.md SKILL/AGENTS.md docs/API.md docs/WIKI.md GEMINI.md CHANGELOG.md; do
     [[ -f "${PROJECT_ROOT}/${_td}" ]] || continue
     # 口径：该文档任一含 tool 的行出现当前实数即算口径已跟（双态表述「66→67」天然含 67）
-    if grep -i "tool" "${PROJECT_ROOT}/${_td}" 2>/dev/null | grep -qE "(^|[^0-9])${MCP_REG}([^0-9]|$)"; then
+    # 🔴 管道形态防 SIGPIPE 假红：`grep -q` 命中即早退 → 首 grep 收 SIGPIPE(141) → 本脚本
+    # `set -o pipefail` 把整管道判 141 = 「口径缺失」假红（实测 CHANGELOG.md 16KB tool 行体量
+    # 必触发，小文件瞬间写完不触发——同为命中却一真一假）。改两段式：先落临时文件再判，
+    # 每段独立退出码，命中即真。
+    _b8_lines=$(grep -i "tool" "${PROJECT_ROOT}/${_td}" 2>/dev/null || true)
+    if printf '%s\n' "${_b8_lines}" | grep -qE "(^|[^0-9])${MCP_REG}([^0-9]|$)"; then
       echo -e "  ${GREEN}✓${NC} ${_td} 含当前口径 ${MCP_REG} tools"
       CHECKS=$((CHECKS + 1))
     else
@@ -1301,6 +1812,116 @@ else
 fi
 echo ""
 
+echo "=== 27. 发版状态门禁：tag/npm 已发但活文档仍标待发版（F6 · v1.4.5 T10） ==="
+# v1.4.5 (F6)：本地 tag 与 npm registry 任一已达 SSOT 版本 = 「已发版态」。
+# 此态下活文档（ROADMAP「现在在哪」节 / 当前版本行）仍写「待发版」即矛盾——
+# 发版 SOP 阶段十之后忘改状态会漏出去（v1.4.4 曾靠人工记忆）。
+# 历史冻结文档（docs/changelog/vX.Y/ 旧版日志）不在扫描面——只查活文档。
+# 已发版态判定与窗口白名单已在 §26 前上移为共用段（F6_RELEASED/F6_WINDOW），此处直接消费。
+
+if $F6_RELEASED; then
+  # 待发版窗口白名单（v1.4.8 批次 B）：已发版态 + 下一版开发日志存在 = 合法中间态
+  # （下一版开发完成、CHANGELOG 尚未收录、ROADMAP 如实标「开发完成（待发版）」）。
+  # 该窗口由 §25 的「CHANGELOG 顶版超前包版本 ≤1 patch」先例背书；F6 原判定只覆盖
+  # 「上一版发完、下一版未开发」语境，没跟上此窗口——误报实锤：v1.4.8 devlog 46 项
+  # 全勾 + ROADMAP 如实标注被拦。白名单条件（双判据缺一不可）：存在 docs/changelog/vX.Y/
+  # 目录（版本号 = SSOT + 1 patch）且目录内 devlog 非空——防「上一版忘翻牌」借窗口逃检。
+  if $F6_WINDOW; then
+    echo -e "  ${YELLOW}⏭️${NC} 待发版窗口态：v${F6_NEXT_PATCH} 开发日志在位（CHANGELOG 未收录）——ROADMAP「待发版」为合法状态，F6 断言降级跳过"
+    SKIPS=$((SKIPS + 1))
+    CHECKS=$((CHECKS + 1))
+  else
+  F6_PENDING_HITS=$(grep -nE '待发版' "${PROJECT_ROOT}/docs/ROADMAP.md" 2>/dev/null || true)
+  if [ -n "$F6_PENDING_HITS" ]; then
+    echo -e "  ${RED}✗${NC} 已发版态（${F6_WHY}）但 ROADMAP.md 仍有「待发版」标注——发版 SOP 阶段十后忘改状态："
+    echo "$F6_PENDING_HITS" | head -3 | sed 's/^/      /'
+    ERRORS=$((ERRORS + 1))
+  else
+    echo -e "  ${GREEN}✓${NC} 已发版态（${F6_WHY}），ROADMAP 无残留「待发版」标注"
+    CHECKS=$((CHECKS + 1))
+  fi
+  # F6 扩展（v1.4.6 前置 · fresh-eyes P1-1 防复发）：已发版态下，活文档头不得残留
+  # 「待发版」状态标记——发版翻转只覆盖「三件套」（WIKI 状态表/ROADMAP/HANDBOOK 速览），
+  # v1.4.5 漏 13 份、v1.4.6 又漏 8+2 份（措辞换成「定稿待发版」即双双失守）。扫描面 =
+  # docs/ 活文档（排除 changelog/archive——历史日志的「待发版」是当时正确状态，不报）。
+  # 设计理由（v1.4.7 批次 B 收口）：措辞变体不可穷举，门禁锚定「待发版」语义三字；
+  # 历史日志白名单靠排除 docs/changelog/ 与 docs/archive/ 目录实现，不依赖措辞。
+  F6_DOC_PENDING=$(find "${PROJECT_ROOT}/docs" \
+    -name '*.md' \
+    -not -path '*/changelog/*' \
+    -not -path '*/archive/*' \
+    -type f -print0 2>/dev/null \
+    | xargs -0 grep -lE '待发版' 2>/dev/null || true)
+  if [ -n "$F6_DOC_PENDING" ]; then
+    echo -e "  ${RED}✗${NC} 已发版态（${F6_WHY}）但以下活文档仍含「待发版」字样——发版翻转遗漏（F6 扩展·语义锚定）："
+    echo "$F6_DOC_PENDING" | sed "s#^#      #" | head -15
+    ERRORS=$((ERRORS + 1))
+  else
+    echo -e "  ${GREEN}✓${NC} 已发版态（${F6_WHY}），活文档无「待发版」残留"
+    CHECKS=$((CHECKS + 1))
+  fi
+  fi
+  # F6 子断言（v1.4.7 批次 B：版本头 SSOT 对齐）：活文档「版本头行」的版本号必须等于
+  # package.json version。版本头行形态 = 头部 8 行内的 `> v1.4.X · …`（发版状态头）或
+  # `> 版本：v1.4.X …`（版本声明头）。只匹配这两种元数据行——正文叙事性的版本引用
+  # （如「v1.4.1 块一定稿」「入口接线 v1.4.7 交付」前瞻）不属于发版状态头，不在此断言
+  # 范围（误伤叙事是设计缺陷，v1.4.6 API.md「版本：v1.4.5」滞后形态才是本断言要堵的）。
+  # 扫描面 = docs/ 活文档（排除 changelog/archive）+ 根级 SECURITY.md/CONTRIBUTING.md
+  # + tools/README.md。
+  F6_HDR_FILES=$(find "${PROJECT_ROOT}/docs" \
+    -name '*.md' \
+    -not -path '*/changelog/*' \
+    -not -path '*/archive/*' \
+    -type f 2>/dev/null; \
+    echo "${PROJECT_ROOT}/SECURITY.md"; \
+    echo "${PROJECT_ROOT}/CONTRIBUTING.md"; \
+    echo "${PROJECT_ROOT}/tools/README.md")
+  F6_HDR_MISMATCH=""
+  for _f in $F6_HDR_FILES; do
+    [ -f "$_f" ] || continue
+    _hdr_ver=$(head -8 "$_f" | grep -E "^> *v${SSOT_2SEG}\.[0-9]+ *·|^> *版本[：:] *v${SSOT_2SEG}\.[0-9]+" \
+      | grep -oE "v${SSOT_2SEG}\.[0-9]+" | head -1)
+    [ -n "$_hdr_ver" ] || continue
+    if [ "$_hdr_ver" != "v${SSOT_VERSION}" ]; then
+      F6_HDR_MISMATCH="${F6_HDR_MISMATCH}$(basename "$_f"):头标 ${_hdr_ver} ≠ SSOT v${SSOT_VERSION}
+"
+    fi
+  done
+  if [ -n "$F6_HDR_MISMATCH" ]; then
+    echo -e "  ${RED}✗${NC} 活文档版本头与 SSOT 漂移（F6 子断言·版本头 SSOT 对齐）："
+    echo "$F6_HDR_MISMATCH" | sed '/^$/d' | sed "s#^#      #"
+    ERRORS=$((ERRORS + 1))
+  else
+    echo -e "  ${GREEN}✓${NC} 活文档版本头全部对齐 SSOT v${SSOT_VERSION}"
+    CHECKS=$((CHECKS + 1))
+  fi
+  # 当前版本开发日志头「待发版」残留（docs/changelog/vX.Y/vX.Y.Z.md 头部状态行）——
+  # 历史日志的「待发版」是当时正确状态，只有当前 SSOT 版本的日志头需翻转。
+  F6_DEVLOG="${PROJECT_ROOT}/docs/changelog/v${SSOT_2SEG}/v${SSOT_VERSION}.md"
+  if [ -f "$F6_DEVLOG" ]; then
+    if head -10 "$F6_DEVLOG" 2>/dev/null | grep -qE '待发版'; then
+      echo -e "  ${RED}✗${NC} 已发版态（${F6_WHY}）但当前版本开发日志头仍标「待发版」：${F6_DEVLOG#"${PROJECT_ROOT}"/}"
+      ERRORS=$((ERRORS + 1))
+    else
+      echo -e "  ${GREEN}✓${NC} 已发版态，当前版本开发日志头无「待发版」残留"
+      CHECKS=$((CHECKS + 1))
+    fi
+  fi
+else
+  echo -e "  ${GREEN}✓${NC} 开发态（tag/npm 均未达 v${SSOT_VERSION}）——「待发版」标注合法，跳过"
+  CHECKS=$((CHECKS + 1))
+fi
+echo ""
+
+# ── 覆盖度行（v1.4.9 G-2② · 范式见 tools/check/lib/coverage-line.sh）──
+#   asserts = CHECKS + ERRORS（CHECKS 已含 WARN 项——report_warn 同时 ++CHECKS）
+#   covered = 仓内 tracked 文件数**上界口径**（本脚本各段扫描面跨 docs/SKILL/engine/根级
+#             多目录，无单一文件清单；上界非精确值，此处显式标注，勿当精确计数引用）
+#   skipped = 显式降级跳过项（§27 待发版窗口态等）——K>0 不阻断，但必须打印
+COVERED=$(git -C "${PROJECT_ROOT}" ls-files 2>/dev/null | wc -l | tr -d ' ')
+COVERED=${COVERED:-0}
+emit_coverage_line "check-version" "$((CHECKS + ERRORS))" "${COVERED}" "${SKIPS}"
+
 # ── 汇总 ──────────────────────────────────────────────────────
 echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${NC}"
 if [[ ${ERRORS} -eq 0 ]]; then
@@ -1309,6 +1930,9 @@ if [[ ${ERRORS} -eq 0 ]]; then
   echo -e "  检查通过: ${CHECKS}/${TOTAL} 项"
   if [[ ${WARNINGS} -gt 0 ]]; then
     echo -e "  ${YELLOW}⚠ ${WARNINGS} 项警告${NC}（--strict 模式会阻断）"
+  fi
+  if [[ ${SKIPS} -gt 0 ]]; then
+    echo -e "  ${YELLOW}⏭️ ${SKIPS} 项降级跳过${NC}（不阻断；发版 SOP「SKIP 数逐条裁决」步骤逐条裁定）"
   fi
   echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${NC}"
   if [[ "$STRICT" = true ]] && [[ ${WARNINGS} -gt 0 ]]; then

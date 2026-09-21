@@ -4,11 +4,15 @@
   "title": "Workflow 标准格式（v1.3.6 引擎接口外化 · 机器可读定义）",
   "description": "workflow 的公开标准格式——id/agent/task/depends_on 机器可读定义 + 审阅协议字段（merge_criteria/approver，GitHub 式协作底座）。单一事实源：container 校验与 workflow-parser 均走本 Schema。agent 字段支持任意节点类型（registry 查找 + agent-creation 兜底，对接 v1.3.2 动态解析链）。",
   "type": "object",
-  "required": ["workflow"],
+  "required": [
+    "workflow"
+  ],
   "properties": {
     "workflow": {
       "type": "object",
-      "required": ["nodes"],
+      "required": [
+        "nodes"
+      ],
       "properties": {
         "name": {
           "type": "string",
@@ -21,11 +25,13 @@
         "nodes": {
           "type": "array",
           "description": "节点列表（至少 1 个，上限由 parser 控制）",
-          "items": { "$ref": "#/definitions/workflowNode" }
+          "items": {
+            "$ref": "#/definitions/workflowNode"
+          }
         },
         "merge_criteria": {
           "$ref": "#/definitions/mergeCriteria",
-          "description": "审阅协议：什么证据算通过——机器可判定验收条件（复用 ⑨ define_acceptance 的 Benchmark 判定引擎结构）。三类可叠加：技术验收 / 业务审批规则 / 数据合规规则。审计引擎（git diff 硬证据）即执行器"
+          "description": "审阅协议：什么证据算通过——机器可判定验收条件（复用 ⑨ define_acceptance 的 Benchmark 判定结构）。三类可叠加：技术验收 / 业务审批规则 / 数据合规规则。审计模块（git diff 硬证据）即执行器"
         },
         "approver": {
           "$ref": "#/definitions/approver",
@@ -37,7 +43,11 @@
   "definitions": {
     "workflowNode": {
       "type": "object",
-      "required": ["id", "agent", "task"],
+      "required": [
+        "id",
+        "agent",
+        "task"
+      ],
       "properties": {
         "id": {
           "type": "string",
@@ -56,28 +66,84 @@
         },
         "depends_on": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "依赖的上游节点 id（必须无环、无悬空引用、无自依赖）"
         },
         "type": {
           "type": "string",
-          "enum": ["loop", "auto", "manual"],
-          "description": "节点类型（缺省 auto）：loop=循环引擎 / auto=一次性产出 / manual=人工节点（隐含 HITL）"
+          "enum": [
+            "loop",
+            "auto",
+            "manual"
+          ],
+          "description": "节点类型（缺省 auto）：loop=循环机制 / auto=一次性产出 / manual=人工节点（隐含 HITL）"
         },
         "hitl": {
           "type": "boolean",
           "description": "是否需要人工确认（type=manual 时隐含 true）"
+        },
+        "trigger": {
+          "type": "object",
+          "properties": {
+            "schedule": {
+              "type": "string",
+              "description": "定时触发周期——三档糖宏（@daily/@weekly/@monthly）或五段 cron（分 时 日 月 周）；非 cron 形态视为自然语言周期（如「每天早上九点」），由消费端解析。非法 cron 表达式在 schema-gate 拒绝"
+            }
+          },
+          "description": "节点级触发器（可选）——trigger.schedule 定时触发进 worklog 可溯源"
+        },
+        "visibility": {
+          "type": "string",
+          "enum": [
+            "open",
+            "private",
+            "result-only"
+          ],
+          "description": "节点级可见性（可选，缺省 open）：open=产出与过程公开 / private=仅 owner 可审（过程+产出均不进公开上下文）/ result-only=完成者不见底层数据（仅产出摘要公开）"
+        },
+        "modelPreference": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "description": "v1.4.8 第八章：节点级模型偏好绑定（可选）——provider/model/优先级；未配置走默认模型，偏好指向未注册模型时报错不静默降级（model-resolver 解析）",
+          "properties": {
+            "provider": {
+              "type": "string",
+              "description": "供应商标识（如 deepseek / glm / openai）"
+            },
+            "model": {
+              "type": "string",
+              "description": "模型名（注册表内名称）"
+            },
+            "priority": {
+              "type": "string",
+              "enum": [
+                "preferred",
+                "required"
+              ],
+              "description": "优先级：preferred（可用则用）/ required（不可用即报错）"
+            }
+          },
+          "required": [
+            "model"
+          ],
+          "additionalProperties": false
         }
       }
     },
     "mergeCriteria": {
       "type": "array",
       "description": "可组合的「组织宪法」——三类可叠加验收条件",
-      "items": { "$ref": "#/definitions/mergeCriterion" }
+      "items": {
+        "$ref": "#/definitions/mergeCriterion"
+      }
     },
     "mergeCriterion": {
       "type": "object",
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "properties": {
         "kind": {
           "type": "string",
@@ -89,7 +155,7 @@
             "business_approval",
             "data_compliance"
           ],
-          "description": "验收条件类型：前 4 类=技术验收（Benchmark 判定引擎结构）；business_approval=业务审批规则（如「财务节点产出必须 CFO 批准」）；data_compliance=数据合规规则（如「涉及用户数据必须 DPO 签字」）"
+          "description": "验收条件类型：前 4 类=技术验收（Benchmark 判定结构）；business_approval=业务审批规则（如「财务节点产出必须 CFO 批准」）；data_compliance=数据合规规则（如「涉及用户数据必须 DPO 签字」）"
         },
         "detail": {
           "type": "string",
@@ -115,7 +181,9 @@
     },
     "approver": {
       "type": "object",
-      "required": ["id"],
+      "required": [
+        "id"
+      ],
       "properties": {
         "id": {
           "type": "string",
@@ -124,7 +192,11 @@
         },
         "kind": {
           "type": "string",
-          "enum": ["human", "role", "agent"],
+          "enum": [
+            "human",
+            "role",
+            "agent"
+          ],
           "description": "审阅者类型（缺省 human——保守默认对齐 promote_ab 强制人审语义）"
         },
         "required": {

@@ -1,6 +1,6 @@
 // ============================================================
 // snapshot-helpers.ts · 快照辅助函数（人类可读封装）
-// v1.4.3 从 @sofagent/daemon 迁移至 @sofagent/core
+// v1.5.0 从 @sofagent/daemon 迁移至 @sofagent/core
 //
 // 这三个函数是对 isomorphic-git.ts 底层原语的人类可读封装。
 // 迁移目的：消除 audit↔daemon optional 循环依赖。
@@ -26,6 +26,11 @@ export interface SnapshotInfo {
 
 /**
  * 审计通过后自动创建快照
+ *
+ * 🔍 主链核对结论（v1.4.7 批次 G-3）：本函数为预留封装——「审计后自动快照」的
+ * 生产主链在 @sofagent/audit 的 CLI 完成路径内联实现（createShadowRepo +
+ * commitSnapshot 直调，PASS 与拦截态都存快照），不经本函数。保留原因：@public
+ * API 面（daemon/ core/ 双 re-export 链）+ 外部集成者可用的人类可读封装。
  *
  * @param projectDir 项目根目录
  * @returns 新快照的 SHA，或 null（无变更）

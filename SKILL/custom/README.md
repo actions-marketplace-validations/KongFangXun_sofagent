@@ -21,7 +21,7 @@ sofagent 升级时会把 `SKILL.md` / `harness/` / `agents/` 全部覆盖为最�
 | **Agent 行为规则追加** | ✅ `custom/` | "commit message 必须带工单号" |
 | **业务流程约束** | ❌ `.sofagent/fde.md` | "每个 PR 要等 5 分钟再合" |
 | **审计规则开关** | ❌ `.sofagent/config.yml` | "关闭 A3 越界检查" |
-| **知识库内容** | ❌ `.sofagent/knowledge/` | "公司 API 文档摘要" |
+| **知识库内容** | ❌ `~/.sofagent/data/knowledge/` | "公司 API 文档摘要" |
 | **代码 / 脚本变更** | ❌ Git 仓库 | "给 rules 包加一条新规则" |
 | **LOOP 自迭代沉淀** | ❌ `.sofagent/` + Git | LOOP 写的代码进 Git commit，经验进 knowledge/ |
 
@@ -37,7 +37,7 @@ custom/ 里的 `.md` 文件是**文字规则**，被 Agent 当 prompt 加载。�
 |------|------|---------|
 | **企业 IT / FDE 运维** | 写 | FDE 离场后，企业想微调行为规则 |
 | **开发者** | 写 | 个人定制 Sub Agent 约束 |
-| **Agent 运行时** | 读 | 每次启动时加载引擎层 → 再加载 custom/ |
+| **Agent 运行时** | 读 | 每次启动时加载约束层 → 再加载 custom/ |
 | **Agent 自己** | ❌ 不写 | Agent 读 custom/ 但不写——Agent 不能自我修改行为规则 |
 
 ---
@@ -61,7 +61,7 @@ custom/ 里的 `.md` 文件是**文字规则**，被 Agent 当 prompt 加载。�
 
 ```
 Agent 启动时加载顺序：
-  ① 引擎层（官方维护，升级时覆盖）
+  ① 约束层（官方维护，升级时覆盖）
      SKILL.md → harness/*.md → agents/*/SKILL.md
   ② 用户层（你维护，升级时不动）
      custom/*-overrides.md ← 你写的规则追加在这里
@@ -69,7 +69,7 @@ Agent 启动时加载顺序：
 
 后加载 = 优先级更高。你的规则**追加**到官方规则后面，不是替换。官方说"commit 要描述清楚"，你在 custom/ 写"commit 还要带工单号"——Agent 两条都遵守。
 
-> ✅ **当前状态（v1.2.1 已落地）**：加载链已接通——`SKILL.md` 加载链段落已声明 custom/ 用户层；Sub Agent 由 `buildConstrainedSystemPrompt()` 自动注入 `{SOFAGENT_DATA}/custom/*-overrides.md`（按文件名排序，每篇截取前 2000 字符，最多 4 篇）。你只需按命名表新增文件，无需手动拼接 prompt。
+> ✅ **当前状态**：加载链已接通——`SKILL.md` 加载链段落已声明 custom/ 用户层；Sub Agent 由 `buildConstrainedSystemPrompt()` 自动注入 `{SOFAGENT_DATA}/custom/*-overrides.md`（按文件名排序，每篇截取前 2000 字符，最多 4 篇）。你只需按命名表新增文件，无需手动拼接 prompt。
 
 ---
 
@@ -77,7 +77,7 @@ Agent 启动时加载顺序：
 
 `bash install.sh` 升级 sofagent 时：
 
-| 策略 | 官方引擎层 | 你的 custom/ |
+| 策略 | 约束层（官方） | 你的 custom/ |
 |------|----------|------------|
 | **安全升级**（默认） | 覆盖为最新版 | **不动** ← 你的定制保留 |
 | **强制覆盖**（`--force`） | 覆盖 | **也覆盖** ← 恢复官方默认 |
@@ -108,7 +108,7 @@ Agent 启动时加载顺序：
 | 有冲突 | 生成 `.merge-conflict` 文件，保留双方内容（`<<<<<<<` / `=======` / `>>>>>>>` 标记），**不覆盖原始文件** |
 | 合并失败 | 原始文件不动，输出 `[sofagent] 合并冲突：手动处理 custom/*.merge-conflict` |
 
-> ✅ **当前状态（v1.2.1 已落地）**：`file-deploy.sh` 已实现三策略——安全升级跳过 custom/、`--force` 交互确认 + 备份覆盖、`--merge` 三路合并（冲突生成 `.merge-conflict`，原始文件不动）。安装时自动创建 `skills/sofagent/custom/` 与 `{SOFAGENT_DATA}/custom/` 两处目录。
+> ✅ **当前状态**：`file-deploy.sh` 已实现三策略——安全升级跳过 custom/、`--force` 交互确认 + 备份覆盖、`--merge` 三路合并（冲突生成 `.merge-conflict`，原始文件不动）。安装时自动创建 `skills/sofagent/custom/` 与 `{SOFAGENT_DATA}/custom/` 两处目录。
 
 ---
 
