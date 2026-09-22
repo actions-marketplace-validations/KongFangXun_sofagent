@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bootstrap.sh · sofagent 一行安装入口（装在企业跑 AI 节点的设备上）
-# 窗口态纪律：钉值维持上一已发版 tag 值（与 INSTALL_URL 同 tag 自洽），CHANGELOG ⏳ 待发版标注 + checklist 维度 130 窗口态分支消红；v1.4.9 哈希在阶段九打 tag 时回填。install.sh 现约 1601 行。
+# 窗口态纪律：钉值维持上一已发版 tag 值（与 INSTALL_URL 同 tag 自洽），CHANGELOG ⏳ 待发版标注 + checklist 维度 130 窗口态分支消红；v1.5.1 哈希在阶段九打 tag 时回填。install.sh 现约 1630 行。
 # 用法：curl -fsSL https://raw.githubusercontent.com/KongFangXun/sofagent/refs/tags/v1.5.0/bootstrap.sh -o bootstrap.sh && bash bootstrap.sh
 # 离线：./bootstrap.sh --local /path/to/install.sh
 # 透传：curl ... | bash -s -- --base-only
@@ -127,7 +127,7 @@ fi
 # --local 模式 TMP_FILE 为空，set -e 下条件为假会触发 exit 1，改用 if
 if [[ -n "$TMP_FILE" ]]; then rm -rf "$TMP_DIR"; fi
 if [ "$INSTALL_RC" -ne 0 ]; then
-  echo "❌ sofagent 安装失败（exit $INSTALL_RC）——请截图此信息到 GitHub Issues（github.com/KongFangXun/sofagent/issues）"
+  echo "❌ sofagent 安装失败（exit ${INSTALL_RC}）——请截图此信息到 GitHub Issues（github.com/KongFangXun/sofagent/issues）"
   exit "$INSTALL_RC"
 fi
 echo "✅ bootstrap 完成"

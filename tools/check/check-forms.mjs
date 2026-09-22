@@ -177,7 +177,11 @@ const MIN_CHAPTERS = 30; // 实测基线 6 文件 / 38 章
 
 // A2 排除面（无交付面 ⇒ 不要求标注）：固定标题两个；**指针存根章由 isPointerStub
 // （章体判据）另行豁免**——这里刻意不按标题形态豁免，理由见 isPointerStub 处注释。
+// Release Notes / Install 段是面向用户的发布说明复述面（阶段六定稿项），非交付章——
+// 硬打形态标注会污染 A7 形态计数对账（非功能 pin），故入排除面（标题带版本号后缀，用前缀匹配）。
+const SKIP_TITLE_PREFIXES = ['Release Notes', '⚡ Install'];
 const SKIP_TITLES = new Set(['定位', '与后续版本的依赖']);
+const isSkippedTitle = (title) => SKIP_TITLES.has(title) || SKIP_TITLE_PREFIXES.some((p) => title.startsWith(p));
 // A8 判定面（**宽**）：标题里出现标记 ⇒ 必须校验其目标。
 // 与 A2 的豁免面**解耦**是硬要求：两面共用一个谓词时，「标记写在末尾括注内 / 括注外」
 // 会决定它是否被校验——同一个不存在的版本号写括注内判红、写括注外完全免检（实测 P-d）。
@@ -336,7 +340,7 @@ const DECLARED_COUNT_PATTERNS = [
 // 漏登记会被下面两条断言当场抓出，不会静默放行。
 const EXPECTED_LABELS = {
   'v1.5.0': ['主干', '插件', '非功能', '通道成分'],
-  'v1.5.1': ['主干', '通道', '通道成分'],
+  'v1.5.1': ['主干', '通道', '通道成分', '非功能'],
   'v1.5.2': ['主干', '非功能', '通道成分'],
   'v1.5.3': ['主干', '通道', '非功能'],
   'v1.5.4': ['主干', '非功能', '通道成分', '外部成分'],
@@ -354,7 +358,7 @@ const EXPECTED_LABELS = {
 // 登记纪律同 EXPECTED_LABELS：新增版本 / 新增声明 / 计数变化都必须同批更新本表。
 const EXPECTED_COUNTS = {
   'v1.5.0': { 主干: 5, 插件: 1, 非功能: 3, 通道成分: 1 },
-  'v1.5.1': { 主干: 5, 通道: 3, 通道成分: 1 },
+  'v1.5.1': { 主干: 7, 通道: 3, 通道成分: 1, 非功能: 2 },
   'v1.5.2': { 主干: 7, 非功能: 1, 通道成分: 1 },
   'v1.5.3': { 主干: 5, 通道: 1, 非功能: 1 },
   'v1.5.4': { 主干: 5, 非功能: 1, 通道成分: 1, 外部成分: 1 },
@@ -555,7 +559,7 @@ function collectChapters(relFile) {
   const chapters = [];
   const pointers = [];
   headings.forEach((h, k) => {
-    if (SKIP_TITLES.has(h.title)) return;
+    if (isSkippedTitle(h.title)) return;
     const bodyEnd = k + 1 < headings.length ? headings[k + 1].index : lines.length;
     const bodyLines = lines.slice(h.index + 1, bodyEnd);
 
