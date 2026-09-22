@@ -124,6 +124,14 @@ daemon Ingest（自动知识提取）+ loop-evaluate Lint（自动体检）把�
 
 ## 二、平台与兼容性局限
 
+### 📦 v1.5.1：`npm i -g sofagent` 全新安装失败（v1.5.2 修复）
+
+上游依赖的传递版本解析问题导致 npm 全新安装失败（`install.sh` 安装路径与 `@sofagent/audit` 直装不受影响，可正常使用）。修复已进入主干，v1.5.2 发布后恢复。
+
+### 📦 v1.5.1：OpenClaw rollback 插件被 ClawHub 标记 suspicious（v1.5.2 消除）
+
+平台安全扫描对 1.5.1 版 rollback 插件的启发式标记（源于一项配置读取缺陷，功能不受影响，不影响安装使用）。v1.5.2 重发后消除。
+
 ### 🐚 B1 数据初始化依赖 bash
 
 SKILL.md B1 步用 bash heredoc 创建 `~/.sofagent/data/` 数据目录。Windows 或受限沙盒环境可能没有 bash。降级路径已内置：bash 不可用时 Agent 降级为逐条 `mkdir` + Write 工具创建。
