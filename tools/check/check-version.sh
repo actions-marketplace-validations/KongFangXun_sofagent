@@ -196,8 +196,12 @@ rhythm_dump() {
     const rhythm = spec.rhythm || {};
     const pkgs = spec.packages || {};
     const asPath = (e) => (typeof e === "string" ? e : (e && e.path) || "");
-    for (const name of rhythm.sync || []) {
-      const p = (pkgs[name] && pkgs[name].path) || "engine/" + name;
+    for (const entry of rhythm.sync || []) {
+      // v1.5.2 章九二轮：sync 条目支持显式 { name, path } 形态（与下方 independent/detached 的
+      //   asPath 用法同构）——供「随主线同版发布、但目录不在 engine/<name> 且未登记进 packages: 段」
+      //   的包（如 engine/dsh-plugins/plugin-kit）声明精确路径，§9b/§9e/§12b 三个消费者无需改动。
+      const name = typeof entry === "string" ? entry : (entry && entry.name) || "";
+      const p = (entry && entry.path) || (pkgs[name] && pkgs[name].path) || "engine/" + name;
       console.log(["SYNC", name, p].join("\t"));
     }
     for (const seg of ["independent", "detached"]) {
@@ -526,9 +530,12 @@ echo ""
 #   而被 `-d` 静默跳过，且漏列两个真实存在的包）——已随本批把该注释修正为真实值；
 #   v1.5.1 F7 起 §1/§2 **不再持有包清单**，改为从 `engine/*/src` 结构派生（实测 13 项），
 #   因此本节注释不再需要维护「循环项数」这个数字（它由文件系统决定，不可能再漂移）。
-#   rhythm.sync 现为 15 包 = 原 11 包 + rules（原漏登记）+ umbrella（第 13 个 engine 包）
-#   + engine/hooks/sofagent-load-chain（build 序列末位）+ train（第 7 批拆包），五者实测同为 SSOT 版本。
-# 覆盖不变量（rhythm ⊇ workspace 26 项）由 §9e 断言；清单声明了却不存在的包在此 fail-loud。
+#   rhythm.sync 现为 16 包 = 原 11 包 + rules（原漏登记）+ umbrella（第 13 个 engine 包）
+#   + engine/hooks/sofagent-load-chain（build 序列末位）+ train（第 7 批拆包）
+#   + engine/dsh-plugins/plugin-kit（v1.5.2 章九二轮：DSH 适配层基座，只有 npm 一条通道、
+#     随主线同版发布 ⇒ 归 sync；目录不在 engine/<name> 且未登记 packages: 段 ⇒ sync 条目显式给 path），
+#   上述实测同为 SSOT 版本。
+# 覆盖不变量（rhythm ⊇ workspace 27 项，含 engine/dsh-plugins/plugin-kit）由 §9e 断言；清单声明了却不存在的包在此 fail-loud。
 echo -e "${BOLD}── [9/14] 子包版本号一致性 ──${NC}"
 RHYTHM_SYNC_9B="$(rhythm_dump | awk -F'\t' '$1=="SYNC"{print $2"\t"$3}')"
 if [[ -z "${RHYTHM_SYNC_9B}" ]]; then
@@ -590,7 +597,7 @@ fi
 echo ""
 
 # ── 9e. rhythm 段覆盖全部 workspace 项（防漏登记 · v1.4.8 第七章/第〇批）──
-# 不变量：rhythm.sync ∪ independent ∪ detached 必须覆盖**全部 workspace 项**（实为 26 项）。
+# 不变量：rhythm.sync ∪ independent ∪ detached 必须覆盖**全部 workspace 项**（实为 27 项，含 engine/dsh-plugins/plugin-kit）。
 # 枚举源：package.json 的 workspaces 字段——**不得**用 `ls -d engine/*/`
 #   （那只得 19 个目录，漏 10 项：engine/hooks/sofagent-load-chain + 插件家族更深一层目录）。
 # 命中规则：sync 段按「包路径精确相等」命中；independent / detached 段按「路径 glob」命中。
@@ -619,7 +626,7 @@ else
     if [[ "${covered}" == "false" ]]; then
       while IFS= read -r glob; do
         [[ -z "${glob}" ]] && continue
-        # shellcheck disable=SC2053  # 故意不给 RHS 加引号：这里要的正是 glob 匹配（如 engine/dsh-plugins/*）
+        # shellcheck disable=SC2053  # 故意不给 RHS 加引号：这里要的正是 glob 匹配（如 engine/dsh-plugins/cordis-plugin-sofagent*）
         if [[ "${ws}" == ${glob} ]]; then covered=true; break; fi
       done <<< "${GLOBS_9E}"
     fi
@@ -1896,9 +1903,16 @@ echo "=== 26. 工具数口径：全仓文档声称 vs registry SSOT（B8 漏改�
 # （registry 实数）必须至少出现一次；历史双态表述（66/67 并列）不豁免「缺当前数」。
 # 白名单语义：这些文档实际写着工具数叙事，口径必须跟住；叙事删除时应有意识地移白名单，不静默漏。
 # v1.4.6（2026-09-07 拍板）：白名单由 6 处扩至 11 处活文档（补 SKILL/AGENTS.md、docs/API.md、docs/WIKI.md、GEMINI.md、CHANGELOG.md）——不再手数处数，以本白名单为唯一同步面。
+# v1.5.2（工具数覆盖洞 3 批）：补 engine/umbrella/README.md（12 处）——包级 README 原在 §15 的
+#   `^engine/` 排除面外、又不在本白名单内，两道门禁都不看它（实测其工具数叙事与 registry 一致，
+#   但此前无守卫）。仅收「含当前全局口径」者：engine/mcp/README.md 的唯一工具数行是**分面**计数
+#   （audit 专职面 9 tools），本项判据要求出现**全局**口径，收它即假红，故不在白名单（分面计数
+#   另需角色轴断言，见当日排查报告）。
+# 🔴 已知盲区（与 check-docs §15 同步登记）：全仓工具数正则只覆盖「数字在词前」形态，不覆盖
+#   TOOLS=N / 工具数=N（数字在词后）；受跟踪面活文档该形态当前零命中，出现时须同批扩正则。
 if [[ "${MCP_REG:-0}" =~ ^[0-9]+$ ]] && [[ "${MCP_REG}" -gt 0 ]]; then
   B8_DOC_MISS=0
-  for _td in SKILL/SKILL.md docs/HANDBOOK.md docs/ARCHITECTURE.md AGENTS.md README.md README.en.md SKILL/AGENTS.md docs/API.md docs/WIKI.md GEMINI.md CHANGELOG.md; do
+  for _td in SKILL/SKILL.md docs/HANDBOOK.md docs/ARCHITECTURE.md AGENTS.md README.md README.en.md SKILL/AGENTS.md docs/API.md docs/WIKI.md GEMINI.md CHANGELOG.md engine/umbrella/README.md; do
     [[ -f "${PROJECT_ROOT}/${_td}" ]] || continue
     # 口径：该文档任一含 tool 的行出现当前实数即算口径已跟（双态表述「66→67」天然含 67）
     # 🔴 管道形态防 SIGPIPE 假红：`grep -q` 命中即早退 → 首 grep 收 SIGPIPE(141) → 本脚本
@@ -1918,6 +1932,87 @@ if [[ "${MCP_REG:-0}" =~ ^[0-9]+$ ]] && [[ "${MCP_REG}" -gt 0 ]]; then
 else
   echo -e "  ${YELLOW}⚠${NC} tool-registry.ts 工具数解析失败，跳过全仓口径核对（第 22 项已报原因）"
   WARNINGS=$((WARNINGS + 1))
+fi
+
+# ── 26b. 规划中 devlog 工具数逐处对账（工具数覆盖洞 2 · v1.5.2 批）──────────────
+# 门禁目的：§26 B8 是「至少出现一次」语义，管不到 changelog 域；§15 又整域排除 docs/changelog。
+# 两道门禁之间，规划中（未发版）devlog 是当前口径的**承诺面**（发版时会成为事实），却无人逐处
+# 对账——v2.0.0.md「其余 103 tools」与 v1.5.5.md「TOOLS=104」两处漂移正是漏在此缝里。
+# 设计（主理人批准 · 方案 C）：两级分闸 + 行级判定。
+#   闸 1（文件级）：boundary 取根 package.json 的 version 字段作 SSOT（🔴 禁由 ROADMAP 反推）；
+#     版本 > boundary 的 changelog devlog 进闸 2；<= boundary 的已发版历史段整文件排除——
+#     后者是冻结的历史（实测 <=1.5.1 共 52 文件含 104 条合法历史值，整域纳入即假红洪泛）。
+#   闸 2（行级）：命中行若为「历史记录行」且数字 ≠ registry 实数 → 判红。行级判据
+#     **直接移植 check-docs §15 现有四谓词**（演进链历史行/历史清单行/前缀限定面/装置面自引用），
+#     不新造逻辑；另加谓词 5a/5b（方案 C，收敛 v2.0.0.md B 表的 9 条分面计数）：
+#     5a 括注形态：claim 后紧跟 ）/) → 「能力簇（N tools）」表格逐簇计数；
+#     5b 余量短语：claim 前 6 字符内含 其余|剩余 → 减面派生子集（如「其余 101」= 105−浏览器 4）。
+# 🔴 已知盲区（硬要求一登记，与 form B 同一纪律）：
+#   - 5a 豁免的是**括注形态**而非内容——planning devlog 内若出现括注形态的**全局**声称
+#     （（本仓 N tools））同样会被豁免，属已知取舍；分面/簇计数轴的精确断言归属将来的
+#     角色轴/能力簇轴门禁（洞 3 同判据注释）。
+#   - 5b 豁免的数字是减面派生值非全局口径，同上归属分面轴。
+#   - 本节正则与 §15 同源：不覆盖 TOOLS=N / 工具数=N（数字在词后）形态，出现时须同批扩正则。
+# 落地实测（2026-09-21）：13 个 planning 文件 · ≠105 命中 13 条 → 四谓词收敛至 9 → +5a/5b 收敛至 0。
+echo "=== 26b. 规划中 devlog 工具数逐处对账（boundary > v$(node -e 'console.log(require("./package.json").version)')）==="
+PDL_SCAN=$(node -e "
+const fs = require('fs');
+const path = require('path');
+// 闸 1：boundary = 根 package.json version（SSOT；🔴 禁由 ROADMAP 反推）
+const boundary = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+const bp = boundary.split('.').map(Number);
+const isPlanning = v => { const p = v.split('.').map(Number); for (let i = 0; i < 3; i++) { const a = p[i] || 0, b = bp[i] || 0; if (a !== b) return a > b; } return false; };
+const regSrc = fs.readFileSync('engine/mcp/src/tool-registry.ts', 'utf8');
+const regCount = new Set([...regSrc.matchAll(/name:\s*'([a-z_]+)',/g)].map(m => m[1])).size;
+const results = [];
+let planningCount = 0;
+function walk(dir) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) { walk(p); continue; }
+    if (!p.endsWith('.md')) continue;
+    const vm = p.match(/v(\d+\.\d+(?:\.\d+)?)\.md$/);
+    if (!vm || !isPlanning(vm[1])) continue;  // 闸 1：已发版（<= boundary）整文件排除
+    planningCount++;
+    const lines = fs.readFileSync(p, 'utf8').split('\n');
+    lines.forEach((line, i) => {
+      // 词形与 check-docs §15 同源（含 token 边界约束——修正边界非收窄词形）
+      for (const _mm of line.matchAll(/(?<![A-Za-z0-9_.-])([0-9]+)\s*(?:个\s*)?(?:MCP\s*)?(?:tools?|工具)(?!包)/g)) {
+        const claim = _mm[0];
+        const _idx = _mm.index;
+        const n = parseInt(_mm[1], 10);
+        // 谓词 1（§15 移植）：演进链历史行（含 vX.Y 且含 后为/起/新增/→）
+        if (/v[0-9]+\.[0-9]/.test(line) && /(后为|起|新增|→)/.test(line)) continue;
+        // 谓词 2（§15 移植）：历史清单行（CHANGELOG 版本行 / 版本表行 / 日期流水行）
+        if (/^\s*-\s*\*\*v[0-9.]+\*\*/.test(line) || /^\s*\|\s*\*\*v[0-9.]+/.test(line) || /^\s*\|\s*20[0-9]{2}-[0-9]{2}-[0-9]{2}/.test(line)) continue;
+        // 谓词 3（§15 移植）：带前缀限定的非全局声称
+        if (/训练|数组|监控|模块|Browser/.test(line.slice(Math.max(0, _idx - 12), _idx))) continue;
+        // 谓词 4（§15 移植）：装置面自引用与反例引用
+        if (/\bgrep\b|check-version\.sh|check-docs\.sh|FAIL|反例/.test(line)) continue;
+        // 谓词 5a（方案 C）：括注形态——claim 后紧跟 ）/) → 表格逐簇分面计数
+        if (/[）)]/.test(line.slice(_idx + claim.length, _idx + claim.length + 1))) continue;
+        // 谓词 5b（方案 C）：余量短语——claim 前 6 字符内含 其余|剩余 → 减面派生子集
+        if (/(其余|剩余)/.test(line.slice(Math.max(0, _idx - 6), _idx))) continue;
+        if (n !== regCount) results.push(p + ':' + (i + 1) + ' 声称 ' + n + ' ≠ registry ' + regCount + '（规划中 devlog）｜ ' + line.trim().slice(0, 80));
+      }
+    });
+  }
+}
+walk('docs/changelog');
+console.error('PDL_N=' + planningCount);
+console.log(results.length ? results.join('\n') : '');
+" 2>/tmp/pdl-reg.log)
+PDL_REG_N=$(grep -oE 'PDL_N=[0-9]+' /tmp/pdl-reg.log 2>/dev/null | grep -oE '[0-9]+' || true)
+PDL_REG_N=${PDL_REG_N:--1}
+if [ "${PDL_REG_N}" -lt 0 ]; then
+  CHECKS=$((CHECKS + 1)); echo -e "  ${RED}❌${NC} 规划域解析失败（boundary/package.json 读取异常），对账无法进行"
+  ERRORS=$((ERRORS + 1))
+elif [ -n "${PDL_SCAN}" ]; then
+  CHECKS=$((CHECKS + 1)); echo -e "  ${RED}❌${NC} 规划中（未发版）devlog 工具数声称漂移："
+  echo "${PDL_SCAN}" | sed 's/^/    /'
+  ERRORS=$((ERRORS + 1))
+else
+  CHECKS=$((CHECKS + 1)); echo -e "  ${GREEN}✓${NC} ${PDL_REG_N} 个规划中 devlog 工具数声称与 registry 全部一致（逐处对账）"
 fi
 echo ""
 
@@ -2019,6 +2114,54 @@ if $F6_RELEASED; then
 else
   echo -e "  ${GREEN}✓${NC} 开发态（tag/npm 均未达 v${SSOT_VERSION}）——「待发版」标注合法，跳过"
   CHECKS=$((CHECKS + 1))
+fi
+echo ""
+
+echo "=== 28. 单 minor 补丁位上限（vX.Y.0–vX.Y.9，第 10 个位该开新 minor） ==="
+# 背景：版本方案定为「一个 minor 十个位」——vX.Y.0 是主线交付，vX.Y.1–vX.Y.9 是同 minor
+# 内的补丁位。旧方案曾把十余个细版塞进同一个 minor（v1.5.2 … v1.5.17），结果是版本号
+# 越编越长、语义越来越糊：外部只看到 v1.5.15，读不出它离 v1.5.0 有多远。
+# 本断言锚定「补丁段 ≥ 两位数字」= 溢出（vX.Y.10 起），因为一位数才在 0–9 区间内。
+#   溢出 → 该开新 minor（vX.(Y+1).0）；**不得**续编 vX.Y.10 —— 补丁位越界会把
+#   「第几个补丁」和「第几个 minor」压成同一维度，读者无法从号上判远近。
+# 扫描面（只查**版本号本身出现的位置**，不查散文——行文里的「旧 v1.5.10」是撤并溯源，
+# 属历史事实而非方案里的版本位，扫进来会把刚做完的收编误判成溢出）:
+#   a) docs/ROADMAP.md 各版本表的**版本列**（行首 `| **vX.Y.Z**` 第一格）
+#   b) docs/changelog/ 下的版本目录名与日志文件名（vX.Y / vX.Y.Z.md）
+# 注：本条与「地基期颗粒度收编」互为见证——旧方案把 v1.5.10–v1.5.17 挤在同一 minor，
+# 本条落地时正好报出这 8 个位；收编把对应文件与行删掉后本条转绿。
+# 反例按需自查：把 v1.5.10 写进 ROADMAP 版本列即本段报错（下方自检已确证非空网）。
+PATCH_OVERFLOW_RE='\bv[0-9]+\.[0-9]+\.[0-9]{2,}\b'
+# 自检（正/反例）：v1.5.9 放行、v1.5.10 拦截——防止正则写成永不命中的空网。
+_PATCH_SELFTEST=$(printf '%s\n' \
+  '| **v1.5.9** | 📋 规划中 |' \
+  '| **v1.5.10** | 📋 规划中 |' \
+  | grep -Eo "$PATCH_OVERFLOW_RE" || true)
+if [ "$_PATCH_SELFTEST" != "v1.5.10" ]; then
+  echo -e "  ${RED}✗${NC} 本段自检失败：补丁位溢出正则未按预期命中（v1.5.9 应放行 / v1.5.10 应拦截），实得「${_PATCH_SELFTEST}」——断言失效，先修正则"
+  ERRORS=$((ERRORS + 1))
+else
+  # a) ROADMAP 版本列：锚行首第一格，只取该格里的版本号
+  _PATCH_FROM_ROADMAP=$(grep -hoE '^[[:space:]]*\|[[:space:]]*\*\*v[0-9]+\.[0-9]+\.[0-9]+\*\*' \
+    "${PROJECT_ROOT}/docs/ROADMAP.md" 2>/dev/null \
+    | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || true)
+  # b) changelog 目录名/文件名：只取 basename（目录名 vX.Y 无补丁段，自然不参与溢出判定）
+  _PATCH_FROM_CHANGELOG=$(find "${PROJECT_ROOT}/docs/changelog" -maxdepth 2 \
+    \( -type d -o -type f \) -name 'v[0-9]*' 2>/dev/null \
+    | sed 's#.*/##' | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || true)
+  PATCH_OVERFLOW_HITS=$(printf '%s\n%s\n' "$_PATCH_FROM_ROADMAP" "$_PATCH_FROM_CHANGELOG" \
+    | grep -E "$PATCH_OVERFLOW_RE" | sort -uV || true)
+  if [ -n "$PATCH_OVERFLOW_HITS" ]; then
+    _PATCH_OVERFLOW_N=$(printf '%s\n' "$PATCH_OVERFLOW_HITS" | wc -l | tr -d ' ')
+    echo -e "  ${RED}✗${NC} 单 minor 补丁位溢出（上限 vX.Y.9）——${_PATCH_OVERFLOW_N} 处："
+    echo "$PATCH_OVERFLOW_HITS" | sed 's/^/      /'
+    echo -e "      ${YELLOW}处置：该开新 minor（vX.(Y+1).0），不得续编 vX.Y.10——补丁位越界会把「第几个补丁」"
+    echo -e "      ${YELLOW}      与「第几个 minor」压成同一维度，读者无法从版本号判远近${NC}"
+    ERRORS=$((ERRORS + 1))
+  else
+    echo -e "  ${GREEN}✓${NC} 补丁位全在 vX.Y.0–vX.Y.9 内（ROADMAP 版本列 + changelog 目录/文件名）"
+    CHECKS=$((CHECKS + 1))
+  fi
 fi
 echo ""
 

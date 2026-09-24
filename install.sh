@@ -374,7 +374,7 @@ detect_legacy_injections
 # v1.2.1：代码仓库与运行时数据物理分离
 #   安装根目录 SOFAGENT_HOME (默认 ~/.sofagent/)
 #     ├── data/       用户可见运行数据（审计/知识库/反思/任务日志/编排/IM 队列）
-#     ├── internal/   引擎内部状态（checkpoint / .git-shadow / watch.yml）
+#     ├── internal/   引擎内部状态（checkpoint / .git-shadow）
 #     ├── .sofagent/  项目级配置目录（config.yml 在 ${cwd}/.sofagent/config.yml）
 #     ├── bin/        CLI 入口脚本（symlink 到 PATH）
 #     ├── skill/      Skill 文件（从仓库复制，单一真相源）
@@ -409,14 +409,22 @@ chmod 700 "$SOFAGENT_HOME/keys" 2>/dev/null || true
 #   runDreamCycle 存在但无任何生产调用方，巡检从未真正运行。
 #   cron 调度按 watch.yml 的 inspectors: / dream-cycle: 段驱动（缺省启用），
 #   首装写入缺省段确保开箱即巡检；已存在的 watch.yml 不覆盖（用户语义优先）。
-# 落点：internal/watch.yml（引擎内部状态根，与 checkpoint/ 同级——
-#   daemon 在项目 cwd 下读 .sofagent/watch.yml，项目级配置优先于本全局缺省）。
-if [ ! -f "$INTERNAL_ROOT/watch.yml" ]; then
-  cat > "$INTERNAL_ROOT/watch.yml" << 'WATCHEOF'
-# sofagent 定时任务缺省配置（v1.4.5 首装生成——可按需修改）
-# 项目级配置（${项目根}/.sofagent/watch.yml）存在时优先于本文件
+# 落点（fresh-eyes A-13 对齐读取方）：$SOFAGENT_HOME/watch.yml（全局级）——
+#   读取方 watch-config.ts 三级 fallback 为 ${cwd}/.sofagent/watch.yml →
+#   ~/.sofagent/watch.yml → 代码默认值（无 internal 层）；此前写 internal/watch.yml
+#   全仓零读取方（写读落点断链）。模板须带顶层 watch: 键（loader 无 watch 段即
+#   返回 null——此前模板缺该键，挪路径也读不出）。「默认启用」语义 = 代码 fallback
+#   之外的多一层落盘缺省（inspectors/dream-cycle 段 enabled: true）。
+if [ ! -f "$SOFAGENT_HOME/watch.yml" ]; then
+  cat > "$SOFAGENT_HOME/watch.yml" << 'WATCHEOF'
+# sofagent 定时任务缺省配置（首装生成——可按需修改）
+# 读取优先级（watch-config.ts 三级 fallback）：项目级 ${项目根}/.sofagent/watch.yml
+# 优先于本全局文件；两者皆缺省时代码内置默认值兜底（默认同样启用巡检）
 
-# 分层巡检调度（v1.5.1）：L1 快速健康 / L2 深度巡检 / L3 联邦分析
+# 顶层 watch 键（loader 契约：无此键整文件被视作无效配置）
+watch: {}
+
+# 分层巡检调度：L1 快速健康 / L2 深度巡检 / L3 联邦分析
 # enabled: false 可整体关闭；layers 下可按层覆盖频率
 inspectors:
   enabled: true
@@ -425,15 +433,15 @@ inspectors:
     L2: "@weekly"
     L3: "@monthly"
 
-# Dream Cycle 知识蒸馏（v1.5.1）：think.md + audit history → concepts/atoms
+# Dream Cycle 知识蒸馏：think.md + audit history → concepts/atoms
 # 产物落 data/knowledge/；enabled: false 可关闭
 dream-cycle:
   enabled: true
   schedule: "@daily"
 WATCHEOF
-  ok "巡检缺省配置已写入 $INTERNAL_ROOT/watch.yml（inspectors + dream-cycle 默认启用）"
+  ok "巡检缺省配置已写入 $SOFAGENT_HOME/watch.yml（inspectors + dream-cycle 默认启用）"
 else
-  info "已存在 internal/watch.yml——保留用户配置（巡检配置未被覆盖）"
+  info "已存在 ~/.sofagent/watch.yml——保留用户配置（巡检配置未被覆盖）"
 fi
 
 # 写入版本标记
@@ -500,10 +508,26 @@ migrate_to_install_dir() {
 }
 migrate_to_install_dir || { err "安装因迁移失败中止（数据安全，见上方提示）"; exit 1; }
 
-# v1.3.2 P1-8: 清理仓库内 .sofagent/ 残留（运行时数据应全在 ~/.sofagent/，仓库内不保留）
+# 清理仓库内 .sofagent/ 残留（运行时数据应全在 ~/.sofagent/，仓库内不保留）
+#
+# 破坏性护栏：该目录可能含 .git-shadow 审计快照等**不可再生**数据，且此处
+# 「自动迁移」受 data/ 存在性门控、可能整段跳过——直接 rm -rf 会静默销毁审计链。
+# 故默认**改名移出**（可回滚、可人工取回），只有显式 SOFAGENT_PURGE_REPO_DATA=1 才真删。
 if [ -d "${SCRIPT_DIR}/.sofagent" ] && [ "$SCRIPT_DIR" != "$HOME" ]; then
-  warn "检测到仓库内 .sofagent/ 残留，清理中..."
-  rm -rf "${SCRIPT_DIR}/.sofagent"
+  if [ "${SOFAGENT_PURGE_REPO_DATA:-}" = "1" ]; then
+    warn "SOFAGENT_PURGE_REPO_DATA=1：直接删除仓库内 .sofagent/ 残留"
+    rm -rf "${SCRIPT_DIR}/.sofagent"
+  else
+    _residue_bak="${SOFAGENT_HOME}/backup/repo-residue-$(date +%Y%m%d%H%M%S)"
+    mkdir -p "$(dirname "${_residue_bak}")"
+    # 同迁移纪律：移动失败保留源、绝不删除
+    if mv "${SCRIPT_DIR}/.sofagent" "${_residue_bak}" 2>/dev/null; then
+      warn "检测到仓库内 .sofagent/ 残留，已备份移出（未原地删除）：${_residue_bak}"
+      warn "  确认其中 .git-shadow 等数据不再需要后手动删除；如需安装时直接清除，用 SOFAGENT_PURGE_REPO_DATA=1 重跑"
+    else
+      warn "仓库内 .sofagent/ 残留备份失败，源目录已保留：${SCRIPT_DIR}/.sofagent（请手动检查）"
+    fi
+  fi
 fi
 
 ok "  安装目录结构就绪：${SOFAGENT_HOME}/ (data/ + internal/ + bin/ + skill/)"
@@ -583,16 +607,16 @@ WRAPPER_EOF
     ok "  @sofagent/audit 已从仓库本地安装（$(node -e "console.log(require('./engine/audit/package.json').version)" 2>/dev/null || echo "v${VERSION}")）"
   else
     # @latest → 固定版本（供应链纪律：安装版本与仓库声明一致，不漂移到未审的 registry 最新）
+    # v1.5.2 修复：@latest 降级改为 fail-closed（供应链纪律兑现）
     info "  执行: npm install -g @sofagent/audit@${VERSION}"
     if npm install -g "@sofagent/audit@${VERSION}" 2>&1 | tail -1; then
       ok "  @sofagent/audit 已全局安装（v${VERSION}）"
-    elif npm install -g "@sofagent/audit@latest" 2>&1 | tail -1; then
-      # 目标版本尚未发布到 registry（发版时序：push→tag→release→publish）——
-      # verify/CI 窗口期降级装 @latest 保安装链完整（integrity check 依赖本包提供 sofagent bin）
-      warn "  v${VERSION} 尚未发布到 npm registry——已降级安装 @latest（发版窗口期占位，发布后重装即对齐）"
     else
-      warn "  npm install -g @sofagent/audit 失败（网络/权限问题）"
-      warn "  请手动安装: npm install -g @sofagent/audit@${VERSION}"
+      # v1.5.2 修复：目标版本安装失败不再自动降级 @latest（原 fail-open 分支会把未审版本静默装进全局）
+      REGISTRY_LATEST="$(npm view "@sofagent/audit" version 2>/dev/null || echo "未知（npm view 查询失败）")"
+      echo "  ❌ @sofagent/audit@${VERSION} 安装失败——目标版本可能尚未发布到 npm registry（当前 registry latest: ${REGISTRY_LATEST}），或网络/权限问题。" >&2
+      echo "     安装中止：不自动降级 @latest（供应链纪律）。如接受未审版本请显式执行: npm i -g @sofagent/audit@latest" >&2
+      exit 1
     fi
   fi
 else

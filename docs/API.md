@@ -2,16 +2,16 @@
 
 <p align="center"><img src="assets/sofagent.png" alt="sofagent" width="96" /></p>
 
-> sofagent 对外全部能力面的一站式清单——七大接口面 + MCP 105 tools 按域分组（第七面「标准数据推送接口」入口已接线：MCP tool `data_push` 双闸入库；v1.4.9 G9 新增 device_register/device_list 设备注册面，G10/G11 新增 device_data_query/device_data_push 设备数据面，G5b/G1 新增 connector_register/connector_list 连接器面与 workflow_export/workflow_import 模板面，批 5 新增 router_session_push 过站 session 承接面）。工具清单由 `engine/mcp/src/tool-registry.ts` 生成（scripts/check 门禁对账，文档与代码永不漂移）。
+> sofagent 对外全部能力面的一站式清单——七大接口面 + MCP 107 tools 按域分组（第七面「标准数据推送接口」入口已接线：MCP tool `data_push` 双闸入库；v1.4.9 G9 新增 device_register/device_list 设备注册面，G10/G11 新增 device_data_query/device_data_push 设备数据面，G5b/G1 新增 connector_register/connector_list 连接器面与 workflow_export/workflow_import 模板面，批 5 新增 router_session_push 过站 session 承接面，v1.5.2 章一/章二 新增 audit_query/ruleset_export 审计对外两面）。工具清单由 `engine/mcp/src/tool-registry.ts` 生成（scripts/check 门禁对账，文档与代码永不漂移）。
 >
-> 版本：v1.5.1（✅ 已发版）· 105 tools / 7 面（**105 = v1.4.9 的 104 + v1.5.0 新增 `trace_reconcile`**，状态见 [ROADMAP](./ROADMAP.md)；第 7 面 v1.4.6 交付；v1.4.7 新增 11 tool 归入既有面；v1.4.9 G9 新增 device_register/device_list，G10/G11 新增 device_data_query/device_data_push，G5b/G1 新增连接器与模板 4 tool，批 5 新增 router_session_push）
+> 版本：v1.5.1（✅ 已发版）· 107 tools / 7 面（**107 = v1.4.9 的 104 + v1.5.0 新增 `trace_reconcile` + v1.5.2 新增 `audit_query`/`ruleset_export`**，状态见 [ROADMAP](./ROADMAP.md)；第 7 面 v1.4.6 交付；v1.4.7 新增 11 tool 归入既有面；v1.4.9 G9 新增 device_register/device_list，G10/G11 新增 device_data_query/device_data_push，G5b/G1 新增连接器与模板 4 tool，批 5 新增 router_session_push，v1.5.2 章一/章二 新增 audit_query/ruleset_export）
 
 ---
 
 ## 目录
 
 - [一、七大接口面](#一七大接口面)
-- [二、MCP 工具清单（105 · 按产品能力域分组）](#二mcp-工具清单105--按产品能力域分组)
+- [二、MCP 工具清单（107 · 按产品能力域分组）](#二mcp-工具清单107--按产品能力域分组)
 - [三、防漂移机制](#三防漂移机制)
 - [四、变更日志](#四变更日志)
 
@@ -29,13 +29,13 @@
 | 6 | **Webhook 推送** | 飞书/钉钉/企微 webhook URL | 签名 | 审计结果 PASS/WARN/FAIL 三态推送 |
 | 7 | **标准数据推送接口** | 数据推送 API（约定 schema · schema 校验 + 敏感分拣双闸，企业合规拦截策略预留扩展）——MCP tool `data_push` 入口已接线（v1.4.8） | 企业凭证 | 企业存储/业务系统推送训练语料与知识数据 |
 
-各面详细配置见对应文档：MCP 见 [engine/mcp/README.md](../engine/mcp/README.md) · CLI/hook 见 [SECURITY.md](../SECURITY.md) · 平台挂载见 [AGENTS.md](../AGENTS.md) · Skill 分发见 [SKILL/SKILL.md](../SKILL/SKILL.md) · Webhook 见 [SECURITY.md §审计结果推送](../SECURITY.md)。标准数据推送接口（第七面）`data_push` 入口已接线（v1.4.8），详见 [v1.4.8 开发日志](./changelog/v1.4/v1.4.8.md)。
+各面详细配置见对应文档：MCP 见 [engine/mcp/README.md](../engine/mcp/README.md) · CLI/hook 见 [SECURITY.md](../SECURITY.md) · 平台挂载见 [AGENTS.md](../AGENTS.md) · Skill 分发见 [SKILL/SKILL.md](../SKILL/SKILL.md) · Webhook 见 [SECURITY §五·Daemon 监控边界](../SECURITY.md)（表内「审计结果推送」行）。标准数据推送接口（第七面）`data_push` 入口已接线（v1.4.8），详见 [v1.4.8 开发日志](./changelog/v1.4/v1.4.8.md)。
 
 ---
 
-## 二、MCP 工具清单（105 · 按产品能力域分组）
+## 二、MCP 工具清单（107 · 按产品能力域分组）
 
-> 十个能力域按「一个组 = 一个可独立讲述的产品能力」划分，与五能力叙事的对应：本节工具承载其中的**审计**（审计与合规）、**回溯**（快照与回溯）、**沉淀**（知识资产与能力市场）、**进化**（后训练流水线与 FDE 沉淀）能力面；**注入**能力走加载链文件（SKILL.md/fde.md/think.md/knowledge/），不经 MCP 暴露。**roles 列保留运行时真值**——`SOFAGENT_MCP_ROLES=audit,ops` 收窄面以 roles 为准（v1.4.0 工具角色分层），分组是文档编制判断。浏览器四件套（playwright_*）归审计域——主叙事是 UI 层审计取证（v1.5.2 UI 审计的执行底座）。**与 ARCHITECTURE 的「MCP 工具五域一环」组织法（业务职能分桶）互为正交的另一套分桶**：两套分组用途不同、条目数不等属预期；工具总数的唯一权威源是 `engine/mcp/src/tool-registry.ts` 的 `TOOLS` 数组（见 [ARCHITECTURE · 能力与状态总览](./ARCHITECTURE.md)）。
+> 十个能力域按「一个组 = 一个可独立讲述的产品能力」划分，与五能力叙事的对应：本节工具承载其中的**审计**（审计与合规）、**回溯**（快照与回溯）、**沉淀**（知识资产与能力市场）、**进化**（后训练流水线与 FDE 沉淀）能力面；**注入**能力走加载链文件（SKILL.md/fde.md/think.md/knowledge/），不经 MCP 暴露。**roles 列保留运行时真值**——`SOFAGENT_MCP_ROLES=audit,ops` 收窄面以 roles 为准（v1.4.0 工具角色分层），分组是文档编制判断。浏览器四件套（playwright_*）归审计域——主叙事是 UI 层审计取证（v1.5.7 UI 审计的执行底座）。
 
 ### FDE 进场 · 六引擎（访谈 → 分类 → 量化 → 推导 → 沉淀 → 部署）（7）
 
@@ -49,7 +49,7 @@
 | `fde_distill` | fde | FDE 三层交付物生成（引擎五）——跑通过程沉淀：文档层手册（人读：现状/六步/验收/回滚）+ Skill 层模板（Agent 可执行）+ 运行层 yaml 片段（引擎六组装用），归档 deliverables/ 带 README 索引。 |
 | `fde_deploy` | fde | FDE workflow 组装部署（引擎六）——三层交付物 → deployments/<name>.yml（与 fde_compose 同格式）；只产出工件不代激活——激活走 workflow_submit + activate_workflow（人审闸门保留）。 |
 
-### 审计与合规（代码 / 轨迹 / 数据审计 · 浏览器取证 · 语料导出）（12）
+### 审计与合规（代码 / 轨迹 / 数据审计 · 浏览器取证 · 语料导出）（14）
 
 | tool | roles | 说明 |
 |---|---|---|
@@ -65,12 +65,14 @@
 | `corpus_export` | ops | 训练语料导出三件套——规则（27 编号位含跳号占位 + reward_hint 骨架 + verifiers 三桶清单）+ FDE 方法论（锚点解析）+ 带标签审计样本（六源聚合 + 脱敏）。导出带版本号 + HMAC 签名，导出行为记 corpus_export 审计事件。 |
 | `device_data_push` | ops | 数据上行通道（G11）：设备门禁 → 采集声明校验（默认空=不上行，opt-in）→ 脱敏 → AES-256-GCM 加密入队（WAL 暂存断网不丢，游标续传不重传已 ack 段）→ 审计留痕 + 计量进 worklog。原始数据不出设备。 |
 | `trace_reconcile` | ops, fde | 跨层证据对账（trace reconcile）：DSH session trace（Agent 自述）vs git diff（独立事实）vs logs 声明集三源比对——产出差异清单（漏报/幻觉动作/瞒报四态）+ 一致率；可选模型层回溯链（推理 → 模型版本 → train_job → datasetHash）。对账结果入 decision-log（kind=COVERAGE）。 |
+| `audit_query` | audit | 审计数据只读查询——按时间/规则/exitCode 过滤读 history.jsonl，按 ts 查 decision-log 因果链（消费 causedBy 字段）。严格只读，不写任何审计链。边界：audit_trail 按 agentId 查跨设备轨迹 / worklog_query 查工作效能指标 / run_audit 跑规则写 think.md（写侧）/ ruleset_export 导出规则面——本 tool 只查「时间·规则·exitCode·因果链」维度，勿混用。 |
+| `ruleset_export` | audit | 规则集导出——24 条默认规则 + 已加载扩展规则导出为标准 JSON（与 --ruleset-path 加载格式同构，导出即加载格式、双向可逆），每条附训练消费元数据（rule_id / 检测意图 / 违规样例 / 严重级别）+ 规则集版本号 + 内容指纹（HMAC-SHA256），导出行为写审计留痕。边界：list_rules 只列规则清单、corpus_export 导出训练语料三件套——本 tool 导出「规则面标准 JSON」供第三方零转换消费。 |
 
 ### 工作流编排（workflow DAG · 循环执行与优化）（18）
 
 | tool | roles | 说明 |
 |---|---|---|
-| `sofagent_compose` | fde | 编排模块——传入任务描述，返回 Sub Agent 编排方案（YAML）。 |
+| `compose` | fde | 编排模块——传入任务描述，返回 Sub Agent 编排方案（YAML）。 |
 | `optimize_skill` | eval | 优化指定 Skill 文件，生成优化建议。 |
 | `activate_workflow` | agent, fde | 读取 FDE 交付物，注册企业 SubAgent。 |
 | `loop_debug` | eval | Onboard Agent 调试循环——传 task 触发 activate→run→judge→fix 循环；不传查记录。 |
@@ -201,6 +203,12 @@
 - 本清单由 `engine/mcp/src/tool-registry.ts` 的 `name:` + `description:` 字段生成，配 `tools/check/check-docs.sh` 门禁断言：**文档 tool 数 == registry 实数**，对不上即 CI 红。
 - 新增/修改工具：先改 tool-registry.ts（含描述），再跑 `node tools/gen/gen-api-tools.mjs`（生成器，随本文件一并交付）重生成第二节，门禁自动对账。
 
+### 工具命名策略（v1.5.2）
+
+- 现状：tool 名统一 **verb_noun 无前缀**（如 run_audit / evaluate / stats）。历史上唯一带 `sofagent_` 前缀的 `sofagent_compose` 已于 v1.5.2 更名 `compose`（旧名别名兼容一版，见 mcp-server.ts 分派层）。
+- 风险声明：MCP tool 名是宿主级命名空间。多 server 共存挂载（README「多平台挂载」场景）下，通用词 tool 名可能与其他 server 撞名——宿主侧去重改名（如 `run_audit_2`）后用户无法归因。
+- 整体前缀化（如全量加 `sofagent_` 前缀）属**破坏性变更**，不在常规迭代内做；评估与决策登记见 ROADMAP 既有章。
+
 ---
 
 ## 四、变更日志
@@ -208,9 +216,10 @@
 | 日期 | 变更 |
 |------|------|
 | 2026-09-03 | 建档——80 tools 首次成清单，六大接口面总表 |
-| 2026-09-05 | v1.4.5 三件收编（train_serve/train_compliance/train_deliverable）80→83 |
+| 2026-09-05 | v1.4.5 三件并入（train_serve/train_compliance/train_deliverable）80→83 |
 | 2026-09-07 | 接口面六→七：新增「标准数据推送接口」第七面（v1.4.6 交付，验收标准转勾） |
 | 2026-09-11 | v1.4.7 新增 11 tool（workflow CRUD / PR 生命周期 / 绩效 / 缺口 / data_push 等）84→95 |
 | 2026-09-13 | v1.4.8 tools 面零新增，仍为 95 |
 | 2026-09-17 | v1.4.9 新增 9 tool（device_register / device_list · device_data_query / device_data_push · connector_register / connector_list · workflow_export / workflow_import · router_session_push）95→104 |
 | 2026-09-19 | v1.5.0 新增 trace_reconcile 104→105 |
+| 2026-09-23 | v1.5.2 章一/章二 新增 audit_query（审计数据只读查询）/ ruleset_export（规则集导出，双向可逆）105→107 |

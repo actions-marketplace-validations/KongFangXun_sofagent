@@ -4,7 +4,7 @@
 // v1.5.1 迁移到 @sofagent/think
 // ============================================================
 
-import { existsSync, readFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync, statSync } from 'fs';
 import { join } from 'path';
 import type { DiffFile, AuditResult } from '@sofagent/core';
 import {VERSION, getThinkPath, appendThinkEntry, DATA_DIR, EVAL_LATEST, getDataDir } from '@sofagent/core'
@@ -58,6 +58,111 @@ export function generateThinkEntry(
 
   // 追加不覆盖（经 @sofagent/core 契约，强制 append-only 不变量）
   appendThinkEntry(thinkPath, entry);
+}
+
+/**
+ * 口述沉淀写入回执（v1.5.2 章八）——如实回报「写没写 / 为何没写」。
+ *
+ * 与 generateThinkEntry 的差异：那是「按 git diff 硬证据自动沉淀」，入参是
+ * DiffFile[] + AuditResult；本 API 面向「用户口述沉淀」入口（task + summary），
+ * 没有 diff 兜底，因此**必须**用回执把结果如实交还调用方。
+ *
+ * 🔴 为什么 written 用「字节增长」判定，而不是「调过 API 就算成功」：
+ * 本回执的由来正是一处工具假成功缺陷——调用方传空 diff 调 generateThinkEntry，
+ * 后者首行 `if (diffFiles.length === 0) return;` 直接空转零写入，调用方却**无条件**
+ * 回报「已写入」。所以「调过写 API / 没抛异常」都不能作为成功判据；唯一可信的判据
+ * 是落盘后字节数确实增长（appendThinkEntry 返回 append 后 size，减去写入前 size）。
+ * 这样即使未来写入路径被改回提前 return，回执也会如实显示 written:false。
+ */
+export interface ManualThinkReceipt {
+  /** 真实写入判据 = 追加后字节数 > 追加前字节数 */
+  written: boolean;
+  /** 未写入原因（如 'empty-lesson'） */
+  reason?: string;
+  /** think.md 绝对路径 */
+  path: string;
+  /** 写入前文件字节数（不存在为 0） */
+  before: number;
+  /** 追加后文件字节数 */
+  bytes: number;
+  /** 条目时间戳 YYYY-MM-DD HH:mm */
+  timestamp: string;
+  /** 清洗后的任务描述 */
+  task: string;
+  /** 清洗后的教训文本 */
+  lesson: string;
+}
+
+/** 手动条目长度上限（与 @sofagent/mcp 的 write_think 同口径，防超长灌库） */
+const MAX_MANUAL_LESSON_LENGTH = 10000;
+
+/**
+ * 口述沉淀：把用户口述的 task + summary 写成一条 think.md 反思条目，并返回写入回执。
+ *
+ * 条目文本与清洗口径与 @sofagent/mcp 的 write_think 先例对齐（该先例是既有的手动反思写入点）：
+ *   `\n## ${timestamp} 任务: ${task}\n\n- #教训: ${lesson}\n\n`
+ * lesson 清洗顺序与 write_think **逐字一致**：先截断到 10000 → 把 `[\r\n]+` 折成空格 → trim。
+ * 🔴 顺序必须一致——「先折行后截断」与「先截断后折行」在「超长且含换行」输入下会产出不同的
+ * lesson，那种情况下「与 write_think 同口径」的说法即不成立（本仓反模式：同一契约两处同源、
+ * 改一处漏一处）。折行本身是为了防止 summary 注入伪造的 `## ` 条目标题。
+ * task 额外做 fold + trim（write_think 不清理 task；本入口加这一步以防 task 注入伪造的
+ * `## ` 条目标题），缺省 `(手动记录)`。
+ *
+ * 与 write_think 的唯一语义差异：summary 清洗后为空时**不写盘**并如实返回
+ * `written:false, reason:'empty-lesson'`（write_think 侧由 MCP 入参校验拦截空 lesson）。
+ *
+ * @param task 任务描述（反思主题），缺省 `(手动记录)`
+ * @param summary 经验总结（教训/踩坑/可复用方法）
+ * @param opts 可选配置（dataDir / now）
+ */
+export function appendManualThinkEntry(
+  task: string | undefined,
+  summary: string,
+  opts?: ThinkEntryOptions
+): ManualThinkReceipt {
+  // 清洗 lesson：截断 → 折行 → trim（顺序与 write_think 逐字一致，勿调换）
+  let lesson = String(summary ?? '');
+  if (lesson.length > MAX_MANUAL_LESSON_LENGTH) {
+    lesson = lesson.slice(0, MAX_MANUAL_LESSON_LENGTH);
+  }
+  lesson = lesson.replace(/[\r\n]+/g, ' ').trim();
+  // task 同口径清洗（fold + trim），缺省 (手动记录)
+  const taskName = String(task ?? '').replace(/[\r\n]+/g, ' ').trim() || '(手动记录)';
+
+  const now = opts?.now ?? new Date();
+  const dataDir = opts?.dataDir ?? getDataDir();
+  const thinkPath = getThinkPath(dataDir);
+  const timestamp = formatTimestamp(now);
+
+  // 空教训不写盘——如实回报，不制造空条目，也绝不谎报成功
+  if (lesson === '') {
+    const before = fileSize(thinkPath);
+    return { written: false, reason: 'empty-lesson', path: thinkPath, before, bytes: before, timestamp, task: taskName, lesson };
+  }
+
+  const before = fileSize(thinkPath);
+
+  // 确保 dataDir 存在
+  if (!existsSync(dataDir)) {
+    mkdirSync(dataDir, { recursive: true });
+  }
+
+  const entry = `\n## ${timestamp} 任务: ${taskName}\n\n- #教训: ${lesson}\n\n`;
+
+  // 追加不覆盖（经 @sofagent/core 契约，强制 append-only 不变量）
+  const bytes = appendThinkEntry(thinkPath, entry);
+
+  // written 用字节增长判定——不信任「调过 API」，只信任落盘事实（见接口注释）
+  return { written: bytes > before, path: thinkPath, before, bytes, timestamp, task: taskName, lesson };
+}
+
+/** 读取文件字节数（不存在/不可读返回 0，best-effort） */
+function fileSize(path: string): number {
+  try {
+    return statSync(path).size;
+  } catch {
+    return 0;
+  }
 }
 
 /**

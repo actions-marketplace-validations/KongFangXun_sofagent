@@ -32,22 +32,22 @@
 | 复制 prompt | 不支持 Skill 的平台 | 把 SKILL.md 内容贴进 system prompt |
 | CLI 直跑 | 任何终端 | `sofagent-orchestrator subagent run fde --task "..."` |
 | DSH 插件通道 | DSH（DeepSeek Harness）用户 | `skillhub install cordis-plugin-sofagent-<名>`（SkillHub 单通道安装 + 发现；每款可独立安装、渐进采用；**一次装全套**用裸名 `skillhub install cordis-plugin-sofagent`） |
-| MCP 自动配置 | workbuddy/claude/cursor/codex | `bash install.sh --platform <平台>` 自动写 MCP 配置（前三者写 mcp.json JSON、codex 写 config.toml `[mcp_servers.sofagent]` 段），装完即连 105 tools |
+| MCP 自动配置 | workbuddy/claude/cursor/codex | `bash install.sh --platform <平台>` 自动写 MCP 配置（前三者写 mcp.json JSON、codex 写 config.toml `[mcp_servers.sofagent]` 段），装完即连 107 tools |
 
 ---
 
 ## DSH 插件家族（7 款 cordis-plugin）
 
-> sofagent 约束能力在 DSH（DeepSeek Harness）生态的插件形态——每款只干一件事，可独立安装、渐进采用。能力完整面 = MCP Server 105 tools（连接 sofagent MCP 后调用）。随主线版本发布，SkillHub 通道检索。
+> sofagent 约束能力在 DSH（DeepSeek Harness）生态的插件形态——每款只干一件事，可独立安装、渐进采用。能力完整面 = MCP Server 107 tools（连接 sofagent MCP 后调用）。随主线版本发布，SkillHub 通道检索。
 
 | 插件 | 职责（桥接实况） | seam |
 |------|----------------|------|
-| `cordis-plugin-sofagent-audit` | 变更机器审阅 + 验收硬门禁（24 规则 + git diff 硬证据 + Turn 停止验收判定——v1.4.9 P2 吸收原 gate 验收面，开关独立）——桥接 `@sofagent/audit runRules` | tools/result + tools/pre-execute + fs/write-intent + agent/turn-stopping |
+| `cordis-plugin-sofagent-audit` | 变更机器审阅 + 验收硬门禁（24 规则 + git diff 硬证据 + Turn 停止验收判定——吸收原 gate 验收面，开关独立）——桥接 `@sofagent/audit runRules` | tools/result + tools/pre-execute + fs/write-intent + agent/turn-stopping |
 | `cordis-plugin-sofagent-rollback` | 出错逆序撤销（git snapshot → effect disposer）——桥接 `@sofagent/core getHistoryFilePath` | effect 注册/卸载 |
 | `cordis-plugin-sofagent-inject` | 启动注入企业约束（四层加载链）——桥接 `@sofagent/inject buildConstrainedSystemPrompt` | apply(ctx) |
 | `cordis-plugin-sofagent-evolve` | 经验沉淀（think.md 反思 + Dream Cycle）——桥接 `@sofagent/think generateThinkEntry` | 任务结束 hook |
 | `cordis-plugin-sofagent-daemon` | 7×24 巡检 + 健康监测 + webhook 推送——桥接 `@sofagent/daemon startCron` | 独立调度进程 |
-| `cordis-plugin-sofagent-fde` | FDE 进场与能力流通——本体 / FDE / 公地三域工具面（v1.4.9 P2 合并原 ontology / commons 两款，settings 三档分域可关）——桥接 `@sofagent/orchestrator publishCapability / @sofagent/ontology generateOntologyView / @sofagent/core restoreSnapshot` | ontology_* / fde_* / commons_* tools |
+| `cordis-plugin-sofagent-fde` | FDE 进场与能力流通——本体 / FDE / 公地三域工具面（合并原 ontology / commons 两款，settings 三档分域可关）——桥接 `@sofagent/orchestrator publishCapability / @sofagent/ontology generateOntologyView / @sofagent/core restoreSnapshot` | ontology_* / fde_* / commons_* tools |
 | `cordis-plugin-sofagent` | **整装入口**——一次挂载以上 6 款原子插件（聚合编排层，只编排不重实现；缺哪款只降级哪款，不整挂失败） | non-seam:plugin-suite |
 
 ---
@@ -100,11 +100,11 @@ FORGE engineer commit ──→ 自动调用 @sofagent-audit → 验证变更合
 
 ---
 
-## MCP 全量工具表（105 tools · 13 类）
+## MCP 全量工具表（107 tools · 13 类）
 
 > 与 `engine/mcp/src/tool-registry.ts` 一一对应（check-docs 第 12 节门禁校验双向差集为空）。主入口 `SKILL.md` 只列每类代表工具，本表为全量。🔴 = 破坏性操作（强制人审/confirmed）。
 
-### 审计合规（9）
+### 审计合规（11）
 
 | 工具 | 说明 |
 |------|------|
@@ -112,6 +112,8 @@ FORGE engineer commit ──→ 自动调用 @sofagent-audit → 验证变更合
 | `audit_file` | 单文件变更即时审计（不阻断） |
 | `audit_data_change` | 知识库结构化数据变更跑数据审计（D1-D5） |
 | `audit_trail` | 跨设备审计轨迹查询（HMAC 验签） |
+| `audit_query` | 审计数据只读查询——history 三维过滤（时间/规则/exitCode）+ decision-log 因果链（严格只读，不写链） |
+| `ruleset_export` | 规则集导出——默认规则 + 已加载扩展 → 标准 JSON（导出即加载格式，双向可逆 + 内容指纹 + 审计留痕） |
 | `list_rules` | 列出所有审计规则清单（只读） |
 | `data_sovereignty_report` | 数据主权审计报告摘要（云端调用/本地执行/数据流出率） |
 | `notify_session` | 向当前 session 推送审计结果摘要 |
@@ -170,7 +172,7 @@ FORGE engineer commit ──→ 自动调用 @sofagent-audit → 验证变更合
 | `fde_derive` | FDE 本体推导——五要素+访谈→ontology YAML 草稿（可导入 ontology_import） |
 | `fde_distill` | FDE 沉淀能力——三层交付物（文档/Skill/运行层）自动生成 |
 | `fde_deploy` | FDE 部署——交付物→workflow.yml 部署工件（提交/激活走人审闸门） |
-| `sofagent_compose` | 编排模块——任务描述返回 Sub Agent 编排方案（YAML） |
+| `compose` | 编排模块——任务描述返回 Sub Agent 编排方案（YAML）。前名 sofagent_compose（别名兼容一版，见 API.md 工具命名策略） |
 | `activate_workflow` | 读取 FDE 交付物，注册企业 SubAgent |
 | `create_agent` | 一句话需求自动推导 Agent 配置（角色+域规则+think+knowledge） |
 | `onboard_prompt` | 上岗 prompt 生成器——岗位描述→职责/边界/工具面三段，产物可经 workflow_node_add 落节点 |

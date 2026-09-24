@@ -48,7 +48,8 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, readdirS
 import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { createInterface } from 'readline';
-import { parseDiff, parseStagedDiff, isInGitRepo, type DiffFile } from '@sofagent/core';
+import {
+  isDiffFileHeader, parseDiff, parseStagedDiff, isInGitRepo, type DiffFile } from '@sofagent/core';
 import { loadConfig, ConfigLoadError, ConfigParseError, ConfigSignatureError } from '@sofagent/core';
 import { VERSION } from '@sofagent/core';
 import { BASELINE_RULE_KEYS } from '@sofagent/core';
@@ -160,9 +161,9 @@ function buildBeforeAfterSummary(diffFiles: DiffFile[]): { before?: string; afte
     if (!file || !Array.isArray(file.lines)) continue;
     for (const line of file.lines) {
       if (!line || line.length < 1) continue;
-      if (line.startsWith('+') && !line.startsWith('+++')) {
+      if (line.startsWith('+') && !isDiffFileHeader(line)) {
         if (after.length < BEFORE_AFTER_MAX_ITEMS) after.push(line.substring(1).slice(0, BEFORE_AFTER_MAX_CHARS));
-      } else if (line.startsWith('-') && !line.startsWith('---')) {
+      } else if (line.startsWith('-') && !isDiffFileHeader(line)) {
         if (before.length < BEFORE_AFTER_MAX_ITEMS) before.push(line.substring(1).slice(0, BEFORE_AFTER_MAX_CHARS));
       }
       if (before.length >= BEFORE_AFTER_MAX_ITEMS && after.length >= BEFORE_AFTER_MAX_ITEMS) break;
@@ -1245,6 +1246,24 @@ async function main(): Promise<void> {
       } catch {
         // 记录失败不影响核心审计流程
       }
+
+      // v1.5.2 章四：授权/白名单配置变更 → 既有结论失效标记（append-only）。
+      //   规则被关闭 = 授权面变更——此前以被关规则为依据的审计结论不再可信，
+      //   追加 kind=INVALIDATION 条目宣告其失效（原文不改写、HMAC 链不破坏）。
+      //   fail-safe：标记失败绝不影响审计主流程；无可失效目标时不写（不产空标记）。
+      try {
+        const { hooks } = await import('./invalidation');
+        hooks.onAuthorizationChanged({
+          agentId: 'sofagent-audit',
+          sessionId: args.diffRange,
+          changedRules: disabledEntries.map(([key]) => key),
+          trigger: `config.yml 关闭审计规则：${disabledList}`,
+          evidence: disabledEntries.map(([key, val]) => `${key}=${String(val)}`),
+        });
+      } catch {
+        // 失效标记失败——吞错（配置变更留痕不能反过来压垮审计），但显式告警不静默
+        process.stderr.write('[sofagent-audit] 警告: 结论失效标记写入失败，跳过（不影响审计结果）\n');
+      }
     }
 
     if (disabledCount > 3) {
@@ -1267,7 +1286,8 @@ async function main(): Promise<void> {
   // v1.5.1 T5: 改经 runRulesMonitored——审计模块超时自动降级（full→rules-only→minimal），
   // 降级事实写审计日志（FALLBACK_DEGRADE）并在规则列表注入 DEGRADATION_NOTICE WARN
   const { runRulesMonitored } = await import('./rules/runner');
-  const results = runRulesMonitored(diffFiles, logEntries, args.task, args.strict, args.silent, commitMsg || undefined, config, undefined, args.gb48000);
+  // v1.5.2 A-8：args.ci 传入规则上下文——二进制夹带类「请人工确认」发现在 CI 场景升 FAIL
+  const results = runRulesMonitored(diffFiles, logEntries, args.task, args.strict, args.silent, commitMsg || undefined, config, undefined, args.gb48000, undefined, args.ci);
 
   // v1.2.9 (⑧-2): --ruleset / --ruleset-path → 运行 JSON 规则集（叠加在内置规则之上）
   if (args.ruleset || args.rulesetPath) {

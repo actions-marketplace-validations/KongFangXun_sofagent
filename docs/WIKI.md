@@ -26,7 +26,7 @@
 > | 版本路线 / 排期 / 探索方向 | [ROADMAP](./ROADMAP.md) | 参考 | 已交付进「迭代历程」、已排期进「版本规划」、未排期进「探索方向」——三态不混写 |
 > | 版本变更记录（未发布版） | `docs/changelog/vX.Y/vX.Y.Z.md` | 历史 | 排期版日志不进主 [CHANGELOG](../CHANGELOG.md) 索引（纯已发布索引）；发布时才收编 |
 > | 架构决策 / 术语定义 / 数据流 | [ARCHITECTURE](./ARCHITECTURE.md) | 参考 | 行业对标委托 VALIDATION、规则清单委托 SECURITY、路线委托 ROADMAP |
-> | 接口总览 / MCP 工具清单 | [API](./API.md) | 参考 | 七大接口面 + 105 tools 分域清单，由 tool-registry.ts 生成（check-docs §17 对账防漂移） |
+> | 接口总览 / MCP 工具清单 | [API](./API.md) | 参考 | 七大接口面 + 107 tools 分域清单，由 tool-registry.ts 生成（check-docs §17 对账防漂移） |
 > | 已知限制 / 诚实边界 | [LIMITATIONS](./LIMITATIONS.md) | 参考 | 各文档披露「已知风险」时引用 LIMITATIONS，不展开重复 |
 > | 任务流程 / 操作步骤 / 发版 SOP | [SKILL/](../SKILL/) · [changelog/releasing/](./changelog/releasing/) | 任务流程 | 「干什么用什么步骤」——写给执行者（人/Agent）照着做；深度参考链接 docs/，不复制 |
 > | 面向使用者的操作说明 | [README](../README.md) · [HANDBOOK](./HANDBOOK.md) | 用户手册 | 永不含代码库内部细节；开发者向操作说明进 DEVELOPMENT/guides |
@@ -61,7 +61,7 @@
 
 ## 二、产品叙事：sofagent 是 FDE Harness 层（不造 Agent，嵌在 Agent 与模型之间做治理）
 
-> **主轴**：sofagent 全部叙事的主语是同一件事——**判断**（该不该做、做到什么算好、谁拍板）。进场把它写成文件（FDE 交付物），离场按文件执行与审计。**一条 workflow 的产品**：给企业做 AI 落地 = 一条 FDE workflow。执行这条 workflow 的 Agent = 装上 FDE Harness 的 Agent（sofagent 让任何成熟 Agent 具备这个能力）。**它对自己做的第一份 FDE，就是 sofagent 项目本身**——自举循环：FDE Harness 对自己做 FDE → 项目更 AI 化 → 更好地服务企业 → 数据飞轮转起来。
+> **主轴**：sofagent 全部叙事的主语是同一件事——**判断**（该不该做、做到什么算好、谁拍板）。进场把它写成文件（FDE 交付物），离场按文件执行与审计。**一条 workflow 的产品**：给企业做 AI 落地 = 一条 FDE workflow。执行这条 workflow 的 Agent = 装上 FDE Harness 的 Agent（sofagent 让任何成熟 Agent 具备这个能力）。**它对自己做的第一份 FDE，就是 sofagent 项目本身**——自举循环：FDE Harness 对自己做 FDE → 项目更 AI 化 → 更好地服务企业 → 数据飞轮转起来。**自举不是比喻，是可核对的事实**：本仓的每次变更过审计闸门、判据集版本可举证、门禁故障注入自证、经验沉淀进反思区——sofagent 项目本身就是第一个被 FDEing 的对象，本仓的全部工程纪律都是 FDEing 循环跑过一遍的产物。
 
 **FDE 交付**：进场梳理 → 交付**双图谱**——人看的业务图谱（workflow graph）+ 机器读的本体图谱（ontology graph，本体数据的图形化形态）。图谱里每个 AI 节点承担工作流中的职能；节点执行 = workflow 要求 → LangGraph 编排 → DeepSeek Harness 执行（ExecutionBackend 双后端：workflow 以 DAG 形态在所选后端运行）→ 全程约束层审计 + 回溯净化（plugin 功能）。**行业坐标**：两张图谱同属「知识层」（描述业务世界的语义资产），构建·校验·维护实践属「工程层」（图谱工程），详见 [ARCHITECTURE §一](./ARCHITECTURE.md)。
 
@@ -115,7 +115,7 @@ graph TB
 
 **一句话版**：进场帮你把业务摸清写成文件，离场后管住你的数字员工——干活有安检、出事能回滚、越用越懂你、老板看得见、数据不出门。
 
-**五分钟亲眼看**：`sofagent demo`（v1.5.1 已交付）——一条命令跑完「注入 → 故意违规 → 审计拦截 → 快照回滚 → 举证导出」完整链路，看到拦截发生的那一瞬间你就懂了这个产品。
+**五分钟亲眼看**：`sofagent demo`（v1.5.1 已交付，经 npm 通道可用：`npx -y -p @sofagent/audit sofagent-audit demo`；install 态 CLI 暂无 demo 子命令）——一条命令跑完「注入 → 故意违规 → 审计拦截 → 快照回滚 → 举证导出」完整链路，看到拦截发生的那一瞬间你就懂了这个产品。
 
 ---
 
@@ -228,7 +228,7 @@ graph TB
 | `docs/PHILOSOPHY.md` | 产品哲学九节：为什么做、三层治理、FDE 定义 |
 | `docs/VALIDATION.md` | 行业印证与生态定位：31 篇行业方法论印证、a16z 七法则、Agent 三层模型、架构框架映射 |
 | `docs/ARCHITECTURE.md` | 架构详解：约束层五种能力（注入·审计·回溯·沉淀·进化）、数据流、部署模式、文件结构（含 Ledger-Views-Policy ↔ LLM Wiki 三层同构对照） |
-| `docs/DEVELOPMENT.md` | 开发指南：本地环境、包结构、测试、发版流程 |
+| `docs/DEVELOPMENT.md` | 开发指南：本地环境、工作原理、编排哲学、自进化机制、数据文件架构、验证方法论 |
 | `docs/HANDBOOK.md` | FDE 操作手册：进场流程、节点部署、持续维护 |
 | `docs/ROADMAP.md` | 版本路线图、行业借鉴项、技术预研方向 |
 | `docs/LIMITATIONS.md` | 已知限制和适用边界 |
@@ -252,13 +252,13 @@ graph TB
 | `engine/train/` | @sofagent/train — 后训模块（数据管道/训练编排/云端执行/eval 闭环） |
 | `engine/daemon/` | @sofagent/daemon — 后台守护进程（cron 巡检 + 文件监听） |
 | `engine/inject/` | @sofagent/inject — SKILL 加载链（上下文注入） |
-| `engine/mcp/` | @sofagent/mcp — MCP Server（知识库 CRUD tool）· **105 个 MCP tool**（以 `engine/mcp/src/tool-registry.ts` 的 `TOOLS` 为 SSOT；各版增量见 [API 工具清单](./API.md) 与 [CHANGELOG](../CHANGELOG.md)；插件家族 MCP 面另计） |
+| `engine/mcp/` | @sofagent/mcp — MCP Server（知识库 CRUD tool）· **107 个 MCP tool**（以 `engine/mcp/src/tool-registry.ts` 的 `TOOLS` 为 SSOT；各版增量见 [API 工具清单](./API.md) 与 [CHANGELOG](../CHANGELOG.md)；插件家族 MCP 面另计） |
 | `engine/hooks/sofagent-load-chain/` | @sofagent/load-chain — SKILL 加载链 git hook（工具包，非模块包口径） |
 | `engine/scripts/` | 运维脚本集（9 个 .sh + lib/ 模块 + windows/ .ps1 安装与卸载脚本）——安装（install.sh 调用）、卸载、验证（verify.sh）、daemon 管理、运行时审计日志记录等 |
 | `engine/dsh-plugins/` | cordis-plugin-sofagent* 7 款 DSH 插件（v1.4.9 P2 合并批 10→7）——6 款原子（audit（含验收门禁面）· rollback · inject · evolve · daemon · fde（本体/FDE/公地三域厚插件））+ 1 款聚合（裸名 `cordis-plugin-sofagent`，一次挂载全套） |
 | `engine/openclaw-plugins/` | OpenClaw code-plugin 4 款（ClawHub 发布形态） |
 | `~/.sofagent/bin/sofagent` | CLI 入口（安装时生成，不在仓库内）— `sofagent status/where/version/data/help` |
-| 其余 6 包（eval/ab-test/evolve/rules/ontology/think） | 详见 `docs/DEVELOPMENT.md §包结构`（包数口径：workspace 26 = 13 模块包 + load-chain + umbrella + 7 DSH 插件 + 4 OpenClaw 插件，见 §六口径表；**测试计数口径** = 13 个含 test script 的 workspace 包 —— 与 README「工程可信度」段同口径；@sofagent/load-chain 为工具包另列） |
+| 其余 6 包（eval/ab-test/evolve/rules/ontology/think） | 详见 `docs/ARCHITECTURE.md §27 个 workspace 源码包`（包数口径：workspace 27 = 13 模块包 + load-chain + dsh-plugin-kit + umbrella + 7 DSH 插件 + 4 OpenClaw 插件，见 §六口径表；**测试计数口径** = 13 个含 test script 的 workspace 包 —— 与 README「工程可信度」段同口径；@sofagent/load-chain 与 @sofagent/dsh-plugin-kit 为工具包另列） |
 
 ### 关键数据路径（`data/`）
 
@@ -275,13 +275,13 @@ graph TB
 | 项 | 值 |
 |----|-----|
 | 当前版本 | **v1.5.1**（2026-09-22，✅ 已发版）· 上一版 v1.5.0（2026-09-19，✅ 已发版） |
-| 下一版 | **v1.5.2**（📋 规划中——审计模块 · 开放与治理面（MCP audit 数据对外 + doctor 修复闭环 + 约束导出外部可验）等，以 [ROADMAP](./ROADMAP.md) 规划表为准） |
-| 测试覆盖 | 5083 测试 / 13 包（统计标准：`tools/check/test-count.sh` 实际执行的 workspace 包；实测见该脚本，声称数同步校验见 `tools/check/check-test-count.sh`。包数口径见下表注） |
+| 下一版 | **v1.5.2**（⏳ 已开发 · 待发版——审计模块 · 对外面与判定语义（MCP audit 数据对外 + 约束导出外部可验 + should-run 判定链 + 事前授权补环）等，以 [ROADMAP](./ROADMAP.md) 规划表为准） |
+| 测试覆盖 | 5296 测试 / 13 包（统计标准：`tools/check/test-count.sh` 实际执行的 workspace 包；实测见该脚本，声称数同步校验见 `tools/check/check-test-count.sh`。包数口径见下表注） |
 | 审计规则 | 24 条（17 默认 + 7 扩展），活跃编号 A1-A11 + A14-A23 + E1/E2/E4（A12/A13/E3 已并入 A11，编号不再使用），每次 commit 自动跑 |
 | FORGE | fresh-eyes-loop + release-gate-loop 运行中 |
 | 数据目录 | **data/**（v1.2.1+ SSOT 运行时数据目录） |
 
-> 📦 **包数口径**：全仓共 **26 个 workspace**——13 个 `@sofagent/*` 模块包 + 1 个工具包 `load-chain` + 7 个 DSH 插件（private，随 DSH 分发）+ 4 个 OpenClaw 插件 + 1 个 npm 裸名总包 umbrella；其中 14 个发布为 `@sofagent` scope（13 模块包 + load-chain）+ 1 个裸名总包，共 **15 个 npm 发布物**。OpenClaw 插件经根 `npm test --workspaces` 统一执行测试。
+> 📦 **包数口径**：全仓共 **27 个 workspace**——13 个 `@sofagent/*` 模块包 + 1 个工具包 `load-chain` + 1 个插件适配层基座包 `dsh-plugin-kit` + 7 个 DSH 插件（v1.5.2 章九起摘 `private` 转 npm 发布物）+ 4 个 OpenClaw 插件 + 1 个 npm 裸名总包 umbrella；其中 15 个发布为 `@sofagent` scope（13 模块包 + `load-chain` + `dsh-plugin-kit`）+ 7 个 DSH 插件 + 1 个裸名总包，共 **23 个 npm 发布物**。OpenClaw 插件经根 `npm test --workspaces` 统一执行测试。
 
 ---
 
@@ -292,7 +292,8 @@ graph TB
 | 术语 | 简释 | 精确定义 |
 |------|------|---------|
 | FDE | Forward Deployed Engineer——进场生成判断、部署 AI 节点的工程师 | [PHILOSOPHY §一](./PHILOSOPHY.md) |
-| 同名导出消歧 | 不同包导出同名符号时以「来源包 + 符号名」双键区分，禁裸符号名 grep 判接线。已知同名对：`routeRequest`——`@sofagent/orchestrator/workflow`（语义路由，route/route-request.ts）vs `canaryRouteRequest`（`@sofagent/train` 权重灰度分流，weight-canary.ts——该导出 v1.5.0 更名避歧） | [DEVELOPMENT §包结构](./DEVELOPMENT.md) |
+| FDEing（= Forward Deployed Engineering） | FDE 的动词化——把 FDE 从一项人力工作变成一种可自动执行的能力（人走能力不走，花更少的人力提供更多的能力）；万物皆可 FDEing：任何业务对象、流程、节点被 FDEing 一遍「梳理 → 判定 → 交付 → 养护」。**思维方式三问**：workflow 怎么搭 / AI 节点是什么 / 怎么让 AI 帮实现。FDE 名词位（岗位）、FDEing 动词位（能力与动作），禁混用 | [README · 什么是 FDE Harness（含 FDEing 愿景引语）](../README.md#什么是-fde-harness) |
+| 同名导出消歧 | 不同包导出同名符号时以「来源包 + 符号名」双键区分，禁裸符号名 grep 判接线。已知同名对：`routeRequest`——`@sofagent/orchestrator/workflow`（语义路由，route/route-request.ts）vs `canaryRouteRequest`（`@sofagent/train` 权重灰度分流，weight-canary.ts——该导出 v1.5.0 更名避歧） | [ARCHITECTURE §27 个 workspace 源码包](./ARCHITECTURE.md) |
 | 中间件（Harness 中间件） | **品类定位词**——答「sofagent 属于哪个品类」（Harness 类运行时/治理框架）；**不是**「约束层是技术实现层的中间件」这一实现论判断 | [ARCHITECTURE §术语对照](./ARCHITECTURE.md#术语对照) |
 | Harness | 约束层的英文 SSOT 称法（对外中文「约束层」、英文「Harness」同指一物）——"缰绳"，非"马" | [ARCHITECTURE §术语对照](./ARCHITECTURE.md#术语对照) |
 | 双层架构 | 约束层 × 生命周期——约束层保证"每次做对"，生命周期保证"从诊断到自运转怎么走" | [ARCHITECTURE §二·双层架构](./ARCHITECTURE.md#双层架构约束层与生命周期主框架) |
@@ -305,7 +306,7 @@ graph TB
 | FORGE | 自迭代工具链（内部工具，外部用户可忽略）——Agent 审查/修复/验证自己的代码 | [FORGE/README.md](../FORGE/README.md) |
 | fresh-eyes-loop | FORGE 的质量审查闭环（a-check→b-check→a-consolidate→b-fix→a-verify） | [FORGE/SKILL/fresh-eyes-loop/SKILL.md](../FORGE/SKILL/fresh-eyes-loop/SKILL.md) |
 | release-gate-loop | FORGE 的发版闸门闭环（acceptance-test + regression + 审查报告） | [FORGE/SKILL/release-gate-loop/SKILL.md](../FORGE/SKILL/release-gate-loop/SKILL.md) |
-| ToolGate | Agent 工具调用的前置门禁（A2 密钥/A9 注入/A14 越权等规则） | [DEVELOPMENT §ToolGate](./DEVELOPMENT.md) |
+| ToolGate | Agent 工具调用的前置门禁（A2 密钥/A9 注入/A14 越权等规则） | [ARCHITECTURE §27 个 workspace 源码包](./ARCHITECTURE.md) |
 | data/ | v1.2.1 SSOT 运行时数据目录（安装后实际位于 ~/.sofagent/data/），替换旧 .sofagent/ | [DEVELOPMENT §数据文件架构](./DEVELOPMENT.md) |
 
 ---
@@ -331,7 +332,7 @@ graph TB
 | 你想…… | 读这个 |
 |---------|--------|
 | 用治理面板 / 查 trace 对账（v1.5.0+） | [HANDBOOK 治理面](./HANDBOOK.md) · [devlog v1.5.0](./changelog/v1.5/v1.5.0.md) |
-| 查接口总览（105 MCP tools） | [API.md](./API.md) |
+| 查接口总览（107 MCP tools） | [API.md](./API.md) |
 | 了解系统怎么设计的 | [ARCHITECTURE.md](./ARCHITECTURE.md) |
 | 搭建本地开发环境 | [DEVELOPMENT.md](./DEVELOPMENT.md) |
 | 查某个版本改了什么 | [CHANGELOG.md](../CHANGELOG.md) → `docs/changelog/vX.Y/vX.Y.Z.md` |

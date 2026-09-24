@@ -59,7 +59,7 @@
 
 ## FDE Harness 能替你干什么
 
-> 这一节先讲「价值」，再讲「怎么用」。sofagent 不是一个工具包，而是**一层 FDE Harness**——嵌在成熟 Agent（DSH / OpenClaw / WorkBuddy / Codex / Claude Code）与模型层之间，对执行体约束、对智力源治理，替企业把大模型变成 7×24 自动执行的 AI 节点（产品形态 = FDE Harness 层，见 [WIKI 产品叙事](./WIKI.md#二产品叙事sofagent-是-fde-harness-层不造-agent嵌在-agent-与模型之间做治理)）。完整能力矩阵见 [ARCHITECTURE · 能力与状态总览](./ARCHITECTURE.md#能力与状态总览)。
+> 这一节先讲「价值」，再讲「怎么用」。sofagent 不是一个工具包，而是**一层 FDE Harness**——嵌在成熟 Agent（DSH / OpenClaw / WorkBuddy / Codex / Claude Code）与模型层之间，对执行体约束、对智力源治理，替企业把大模型变成 7×24 自动执行的 AI 节点（产品形态 = FDE Harness 层，见 [WIKI 产品叙事](./WIKI.md#二产品叙事sofagent-是-fde-harness-层不造-agent嵌在-agent-与模型之间做治理)）。完整能力矩阵见 [ARCHITECTURE · 能力与状态总览](./ARCHITECTURE.md#能力与状态总览)。把下面这份清单读成一句话：**你的每个业务对象都能被 FDEing 一遍**——FDE 是名词（岗位 / 方法论），FDEing 是动词（把这套打法跑一遍）。
 
 **已经能替你干的事**（按两相位分组——进场生成判断 / 离场驻留判断）：
 
@@ -217,6 +217,7 @@ cd sofagent && bash install.sh
 ### 验证装好了
 
 ```bash
+# 前置：fresh clone 需先 npm install && npm run build（verify.sh 依赖构建产物 dist/）
 bash engine/scripts/verify.sh    # 跑 verify 检查，通过即装好可用（--json 可进 CI）
 # 或 npm 安装后直接用
 sofagent-core verify                # 同样跑 verify 检查（注：没有 sofagent-verify 这个命令）
@@ -492,7 +493,7 @@ jobs:
 
 | 能力 | 版本 | 一句话 | 明细 |
 |------|------|--------|------|
-| 治理模块·可见性与本体成熟 | v1.5.0 | Dashboard 治理 tab（KPI 六卡 + lineage 合规报告 + 周报导出）· 本体数据双时态 · Validation Engine · 跨层证据对账 trace_reconcile（1 新 tool） | [v1.5.0 开发日志](./changelog/v1.5/v1.5.0.md) |
+| 审计模块·对外面与判定语义 | v1.5.2 | MCP audit 数据对外（audit_query 只读查询 + 事件订阅推送）· 约束导出与证据链外部可验（ruleset_export 双向可逆 + verify-chain 独立验签器）· should-run 五问判定链 · 结论失效语义 · 出口治理（host 白名单 + 出站裁决挂链）· 事前授权 mandate | [v1.5.2 开发日志](./changelog/v1.5/v1.5.2.md) |
 | 编排模块·事件驱动 | v1.5.1 | 业务事件触发（四类事件源 + `on:` 订阅 + 死信重放）· 理解债务应对（auto-PR 决策解释 + daemon 周报四段）· 设备 OTA 远程升级（事件总线 + 验签 + 灰度批次）· 异常处理总线（三分类路由）· `sofagent demo` 五分钟戏剧弧 | [v1.5.1 开发日志](./changelog/v1.5/v1.5.1.md) |
 
 
@@ -524,7 +525,7 @@ jobs:
 
 ### 在 DSH 中使用 sofagent（MCP 互通）
 
-sofagent 本身就是一个 MCP server（stdio 传输，bin `sofagent-mcp`，当前口径 105 个 tool——以 `engine/mcp/src/tool-registry.ts` 实数为准）。DSH 用户用官方 `@deepseek-ai/dsh-mcp-client` 桥接插件挂上 `sofagent-mcp`，即可在 DSH 会话里调用 sofagent 的全部能力——审计查询、知识库检索、A/B 实验、快照时间线等。
+sofagent 本身就是一个 MCP server（stdio 传输，bin `sofagent-mcp`，当前口径 107 个 tool——以 `engine/mcp/src/tool-registry.ts` 实数为准）。DSH 用户用官方 `@deepseek-ai/dsh-mcp-client` 桥接插件挂上 `sofagent-mcp`，即可在 DSH 会话里调用 sofagent 的全部能力——审计查询、知识库检索、A/B 实验、快照时间线等。
 
 **配置方法、字段说明（`cordis.yml` 挂载示例）、两种 command 写法、安全边界（破坏性 tool 强制人审）与验证状态，整节见 [DSH MCP 互通指南](./guides/dsh-mcp-integration.md)。**
 

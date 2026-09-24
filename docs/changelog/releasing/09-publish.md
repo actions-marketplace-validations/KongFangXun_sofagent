@@ -99,12 +99,12 @@ bash tools/check/check-test-count.sh --quiet
 bash tools/check/check-storefront.sh
 # 期望 FAIL=0。FAIL = 仓外门面漂移，gh repo edit 修正后重跑
 
-# ── 步骤二·补：SKIP / 降级跳过 数逐条裁决（v1.4.9 G-2② 新增 · **必做**）──
+# ── 步骤二·补：SKIP / 降级跳过 数逐条裁决（**必做**）──
 # 为什么要有这一步（实测根因，不是形式主义）：「门禁绿 = 增量为零 ≠ 债清零」——
-#   ① 锚定串不命中即「天然通过」（v1.4.9 G-1 已修）
+#   ① 锚定串不命中即「天然通过」（已修）
 #   ② 文件级前置过滤静默跳过（check-silent-catch：617 个 .ts 跳过 167 个，其中 83 个含 177 处 catch 零覆盖）
 #   ③ 存量基线豁免（silent-catch-baseline.json 304 条）
-#   ④ 已知告警只计 WARNING 即放行——v1.4.8 发版批里 check-version §15 已精确抓到 ROADMAP 版本头
+#   ④ 已知告警只计 WARNING 即放行——check-version §15 已精确抓到 ROADMAP 版本头
 #      描述错版，却因「非 --strict」随发版出门（= P1-7 根因）。
 # 共性：跳过是看不见的。故每个门禁结尾强制打印机器可读覆盖度行，本步逐条裁定并留档。
 for c in check-docs check-version check-storefront check-readme-parity; do
@@ -124,7 +124,7 @@ grep -h '^\[check:coverage\]' /tmp/check-*.log
 #   合法窗口态 → 注明「随 push+tag+publish 自然消解」或「下版 vX.Y.Z 收敛」
 #   已知盲区   → 注明收敛计划版本（例：check-silent-catch 前置过滤 167 文件，登记表 tools/check/silent-catch-prefilter-exempt.json）
 
-# ── 发版窗口 --strict 默认开（v1.4.9 G-2③）──
+# ── 发版窗口 --strict 默认开 ──
 # pre-push-check.sh 第 2 步在**发版窗口**（tag v{SSOT} 在位 + 下一 patch 版开发日志在位）
 # 自动给 check-version 加 --strict：warning 也阻断（exit 2 → FAIL）。
 # 窗口外维持旧行为（warning 只提示），避免把非发版期的合法中间态告警变成日常推阻。
@@ -241,7 +241,7 @@ git merge-base --is-ancestor "$REMOTE_SHA" HEAD && echo "✓ 快进可推" || \
 > 🔴 **CI 全绿是打 tag 的硬前置**：push 之后必须**轮询等到全绿**（不是看一眼就走）——`exit 0` 之前禁止进入步骤六。CI 红着打 tag 会让用户装到坏版本（tag 是安装入口的锚点），回滚成本远高于等待 2-5 分钟。**轮询必须前台执行**：上述 while 循环在 session 前台逐轮跑（每轮一查 + sleep 60），严禁包进 run_in_background——挂后台 = session 空闲 = 界面无进展反馈。轮询脚本如下（循环跑直到 exit 0，每次间隔 60s）：
 
 ```bash
-# ── push main（🔴 v1.5.1 实证：裸命令一次成功率不稳——github.com:443 间歇阻断，
+# ── push main（🔴 实证：裸命令一次成功率不稳——github.com:443 间歇阻断，
 #    round 2 才成功是常态。push 主命令直接用「网络降级策略」的重试循环形态跑
 #    （退出码判定版，禁 `| tail` 管道测退出码），失败形态见该节三连失败谱）──
 for i in $(seq 1 10); do
@@ -278,7 +278,7 @@ done
 # exit 2 = 还在跑（循环重查） / exit 1 = 有失败（定位 → 修 → push → 重等，禁止打 tag） / exit 0 = 全绿
 ```
 
-> 🔴 **禁自写轮询脚本替代上方官方段**（v1.4.9 实锤）：执行者常顺手用 `PENDING=$(gh run list ... | grep -c ...)` 自写简化版——zsh 下 grep 命中 0 行时 exit 1 触发 `|| echo 0`，`$()` 捕获 "0\n0" 双值 → `[ -eq ]` integer expression expected **死循环不退出**（CI 实际早已全绿，后台任务空转）。上方 node 单进程版无此陷阱；确需自写时，计数一律 `n=${n:-0}` 归一 + 用 `grep -q` 不用 `grep -c`。
+> 🔴 **禁自写轮询脚本替代上方官方段**：执行者常顺手用 `PENDING=$(gh run list ... | grep -c ...)` 自写简化版——zsh 下 grep 命中 0 行时 exit 1 触发 `|| echo 0`，`$()` 捕获 "0\n0" 双值 → `[ -eq ]` integer expression expected **死循环不退出**（CI 实际早已全绿，后台任务空转）。上方 node 单进程版无此陷阱；确需自写时，计数一律 `n=${n:-0}` 归一 + 用 `grep -q` 不用 `grep -c`。
 
 > 🔴 **CI 失败三分类处置（先分类再动手——不同类修法完全不同）**：
 > 1. **真回归**（本版改动引入：新脚本 set -u 炸弹 / 新测试环境假设 / 配置兜底链引用未初始化变量）→ 修根因 → 复现验证 → push 重等。识别特征：v上版 tag..HEAD 的 diff 里能定位到引入点。
@@ -288,7 +288,6 @@ done
 >    ① **构建产物残留掩盖**——本地 `engine/*/dist` 等产物存在，CI 干净环境没有；TS2307 类「依赖找不到」报错而本地全绿时，先 `rm -rf engine/*/dist && npm run build` 模拟 CI 干净态重建复现。同类还有 build 脚本拓扑序倒置（本地 dist 残留按依赖序缓存掩盖了乱序）——干净态重建 exit 0 即证新序自洽。
 >    ② **宿主环境依赖**——测试依赖 `~/.sofagent-key` 等本机运行时文件，本地有 CI 无（或反之）；复现法：`SOFAGENT_KEY_PATH=/tmp/nonexistent` 等隔离 env 重跑，失败姿势与 CI 一致即锁定。
 >    ③ **CI job 缺前置**——job 刻意「不装依赖直接跑」时，构建产物类依赖（如 AST 引擎 `engine/rules/dist/`）缺失致工具降级路径被静默触发，口径分歧报误报；修 job steps 补依赖+build，工具降级分支必须有 fail-loud 警告。
-```
 
 ---
 
@@ -374,7 +373,35 @@ fi
 
 ## 步骤七：gh release（触发 release.yml 自动 publish audit + mcp） ☐
 
-> GitHub Release published 后，`.github/workflows/release.yml` 自动触发，publish `@sofagent/audit` 和 `@sofagent/mcp` 两个包到 npm。其余 13 包在步骤八手动 publish（12 个 `engine/<pkg>` scope 包 + load-chain + 裸名总包 sofagent——包数口径以步骤八头部为准）。
+> GitHub Release published 后，`.github/workflows/release.yml` 自动触发，publish `@sofagent/audit` 和 `@sofagent/mcp` 两个包到 npm。其余 `@sofagent/*` 与裸名总包在步骤八手动 publish（13 个手动 `@sofagent/*` = 11 个引擎模块包 + `load-chain` + `dsh-plugin-kit`，加裸名总包 `sofagent` 共 **14 包**——包数口径以步骤八头部为准）；**另有七款 DSH 插件**（`cordis-plugin-sofagent-*`，裸名、目录在 `engine/dsh-plugins/`）同样在步骤八手动 publish——见「步骤八·补」。
+
+### 🔴 dist-tag 分道（`gh release create` 之前必做 · 施工期一律 `--tag alpha`）
+
+> **判据是版本期，不是日期**：本版低于 `v2.0.0` = 施工期 → 本版**全部 23 包**（15 个 `@sofagent/*` scope 包（13 模块包 + `load-chain` + `dsh-plugin-kit`）+ 1 个裸名总包 + 七款 DSH 插件）以 `--tag alpha` 发布，**`latest` 不动**；本版达到 `v2.0.0` = 贝塔，不加 tag（默认写 `latest`），恢复正常发布。
+> **为什么有这条**：施工期功能面快速变动、不承诺接口稳定，`latest` 是留给「装了就不想被施工期改动打扰」的稳定通道——施工期把 `latest` 一路顶到最后一个施工版，等于把所有用户强推上施工节奏。
+>
+> 🔴 **自动通道也要管**：`.github/workflows/release.yml` 的 `npm publish --access public` **不带 tag**——本步骤若不先行，audit + mcp 会被 CI 以默认 tag 发布、`latest` 当场被改写。故施工期必须在 `gh release create` **之前**先手动以 `alpha` 发布这两包：release.yml 的 `Check if version already published` 步查到版本已在即置 `skip=true`、自动跳过 publish（该跳过通道 release.yml 内既有，非本步骤新增机制）。
+
+```bash
+# 施工期（本版低于 v2.0.0）：先手动以 alpha 发布自动通道那两包，再 gh release create
+( cd engine/audit && npm publish --access public --tag alpha ) > /tmp/publish-audit.log 2>&1 \
+  || { echo "🔴 audit publish 失败："; cat /tmp/publish-audit.log; exit 1; }
+( cd engine/mcp && npm publish --access public --tag alpha ) > /tmp/publish-mcp.log 2>&1 \
+  || { echo "🔴 mcp publish 失败："; cat /tmp/publish-mcp.log; exit 1; }
+# 达到 v2.0.0 起：删掉上方两行（恢复由 release.yml 自动发布 = latest）
+```
+
+**逐格打勾**（施工期四格全做；达到 `v2.0.0` 起只做第 4 格）：
+
+- [ ] 判版本期：本版低于 `v2.0.0` → 本步骤与步骤八全程 `--tag alpha`；达到 `v2.0.0` → 全程默认 tag
+- [ ] 施工期：`gh release create` 之前先行发布 audit + mcp（上方命令），并确认 release.yml 走到「已发布即跳过」
+- [ ] 施工期：步骤八每处 `npm publish --access public` 追加 `--tag alpha`
+- [ ] 发布后对账：逐包 `npm view @sofagent/<pkg> dist-tags --prefer-online`——期望 `alpha` = 本版、**`latest` 不动**。施工期任何包出现在 `latest` = 策略被破坏：处置是查发布命令漏了 tag，**不是改本文件**
+
+> 🔴 **首发包（本版首次上 npm 的包）额外一拍**：`--tag alpha` 意味着该包在 `@latest` 上**根本不存在**——`npm i <pkg>`（默认取 `latest`）会报 `No matching version found`。本版首发的七款 DSH 插件 + `@sofagent/dsh-plugin-kit` 全属此类。二选一，**发布前想清楚选哪条**：
+> ① **保持施工期分道**：对外说明用 `npm i <pkg>@alpha`（或 `npm dist-tag add` 前先不装）；`latest` 留到**贝塔期**再由一次正式发布顶上（判据 = 本版低于 `v2.0.0`，见上）。
+> ② **验证通过后提升 `latest`**：**先**在干净 DSH 环境跑完「步骤八·补」的四段实装验证（挂载 → seam 订阅 → `helpers.call` 引擎包解析 → 事件触发产出），**再**执行 `npm dist-tag add <pkg>@<版本> latest` 逐款顶 `latest`。
+> ⚠️ **顺序不可颠倒**：未验证就顶 `latest` = 把未验证的空壳推给 `npm i` 的默认通道（本仓最痛恨的假绿形态）。逐款 `dist-tag add` 后仍按上一格复查 `dist-tags`。
 
 ### 🔴 发版 artifact 四件对账（release create 后立即做，不等收尾）
 
@@ -382,9 +409,9 @@ fi
 
 | # | artifact | 核验命令 | 期望 |
 |---|----------|---------|------|
-| 1 | git tag（远端存在且指向发版 commit） | 🔴 annotated tag 对账口径（v1.4.9 实锤）：`gh api git/refs/tags` 返回的是 **tag object SHA** ≠ commit SHA，直接与 `git rev-parse vX.Y.Z^{commit}` 比必不等——正确对账二选一：① `gh api refs/tags` 的 sha == `git rev-parse vX.Y.Z`（本地 tag object SHA）② `gh api git/tags/<object-sha>` 二段查 `.object.sha` == `git rev-parse vX.Y.Z^{commit}` | 两 SHA 一致（同口径） |
+| 1 | git tag（远端存在且指向发版 commit） | 🔴 annotated tag 对账口径：`gh api git/refs/tags` 返回的是 **tag object SHA** ≠ commit SHA，直接与 `git rev-parse vX.Y.Z^{commit}` 比必不等——正确对账二选一：① `gh api refs/tags` 的 sha == `git rev-parse vX.Y.Z`（本地 tag object SHA）② `gh api git/tags/<object-sha>` 二段查 `.object.sha` == `git rev-parse vX.Y.Z^{commit}` | 两 SHA 一致（同口径） |
 | 2 | GitHub Release（title + body 可达） | `gh release view vX.Y.Z --json name,isDraft` | name 匹配、isDraft=false |
-| 3 | npm 15 包（audit + mcp 自动，其余 13 手动后） | `for p in audit mcp core daemon eval harness ontology orchestrator train rules evolve think ab-test; do npm view @sofagent/$p version --prefer-online; done` + `npm view @sofagent/load-chain version --prefer-online` + `npm view sofagent version --prefer-online` | 15 项全部 = 本版号（🔴 必加 --prefer-online——裸查询吃缓存会误报漏发） |
+| 3 | npm 23 包（audit + mcp 自动，其余 14 手动 + 七款 DSH 插件手动后） | `for p in audit mcp core daemon eval inject ontology orchestrator train rules evolve think ab-test; do npm view @sofagent/$p version --prefer-online; done` + `npm view @sofagent/load-chain version --prefer-online` + `npm view @sofagent/dsh-plugin-kit version --prefer-online` + `npm view sofagent version --prefer-online` + `for p in $(node -p "require('./engine/dsh-plugins/plugins.json').plugins.map(p=>p.id).join(' ')"); do npm view "$p" version --prefer-online; done` | 23 项全部 = 本版号（🔴 必加 --prefer-online——裸查询吃缓存会误报漏发） |
 | 4 | 安装入口（README 双语 + bootstrap.sh 的 tag URL 可达） | `grep -rn "refs/tags/v" README.md README.en.md bootstrap.sh` + 逐条 `curl -sI` HTTP 200 | 三处 = 本版 tag 且真实可达 |
 
 > 任何一件不满足 = 发版未完成，当场补（重推 tag / 补 publish / 修 URL），不带病进入收尾。
@@ -395,7 +422,7 @@ fi
 >
 > 📌 **与阶段八的分工（2026-09 流程修正）**：三道工序的 body 生成**已在阶段八步骤六随发布 prompt 同批完成**并落 `~/Desktop/release-note-vX.Y.Z-body.md`——本步骤跑同一套三道工序，性质是**复核 + 落终版**（数字取阶段八冻结基线终值；发版窗口内若有微调，以本步骤终版为准并同步更新桌面文件）。**分工理由**：放行 = 授权对外发布，作者须在放行前过目 body 本体——body 留到本步骤才现场生成，放行决策就缺了一半依据。
 
-> 🔴 **剥元说明铁律（v1.4.8 实锤）**：devlog 的「## Release Notes」段**开头有两段给流程看的元说明**
+> 🔴 **剥元说明铁律**：devlog 的「## Release Notes」段**开头有两段给流程看的元说明**
 > （「本节存在性 = 阶段六定稿必备项…」+「⚠️ 数字取值说明…」），它们**不是面向用户的内容**，
 > 且含**仓内相对链接**（`../releasing/09-publish.md`）——原样搬进 GitHub Release body 会是
 > **废话 + 404**。生成 body 时必须：① **剥掉内部标题**（`## Release Notes · vX.Y.Z`）；
@@ -403,9 +430,9 @@ fi
 > （`gh release view v<上一版> --json body -q '.body' | grep -E "^## "` 对照）。
 > 自检：`grep -nE "阶段六定稿必备项|数字取值说明|\.\./releasing/" body.md` 应为空。
 >
-> ⚠️ **v1.4.8 补**：devlog 的 Release Notes 段**顶部与尾部各有一段元说明**——尾部那段形如
+> ⚠️ **补充**：devlog 的 Release Notes 段**顶部与尾部各有一段元说明**——尾部那段形如
 > `> 🔗 尾链：本段与 GitHub Release body 同源；发布时由阶段九三道工序生成，此处不重复。`
-> **两段都要剥**（只剥顶部会漏，v1.4.8 实锤）。自检命令同步扩为：
+> **两段都要剥**（只剥顶部会漏）。自检命令同步扩为：
 > `grep -nE "阶段六定稿必备项|数字取值说明|\.\./releasing/|Release body 同源" body.md` 应为空。
 > 另：body **必须**含指向本版 changelog 的相对链接（阶段十一步骤一以 `contains("](./docs/changelog/")` 断言）。
 
@@ -487,7 +514,7 @@ EOF
 > 🔴 **规范定义在且仅在 [06-doc-finalize.md 的「Release Notes」段](./06-doc-finalize.md)** —— 那里是
 > **格式规范源头**（Title 规则 / Body 五要素 / 质量表固定 7 项 / 破坏性变更写法）。
 >
-> **本节曾把同一套规范复制了一份** ⇒ 形成**双 SSOT**：v1.4.8 实锤——`09` 的副本里
+> **本节曾把同一套规范复制了一份** ⇒ 形成**双 SSOT**：实测——`09` 的副本里
 > `check-version` 示例还停在 `{N}/{N}`、acceptance 示例写成 `{N}/{N} 场景全绿`（与脚本实际的
 > `{N}/{N} passed · SKIP: {N} · EXIT: {N}` 不符），**规范一旦分叉，执法时按哪份都可能出错**。
 > 故此处**不再复述规范**，只保留本条指针；本步骤（步骤七）只负责**按 06 的规范生成 body**。
@@ -501,34 +528,42 @@ EOF
 
 ---
 
-## 步骤八：npm 手动 publish 其余 13 包（含裸名总包） ☐
+## 步骤八：npm 手动 publish 其余 14 包（含裸名总包）+ 七款 DSH 插件 ☐
+
+> 🔴 **dist-tag 分道（与步骤七同款）**：施工期（本版低于 `v2.0.0`）下方每处 `npm publish --access public`（含「步骤八·补」的七款插件）一律追加 `--tag alpha`、`latest` 不动；达到 `v2.0.0` 起去掉该 tag。判据与发布后对账命令见步骤七「dist-tag 分道」节（本节不复述）。
 
 > 🔴 **包列表 SSOT = 根 `package.json` 的 workspaces（可发布子集）——禁止把包名硬编码当事实源**。
 > 硬编码列表在包更名后必然漂移，照抄 = 静默漏发（漏发的包 npm 上停在上一版，无任何门禁会报）。
 > 开跑前先对账：`node -p "require('./package.json').workspaces.join('\n')"` 与下方循环逐项核对——
-> `engine/hooks/*`、`engine/umbrella` 不在循环内（单独发），`engine/dsh-plugins/*` 与
-> `engine/openclaw-plugins/*` 不是 npm 发布物（走 ClawHub/SkillHub 分发，见阶段十）。
+> `engine/umbrella`（裸名总包）不在循环内（单独发）；`@sofagent/load-chain`（`engine/hooks/`）与
+> `@sofagent/dsh-plugin-kit`（`engine/dsh-plugins/plugin-kit/`）虽**是** `@sofagent/*` scope 包，
+> 但目录布局不是 `engine/<pkg>`，故也不在下方 `@sofagent/*` 循环里——各自单独段。七款 DSH 插件
+> （`engine/dsh-plugins/cordis-plugin-sofagent*`）**是** npm 发布物，但包名是裸名、目录布局也不是
+> `engine/<pkg>`，故不在下方 `@sofagent/*` 循环里——见「步骤八·补」。`engine/openclaw-plugins/*`
+> 仍不是 npm 发布物（走 ClawHub 分发，见阶段十）。
 >
-> `npm publish --workspaces` 不支持 workspace 全局发布。release.yml 只 auto-publish audit + mcp（Release 触发），其余 13 包手动 publish（11 个 `engine/<pkg>` scope 包（13 个 @sofagent/* scope 包减去 auto 发布的 audit/mcp） + load-chain + 1 个裸名总包，合计补齐 15 包）。
+> `npm publish --workspaces` 不支持 workspace 全局发布。release.yml 只 auto-publish audit + mcp（Release 触发），其余 `@sofagent/*` 手动 publish（11 个 `engine/<pkg>` 模块包（13 个模块包减去 auto 发布的 audit/mcp） + `load-chain` + `dsh-plugin-kit` = 13 包），再加裸名总包 `sofagent` 共 **14 包手动发布**。**再加七款 DSH 插件，本步骤发布面 = 23 包**（= 15 个 `@sofagent/*` scope 包 + 7 款 DSH 插件 + 1 个裸名总包；审计口径见步骤七 artifact 表第 3 行）。
 >
-> ⚠️ **@sofagent/load-chain（`engine/hooks/sofagent-load-chain/`）是第 13 个 workspace 包，不在下方循环里**——它不叫 `engine/<pkg>` 布局（在 `engine/hooks/` 下），按「13 包」口径极易漏掉。必须把它加进循环与验证清单。
+> ⚠️ **`@sofagent/load-chain`（`engine/hooks/sofagent-load-chain/`）不在下方循环里**——下方循环写死 `engine/<pkg>` 布局，而它在 `engine/hooks/` 下，按「模块包」口径极易漏掉。必须把它加进循环与验证清单（仓内脚本 `publish-packages.sh` 已改为由根 workspaces 查表解析目录，不受此限）。
 >
-> ⚠️ **裸名总包 `sofagent`（`engine/umbrella/`）是第 14 个发布物**——npm 包名是裸名 `sofagent`（无 scope）、目录名是 umbrella，两者都与循环模式不匹配，单独段发布。它是 npm 渠道的聚合安装入口（`npm i -g sofagent` = 全功能四包），v1.4.6 起随主线版本同步发版。
+> ⚠️ **`@sofagent/dsh-plugin-kit`（`engine/dsh-plugins/plugin-kit/`）同样不在下方循环里**（章九二轮起转 npm 发布物）——目录在 `engine/dsh-plugins/` 下、不匹配 `engine/<pkg>`。它是六款原子插件的**适配层基座依赖** ⇒ **必须先于七款 DSH 插件发布**（否则插件装完第一步挂载即 `MODULE_NOT_FOUND: Cannot find module '@sofagent/dsh-plugin-kit'`）。单独段发布，见下方「load-chain 段」之后。
+>
+> ⚠️ **裸名总包 `sofagent`（`engine/umbrella/`）是手动 14 包中唯一的裸名包**——npm 包名是裸名 `sofagent`（无 scope）、目录名是 umbrella，两者都与循环模式不匹配，单独段发布。它是 npm 渠道的聚合安装入口（`npm i -g sofagent` = 全功能四包），v1.4.6 起随主线版本同步发版。
 
 ```bash
 # 等 release.yml 完成（通常 3-5 分钟），确认 audit + mcp 已到 npm
 npm view @sofagent/audit@vX.Y.Z version --prefer-online  # 期望返回版本号
 npm view @sofagent/mcp@vX.Y.Z version --prefer-online    # 期望返回版本号
 
-# 手动 publish 其余 13 包——每包 publish 后立即 npm view 对账 + E409 自动等待重查
+# 手动 publish 其余 11 个引擎模块包——每包 publish 后立即 npm view 对账 + E409 自动等待重查
 # 🔴 publish 输出严禁接管道过滤（| grep xxx）——报错被过滤吞掉会表面循环跑完实际漏发，
-#    15 包对账时才发现。输出必须全量落盘，失败立即停。
+#    23 包对账时才发现。输出必须全量落盘，失败立即停。
 # 🔴 npm view 对账必须加 --prefer-online——裸查询吃本地缓存，刚 publish 完会误报
 #    「失败实已发布」（发版 session 本地缓存里还是上版）。大包（≥800KB）registry 侧
 #    收录延迟可达 3+ 分钟，对账窗口预留足够，勿据一次裸查询判定失败。
 # 🔴 publish 日志含 `+@sofagent/<pkg>@<ver>` 行 = 已成功入队（npm CLI 的发布确认标记）——
 #    propagation 延迟期（30s-5min 波动）view 查不到 ≠ 发布失败。判定序：先查日志有无入队行，
-#    有则等 3 分钟再补查，连续 ≥6 轮仍查不到才升级人工处理（v1.4.9 实锤：orchestrator/train/
+#    有则等 3 分钟再补查，连续 ≥6 轮仍查不到才升级人工处理（实锤：orchestrator/train/
 #    load-chain 三包 6 轮超时全虚惊，日志均含入队行，等后全绿）。
 TARGET_VER=$(node -p "require('./package.json').version")
 for pkg in core daemon eval inject ontology orchestrator train rules evolve think ab-test; do
@@ -564,17 +599,26 @@ for pkg in core daemon eval inject ontology orchestrator train rules evolve thin
   [ "$LIVE" = "$TARGET_VER" ] && echo "  ✅ @sofagent/$pkg = $LIVE" || { echo "  🔴 对账失败：期望 $TARGET_VER 实际 $LIVE"; exit 1; }
 done
 
-# @sofagent/load-chain（布局在 engine/hooks/ 下，不进上面的循环——15 包口径之 14，验证逻辑同上）
+# @sofagent/load-chain（布局在 engine/hooks/ 下，不进上面的循环——14 包手动口径之 12，验证逻辑同上）
 ( cd "engine/hooks/sofagent-load-chain" && npm publish --access public ) > /tmp/publish-load-chain.log 2>&1
 RC=$?
 [ $RC -ne 0 ] && { echo "🔴 load-chain publish 失败："; cat /tmp/publish-load-chain.log; exit 1; }
 LIVE=$(npm view @sofagent/load-chain version 2>/dev/null || true)
 [ "$LIVE" = "$TARGET_VER" ] && echo "✅ @sofagent/load-chain = $LIVE" || echo "🔴 load-chain 对账失败：期望 $TARGET_VER 实际 $LIVE"
 
-# 裸名总包 sofagent（engine/umbrella/——npm 聚合安装入口，包名无 scope 不进上方循环；15 包口径之 15）
+# @sofagent/dsh-plugin-kit（engine/dsh-plugins/plugin-kit/，不进上面的循环——14 包手动口径之 13）
+# 🔴 必须**先于「步骤八·补」的七款 DSH 插件**发布：六款原子插件以包名依赖它，
+#    顺序反了则插件从 registry 装完第一步挂载即 MODULE_NOT_FOUND。验证逻辑同上。
+( cd "engine/dsh-plugins/plugin-kit" && npm publish --access public ) > /tmp/publish-dsh-plugin-kit.log 2>&1
+RC=$?
+[ $RC -ne 0 ] && { echo "🔴 dsh-plugin-kit publish 失败："; cat /tmp/publish-dsh-plugin-kit.log; exit 1; }
+LIVE=$(npm view @sofagent/dsh-plugin-kit version 2>/dev/null || true)
+[ "$LIVE" = "$TARGET_VER" ] && echo "✅ @sofagent/dsh-plugin-kit = $LIVE" || echo "🔴 dsh-plugin-kit 对账失败：期望 $TARGET_VER 实际 $LIVE"
+
+# 裸名总包 sofagent（engine/umbrella/——npm 聚合安装入口，包名无 scope 不进上方循环；14 包手动口径之 14）
 # bin = `sofagent` 薄转发到 @sofagent/audit CLI；dependencies 四功能包（audit/mcp/orchestrator/daemon）
 # 版本随 SSOT 同步（bump-version.sh 步骤 2c 自动覆盖 engine/umbrella/package.json）。
-# 0.0.1 占位包（v1.4.6 前的防抢注壳）无需 unpublish——总包跳版发布后 latest 自动指向本版。
+# 0.0.1 占位包（防抢注壳）无需 unpublish——总包跳版发布后 latest 自动指向本版。
 ( cd "engine/umbrella" && npm publish --access public ) > /tmp/publish-umbrella.log 2>&1
 RC=$?
 if [ $RC -ne 0 ] && grep -q "E409\|previously staged" /tmp/publish-umbrella.log; then
@@ -595,8 +639,58 @@ done
 [ "$LIVE" = "$TARGET_VER" ] && echo "  ✅ sofagent（裸名总包）= $LIVE" || { echo "  🔴 裸名总包对账失败：期望 $TARGET_VER 实际 $LIVE"; exit 1; }
 # 发版后冒烟：裸名直觉安装命令在 dry-run 下解析成功（不真装）
 npm view sofagent dependencies --json | grep -q '"@sofagent/audit"' && echo "  ✅ 总包依赖面在位（audit/mcp/orchestrator/daemon）" || echo "  🔴 总包依赖面缺失——检查 package.json files/dependencies"
+```
 
 > 🔴 **E409「previously staged version」处理**：`npm publish` 网络中断会在 registry 留下 **staged blob**（发布事务中间态，版本号被占位但未 finalize）——同版本重发报 `409 Conflict - Cannot publish over previously staged version "X.Y.Z"`。**staged 版本约 5 分钟内自动 finalize**（多版实证：E409 后等待约 5 分钟，`npm view dist-tags.latest` 即显示新版本，无需 unpublish）。处理顺序：① 先等 5 分钟重查 `npm view <pkg> dist-tags.latest`；② 仍未 finalize 再考虑 `npm unpublish <pkg>@<version> --force`（staged blob 独立于记录，unpublish 后 registry 主节点传播完成即可重发同版本）。⚠️ 与「npm 版本永久锁死」铁律不冲突——E409 staged 是**未 finalize 的占位**，可清除重发；已 published 的版本才不可覆盖。
+
+### 步骤八·补：七款 DSH 插件（`cordis-plugin-sofagent-*`） ☐
+
+> 🔴 **为什么必须单独补一段**：上方 `@sofagent/*` 循环只筛该 scope 前缀 **+ `engine/<pkg>` 布局**，而这七款的
+> 包名是**裸名** `cordis-plugin-sofagent*`、目录在 `engine/dsh-plugins/<id>`——两者都不匹配 ⇒ 上方循环会
+> **静默跳过这七款却仍打印「✅ 全部包已发布」**。故此处显式发布；清单取自插件 SSOT
+> `engine/dsh-plugins/plugins.json`（**不硬编码包名**——改名/新增款由数据源自动纳入，目录缺失即报红），
+> 顺序 = 六原子款在前、suite 聚合款（`cordis-plugin-sofagent`，其 `optionalDependencies` 引用六个原子款）在末。
+>
+> 🔴 **发布前置之前置（章九二轮）**：本段的**前一拍**是上方「`@sofagent/dsh-plugin-kit` 单独段」——
+> 六款原子插件以包名依赖 `@sofagent/dsh-plugin-kit`，该包未先发则逐款实装的第三步「`helpers.call` 引擎包
+> 解析」必挂 `MODULE_NOT_FOUND: Cannot find module '@sofagent/dsh-plugin-kit'`。**kit 未发，本段不可开跑。**
+>
+> 🔴 **发布前置（章九硬门禁）**：七款必须先在**干净 DSH 环境逐款实装四段验证**（挂载 → seam 订阅 →
+> `helpers.call` 引擎包解析 → 事件触发产出）——**不满足「单独可用」的不得发布**（空壳不发布）。
+>
+> 🔴 **`--access public` 写法与裸名总包同款**（见上方 umbrella 段）——七款同为非 scoped 裸名，照抄该写法。
+> 施工期同样追加 `--tag alpha`（见步骤七「dist-tag 分道」）。七款均为**首发包**，`--tag alpha` 后默认
+> `latest` 上不存在 ⇒ 「`@alpha` 装不上 / 验证后 `npm dist-tag add` 顶 `latest`」二选一，见步骤七「首发包
+> 额外一拍」。
+
+```bash
+# 七款 DSH 插件：清单取自 plugins.json（原子款在前、suite 末尾），逐款 publish + 即时对账
+cd "$(git rev-parse --show-toplevel)"
+for p in $(node -p "const d=require('./engine/dsh-plugins/plugins.json');const s=d.plugins.filter(p=>p.kind==='suite').map(p=>p.id);[...d.plugins.map(p=>p.id).filter(i=>!s.includes(i)),...s].join(' ')"); do
+  echo "--- $p ---"
+  ( cd "engine/dsh-plugins/$p" && npm publish --access public ) > "/tmp/publish-$p.log" 2>&1
+  RC=$?
+  if [ $RC -ne 0 ]; then
+    echo "  🔴 publish 失败（exit $RC），完整报错："
+    cat "/tmp/publish-$p.log"
+    exit 1
+  fi
+  LIVE=""
+  for i in 1 2 3 4 5 6; do
+    LIVE=$(npm view "$p" version --prefer-online 2>/dev/null || true)
+    [ "$LIVE" = "$TARGET_VER" ] && break
+    echo "  ⏳ registry 传播中（查到 $LIVE），30s 后重查（第 $i 次）"
+    sleep 30
+  done
+  [ "$LIVE" = "$TARGET_VER" ] && echo "  ✅ $p = $LIVE" || { echo "  🔴 对账失败：期望 $TARGET_VER 实际 $LIVE"; exit 1; }
+done
+```
+
+> 仓内脚本同源实现 = `tools/release/publish-packages.sh` 的「DSH 插件发布」段（同数据源、同「原子款在前
+> suite 在后」顺序、目录缺失即置失败标记、版本验证循环涵盖七款）。该脚本的 `@sofagent/*` 段**已改为由根
+> `package.json` 的 workspaces 构建「包名→目录」查表**（章九二轮）——`@sofagent/dsh-plugin-kit`
+> 因此被自动纳入并落第一层，无需像本 SOP 那样单独开段；施工期执行脚本时用
+> `SOFAGENT_PUBLISH_TAG=alpha bash tools/release/publish-packages.sh <版本>` 让全量 publish 追加 `--tag alpha`。
 
 ---
 

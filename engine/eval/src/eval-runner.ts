@@ -121,15 +121,32 @@ async function runTestCase(
 /**
  * 默认 runner：直接模拟执行
  * 生产环境可替换为实际 Agent 调用
+ *
+ * ⚠️ **形态白名单——本 mock 只接受 `{ diff: string }`**。其余一切输入形态
+ * （`{}`、`{ task }`、golden set 的结构化 `{ diffFiles: [{ path, status, lines }], task }`、
+ * `diff` 非字符串……）一律**显式抛错**，绝不猜测、绝不回落空字符串——否则空串
+ * 无关键词命中会**静默返回 `result:'PASS'`**（典型假绿来源）。
+ *
+ * 真实评测必须注入 `cli.ts` 的 `createAuditRunner()`（它读 `input['diffFiles']`）。
  */
 export async function defaultRunFunction(input: Record<string, unknown>): Promise<Record<string, unknown>> {
+  // 白名单守卫：只有 `diff` 是字符串才放行；其余一切形态一律报错，不静默 PASS。
+  // 错误消息带实际 key 列表，便于定位调用方用错了 runner / schema。
+  if (typeof input['diff'] !== 'string') {
+    throw new Error(
+      'defaultRunFunction 只是 mock，只理解 { diff: string } 形态；' +
+        `实际收到 keys=[${Object.keys(input).join(', ')}]（typeof diff=${typeof input['diff']}）。` +
+        '真实评测必须注入 engine/eval/src/cli.ts 的 createAuditRunner()。',
+    );
+  }
+
   // 模拟审计模块执行：简单解析 diff 内容
   const result: Record<string, unknown> = {
     result: 'PASS',
     rules_triggered: [] as string[],
   };
 
-  const diff = String(input['diff'] ?? '');
+  const diff = input['diff'] as string;
   const context = (input['context'] ?? {}) as Record<string, unknown>;
 
   // 简单检查：如果 diff 包含明显违规关键词

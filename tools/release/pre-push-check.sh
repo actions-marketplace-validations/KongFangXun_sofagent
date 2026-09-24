@@ -22,10 +22,17 @@
 #                             ⑦ tools/README.md 收录对账 + 防线失明自检（2 子项）· v1.4.9 G-12 接入
 #   + check-home-resolution-parity.mjs → 家目录口径对照（harness resolveEngineHome ↔ core resolveHomeDir
 #                             同输入同输出 + 已登记差异钉住 · 须在构建之后跑 · v1.4.9 G-9 接入）
-#   + doc-discipline.sh    → 对外文档写作纪律（内部工单代号 / 本机私有路径 · v1.4.9 P2-27 接入）
+#   + doc-discipline.sh    → 对外文档写作纪律（内部工单代号 / 本机私有路径 / 来源块溯源 · v1.4.9 P2-27 接入）
 #   + check-prepush-checklist.mjs → 本清单自身的对账：清单里的脚本名 ⊆ 实际被调用（v1.4.9 G-16 接入）
+#   + check-archaeology.sh → 规则文档禁考古（正文不带版本号/日期/跑批编号（run-N·第N轮·Round N）/出身标签；
+#                             豁免：blockquote 叙事 / 能力版本门槛（`vX.Y.Z+`·`vX.Y.Z 起`·低于·达到）/
+#                             文件头版本标识 / 机器注释 / 机器字面量（引号或命令内版本号）/
+#                             台账锚串（tools/check/archaeology-exempt.json，逐条 {file,anchor,reason}）
+#                             · 批二接入）
 #   + check-gate-inventory.sh → 门禁清单覆盖对账：tools/check/ 守卫 ⊆ 真实调用面（抓孤儿守卫）
 #   + check-forms.mjs       → 形态归属标注对账（changelog ↔ ROADMAP 双向）
+#   + check-npm-claims.mjs  → registry 实测声称对账（文档声称值 vs registry 在线真值；
+#                             离线 SKIP 可见不假绿 · 豁免台账 npm-claims-exempt.json · v1.5.2 A-6 接入）
 #   + npm run build         → 审计模块构建
 #
 # 用法:
@@ -305,8 +312,10 @@ fi
 # ════════════════════════════════════════
 # 2e. 越包相对引用守卫（check-cross-package-relative.mjs · v1.4.9 P1-2）
 #   相对 import/require 解析后越出包根 ⇒ FAIL（已登记的存量豁免除外）。
-#   6 款 DSH 原子插件对 plugin-kit 的相对引用是刻意设计（见该包 //notWorkspace；v1.4.9 P2 合并批 9→6），
-#   此前**只写在注释里、零守卫**；本步把它升级为可执行约束。
+#   历史动机：6 款 DSH 原子插件曾对 plugin-kit 用相对引用（该包当时 private、刻意不入
+#   workspaces，见旧 //notWorkspace；v1.4.9 P2 合并批 9→6），此前**只写在注释里、零守卫**。
+#   v1.5.2 章九二轮起 kit 转正为 npm 发布物 @sofagent/dsh-plugin-kit、插件改用包名引用，
+#   该形态已收口（守卫 --selftest 断言其为 0）；本步仍保留为通用可执行约束，拦任何新增越包引用。
 #   退出码：0 = 绿（可含可见 SKIP）/ 1 = 有未登记越包引用 / 2 = 检查器失明
 #   （扫描面结构缺失时拒绝假绿——缺件被读成「零违规」正是要杀的形态）
 # ════════════════════════════════════════
@@ -365,6 +374,24 @@ if [ "$MINIMAL" = false ]; then
     check_fail "check-anchors.mjs 发现锚点过时"
     node tools/check/check-anchors.mjs 2>&1 | grep "✗" | head -10
     echo "  提示：node tools/check/check-anchors.mjs --fix 可自动修复"
+  fi
+fi
+
+# ════════════════════════════════════════
+# 4b. 规则文档禁考古（check-archaeology.sh · 批二接入）
+# 规则正文只写规则，不写出身（哪版加的 / 哪天定的 / 第几跑发现的 / 谁拍板的）——
+# 出身属 changelog 归档。命中项需逐条裁定「合法豁免 / 真实待清」，不得就地删内容。
+# 豁免台账：tools/check/archaeology-exempt.json（exemptPaths 路径级 = vendored 原文 + 历史档案；
+# exemptAnchors 行级 = {file, anchor, reason} 锚串，锚须文件内唯一且当前仍是命中行）。
+# ════════════════════════════════════════
+if [ "$MINIMAL" = false ]; then
+  echo -e "\n${BOLD}── 4b. 规则文档禁考古 ──${NC}"
+  if bash tools/check/check-archaeology.sh >/dev/null 2>&1; then
+    check_pass "check-archaeology.sh 全部通过（规则正文无出身考古）"
+  else
+    check_fail "check-archaeology.sh 有命中（规则正文带版本号/日期/跑批编号/出身标签）"
+    bash tools/check/check-archaeology.sh 2>&1 | grep -E "命中合计" | head -3
+    echo "  提示：bash tools/check/check-archaeology.sh 看逐条清单（文件:行号:原文）"
   fi
 fi
 
@@ -458,9 +485,9 @@ fi
 if [ "$MINIMAL" = false ]; then
   echo -e "\n${BOLD}── 3g. 对外文档写作纪律 ──${NC}"
   if bash tools/check/doc-discipline.sh >/dev/null 2>&1; then
-    check_pass "doc-discipline.sh 通过（对外文档零内部代号 / 零本机私有路径）"
+    check_pass "doc-discipline.sh 通过（对外文档零内部代号 / 零本机私有路径 / 来源块溯源合规）"
   else
-    check_fail "doc-discipline.sh 发现违规（内部工单代号或本机私有路径）"
+    check_fail "doc-discipline.sh 发现违规（内部工单代号 / 本机私有路径 / 来源块内部件）"
     bash tools/check/doc-discipline.sh 2>&1 | grep -E "❌|命中" | head -10
   fi
 fi
@@ -489,6 +516,37 @@ if [ "$MINIMAL" = false ]; then
     printf '%s\n' "$CF_OUT" | grep -E '❌|✗' | head -10
   fi
   unset CF_OUT CF_RC
+fi
+
+# ════════════════════════════════════════
+# 3i. registry 实测声称对账（check-npm-claims.mjs · v1.5.2 A-6 接入）
+# 为什么需要：README / docs 里所有「实测 npm view <pkg> dist-tags …」形态的对外
+#   声称，在发版（publish/tag）后必然失真却靠人肉记忆保鲜——A-5 的根因。
+#   本步把「文档声称值 vs registry 在线真值」的比对前移到推前，让失真当场红。
+# 已知债豁免：npm-claims-exempt.json（锚须文件内唯一且当前仍是命中行；A-5 一旦
+#   落地、锚串不再命中即 exit 2——债自动过期，不留永久口子）。
+# 三态语义：0 = 一致（可含可见 SKIP：registry 不可达）／1 = 声称与真值失配／
+#   2 = 检查器失明或豁免台账非法（拒绝假绿）。
+# 成本实测：常态 0 条待验声称（已豁免）≈ 0.1s；有非豁免声称时含网络往返。
+# ════════════════════════════════════════
+if [ "$MINIMAL" = false ]; then
+  echo -e "\n${BOLD}── 3i. registry 实测声称对账 ──${NC}"
+  if [ -f tools/check/check-npm-claims.mjs ]; then
+    NPM_CLAIMS_OUT=$(node tools/check/check-npm-claims.mjs 2>&1)
+    NPM_CLAIMS_RC=$?
+    if [ "$NPM_CLAIMS_RC" -eq 0 ]; then
+      check_pass "check-npm-claims.mjs（文档声称值 = registry 真值，或已登记豁免 / 显式 SKIP）"
+    elif [ "$NPM_CLAIMS_RC" -eq 2 ]; then
+      check_fail "check-npm-claims.mjs 检查器失明或豁免台账非法（exit 2——拒绝假绿）"
+      printf '%s\n' "$NPM_CLAIMS_OUT" | grep -E '❌|·' | head -6
+    else
+      check_fail "check-npm-claims.mjs 发现文档声称值与 registry 真值失配（exit ${NPM_CLAIMS_RC}）"
+      printf '%s\n' "$NPM_CLAIMS_OUT" | grep -E '❌' | head -10
+    fi
+    unset NPM_CLAIMS_OUT NPM_CLAIMS_RC
+  else
+    check_warn "tools/check/check-npm-claims.mjs 不存在（守卫缺失）"
+  fi
 fi
 
 # 4. 审计模块构建 + 测试数汇总（对应 verify.yml + test-count.sh 门禁）

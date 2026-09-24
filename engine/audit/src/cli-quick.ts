@@ -86,7 +86,7 @@ import { execFileSync, spawnSync } from 'child_process';
 import { FULL_ONLY_FLAGS as FULL_ONLY_FLAGS_SRC, AUDIT_SUBCOMMANDS as AUDIT_SUBCOMMANDS_SRC } from './cli/flag-table';
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { parseDiff, isInGitRepo, type DiffFile } from '@sofagent/core';
+import { parseDiff, isInGitRepo, VERSION, type DiffFile } from '@sofagent/core';
 import { runRules, type AuditResult, type RuleCheck } from './reporter';
 import { resolveDiffEndpoint } from './diff-ref';
 
@@ -319,7 +319,11 @@ export function generateQuickOutput(
   // v1.3.8 P1-B2: 扩展规则默认关闭披露——此前只写「完整 24 条含扩展」但未明示
   // 扩展规则默认关闭，用户误以为 quick 已经全跑；显式披露规则覆盖面。
   // 措辞注意：首个「N 条」数字须为 17 或 24（check-version 维度 13 逐行取首个数字对账 SSOT）
-  parts.push('ⓘ 默认只跑 17 条规则（扩展规则默认关闭，config 启用）——规则集用 --ruleset 加载');
+  // v1.5.2 B-10：与前一条 ⓘ（QUICK_SKIP_HINT）之间留空行 + 「下一步：」动作前缀——
+  //   双 ⓘ 裸连排时新用户分不清「哪条是我该做的事」。结果语义先行、动作引导明确；
+  //   「未检查 ≠ 通过」措辞属既有校准产物，一字不动（见上方 QUICK_SKIP_HINT）。
+  parts.push('');
+  parts.push('ⓘ 下一步：默认只跑 17 条规则（扩展规则默认关闭，config 启用）——规则集用 --ruleset 加载');
 
   // 产品签名
   parts.push('');
@@ -394,6 +398,9 @@ export function runCliQuick(argv: string[]): number {
 
   // 拦截 --help / --version
   if (argv.includes('--help') || argv.includes('-h')) {
+    // v1.5.2 B-9：help 顶部加版本行——npx 用户一眼确认装的是哪版。
+    // 复用 VERSION 常量（与完整引擎 index.ts 的 -v 及横幅同源），零硬编码版本串。
+    console.log(`sofagent-audit v${VERSION}`);
     console.log('sofagent-audit — AI Agent 行为审计\n');
     console.log('用法（quick 只读审计，零安装）：');
     console.log('  npx -y -p @sofagent/audit sofagent-audit              审计最近一次 commit（官方入口，始终最新；不写 history.jsonl 无留痕，适合临时检查）');
@@ -445,9 +452,10 @@ export function runCliQuick(argv: string[]): number {
   }
 
   if (argv.includes('--version') || argv.includes('-v')) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const pkg = require('../package.json');
-    console.log(`sofagent-audit v${pkg.version}`);
+    // v1.5.2 B-9：改用 VERSION 常量（与完整引擎 index.ts 的 -v 及横幅同源）——
+    // 消除此前 quick 侧读 package.json、完整引擎侧读 VERSION 的双源偏差，
+    // 亦使 help 顶部版本行与本行输出恒一致。
+    console.log(`sofagent-audit v${VERSION}`);
     return 0;
   }
 
@@ -551,7 +559,9 @@ export function runCliQuick(argv: string[]): number {
   try {
     diffFiles = parseDiff(diffRange);
   } catch {
+    // finding-09 fail-closed 收口后，不可解析 ref 在此抛错——文案对齐 v1.5.1 F1 契约（回显范围可诊断）
     console.log('⚠️  diff 解析失败。');
+    console.log(`   无法解析 diff 范围「${diffRange}」的 ref——请检查 ref 是否存在（如 HEAD~1..HEAD、origin/main..HEAD），或仓库是否尚无提交。`);
     return 3;
   }
 

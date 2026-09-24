@@ -10,9 +10,9 @@
 
 ## 步骤一：Skill 分发 ☐
 
-> 🔴 **v1.4.8 执行环境提示**：本阶段所有 `for` 循环与变量展开命令**必须在 bash 下执行**
+> 🔴 **执行环境提示**：本阶段所有 `for` 循环与变量展开命令**必须在 bash 下执行**
 > （`bash <<'BSH' … BSH` 或存成 .sh 再跑）。zsh 不对未加引号的 `$MULTILINE_VAR` 做空白分词
-> ——`for d in $DIRS` 会把整个多行串当一个值，`skillhub publish` 随即报「路径不存在」（v1.4.8 实锤）。
+> ——`for d in $DIRS` 会把整个多行串当一个值，`skillhub publish` 随即报「路径不存在」（实测）。
 > SOP 命令本就按 bash 语法书写，勿在 zsh 里直接粘。
 
 ```bash
@@ -52,7 +52,7 @@ skillhub publish "$tmpdir/SKILL" --version <版本号> --changelog "vX.Y.Z: 简�
 
 ## 步骤二：DSH plugin 分发（每版必做） ☐
 
-> **背景**：SkillHub 支持 DeepSeek Harness plugin 分发。sofagent 的 DSH plugin 家族（`cordis-plugin-sofagent*`，**7 个**：6 款原子 audit/rollback/inject/evolve/daemon/fde + 1 款聚合 `cordis-plugin-sofagent`——款数以 glob 实测为准，曾为 10 后经归并收口）**每版都要在 SkillHub 发布**——与 SKILL 分发并列，是 DSH 生态的发现层补充（npm 发布仍走主线，两者并行不互替）。
+> **背景**：SkillHub 支持 DeepSeek Harness plugin 分发。sofagent 的 DSH plugin 家族（`cordis-plugin-sofagent*`，**7 个**：6 款原子 audit/rollback/inject/evolve/daemon/fde + 1 款聚合 `cordis-plugin-sofagent`——款数以 glob 实测为准，曾为 10 后经归并收口）**每版都要在 SkillHub 发布**——与 SKILL 分发并列，是 DSH 生态的发现层补充（npm 侧七款同为发布物，两条通道并行不互替，可用性前置见下方「DSH plugin 分发铁律」）。
 
 ```bash
 # 发布前确认 plugin 家族清单（SSOT = engine/dsh-plugins/ 目录实数 + 各版开发日志 plugin 家族表）
@@ -87,7 +87,7 @@ done
 > - 版本号 = 与 sofagent 主线版本对齐（DSH Cordis 协议 breaking change 时 bump major）
 > - 🔴 **款数必须等于 glob 实测数**：正文枚举与下方 `PLUGIN_DIRS` 的 glob 是同一份清单的两种写法，改一个必改另一个——不一致时按文字走就会漏发（带尾横线的 glob 漏掉裸名聚合插件）
 > - 每版发版都要推，与 ClawHub/SkillHub SKILL 分发同等强制
-> - 分发通道真相源：**DSH plugin 只走 SkillHub 单通道**——`skillhub install cordis-plugin-sofagent*` 是唯一安装通道 + 发现层。npm 不发布插件（09-publish 步骤八清单只有 13 个 @sofagent 包，不含插件）——`dsh plugin add` 依赖的 npm 通道未开通，文档一律不得声称 npm 可装
+> - 分发通道真相源：**DSH plugin = SkillHub + npm 双通道**——`skillhub install cordis-plugin-sofagent*` 是 SkillHub 侧的安装与发现通道；**npm 侧七款同样是发布物**（逐款上 registry 见 [09-publish「步骤八·补」](./09-publish.md)），故「npm 可装」不再是禁语。⚠️ 但 npm 通道的**可用性前置**是干净 DSH 环境逐款实装四段验证（挂载 → seam 订阅 → helpers.call 引擎包解析 → 事件触发产出）——**不满足「单独可用」的不得发布**，故文档声称 npm 可装前须先有该验证留证。⚠️ 且**前置之前置**：适配层基座包 `@sofagent/dsh-plugin-kit` 须先在 npm 侧发布（六款原子插件以包名依赖它），否则四段验证的第三步「引擎包解析」必挂 `MODULE_NOT_FOUND`
 
 ## 步骤二·a：OpenClaw plugin 分发（每版必做）
 
@@ -100,7 +100,7 @@ done
 > - **双 manifest 版本一致**：ClawHub 校验 `package.json` 与 `openclaw.plugin.json` 两层 version 必须一致且 = 目标版本——bump 后先跑 `bash tools/check/check-version.sh`（9c 段已覆盖双 manifest），漂移直接被拒
 > - 先 `--dry-run` 验证格式与 source 映射，再真实发布
 
-> **publish 输出歧义判读**：真实发布输出「Fix: Align the plugin version...」是**自动修复提示非拒收**——发布已成功。重试报「Version already exists」也是已发布证据。**定性唯一通道**：API 查证 `https://clawhub.ai/api/v1/packages/<name>?ownerHandle=<handle>`（🔴 必须 `https://` 前缀——裸 `clawhub.ai/...` 被 curl 当本地路径静默失败返回空，对账假红）的 `latestVersion` + `scanStatus` + `verification.sourceCommit`，勿据 CLI 输出盲改版本号。另两条实测补充（v1.4.9 补走批）：① **服务端内存瞬断**——Convex `512 MB out of memory (reset in 48s)` 是平台侧限流非包问题，等 ≥60s 重发即成；② **scan=suspicious 未必是问题**——包内含 `*.test.js` 会触发扫描器启发式（同批无 test 文件的包 clean），按 verify 快照纪律判「新引入 vs 历史遗留」后再处置。
+> **publish 输出歧义判读**：真实发布输出「Fix: Align the plugin version...」是**自动修复提示非拒收**——发布已成功。重试报「Version already exists」也是已发布证据。**定性唯一通道**：API 查证 `https://clawhub.ai/api/v1/packages/<name>?ownerHandle=<handle>`（🔴 必须 `https://` 前缀——裸 `clawhub.ai/...` 被 curl 当本地路径静默失败返回空，对账假红）的 `latestVersion` + `scanStatus` + `verification.sourceCommit`，勿据 CLI 输出盲改版本号。另两条实测补充：① **服务端内存瞬断**——Convex `512 MB out of memory (reset in 48s)` 是平台侧限流非包问题，等 ≥60s 重发即成；② **scan=suspicious 未必是问题**——包内含 `*.test.js` 会触发扫描器启发式（同批无 test 文件的包 clean），按 verify 快照纪律判「新引入 vs 历史遗留」后再处置。
 
 ```bash
 # 发布前确认 plugin 清单（SSOT = engine/openclaw-plugins/ 目录实数 + 各版开发日志家族表）
@@ -124,7 +124,7 @@ done
 > **OpenClaw plugin 分发铁律**：
 > - 发布源 = `engine/openclaw-plugins/sofagent-*` 包目录（与 DSH plugin 家族分开，别混；前缀是 sofagent-，不是 openclaw-plugin-）
 > - 发布通道 = **ClawHub plugins**（`clawhub package publish --family code-plugin`）——注意 ClawHub 的 `skill publish` 与 `package publish` 是两条独立命令
-> - 🔴 **版本不可变（v1.5.1 实锤）**：ClawHub package 通道**拒绝覆盖已发布版本**（`Version X.Y.Z already exists. Increment the version number and try again.`）——与 skill 通道「同版本可 `Update submitted` 更新」**行为不同**。含义：发版后发现的插件缺陷修复**无法在原版本号上重发**，只能随下一版号发布；发版前插件侧的修复必须全部赶在 publish 之前落定，publish 之后发现的缺陷记入下一版 BugFix 批
+> - 🔴 **版本不可变**：ClawHub package 通道**拒绝覆盖已发布版本**（`Version X.Y.Z already exists. Increment the version number and try again.`）——与 skill 通道「同版本可 `Update submitted` 更新」**行为不同**。含义：发版后发现的插件缺陷修复**无法在原版本号上重发**，只能随下一版号发布；发版前插件侧的修复必须全部赶在 publish 之前落定，publish 之后发现的缺陷记入下一版 BugFix 批
 > - 发布遇 Convex 512MB OOM（服务端内存限，CLI 报 `Node.js action execution ran out of memory`）属平台瞬时态：等待提示的 reset 时长（约 1 分钟）后重试即可
 > - **必须先 push 再发布**（source-linked 从 GitHub 拉源码；未 push 时真实发布失败，dry-run 只能验证格式）
 > - 版本号 = 与 sofagent 主线版本对齐（同 DSH 家族机制）
@@ -190,9 +190,9 @@ done
 
 ---
 
-## 步骤四：npm 渠道门面检查（每版必做 · v1.4.6 拍板固化） ☐
+## 步骤四：npm 渠道门面检查（每版必做） ☐
 
-> **定位**：npm 是实测主分发渠道（`@sofagent/audit` 月下载 4848 vs 43 star，113:1），但门面投入曾全部压在 GitHub——渠道门面错配（v1.4.5 审查实证）。本步骤每版分发时固定巡检 npm / GitHub / 官网三个「被找到」入口。仓内数字断言（description 工具数/插件数/homepage https）由 `bash tools/check/check-storefront.sh` 守护，此处补齐它不覆盖的面：
+> **定位**：npm 是实测主分发渠道（`@sofagent/audit` 月下载 4848 vs 43 star，113:1），但门面投入曾全部压在 GitHub——渠道门面错配（审查实证）。本步骤每版分发时固定巡检 npm / GitHub / 官网三个「被找到」入口。仓内数字断言（description 工具数/插件数/homepage https）由 `bash tools/check/check-storefront.sh` 守护，此处补齐它不覆盖的面：
 
 ```bash
 # 1. 裸名守护——期望指向本仓总包 sofagent（engine/umbrella/ 发版物）；版本对账由 check-storefront 断言 ④ 守护
@@ -202,9 +202,9 @@ npm view @sofagent/audit readme | head -20
 # 3. GitHub description/topics 品类词（搜索流量入口；拍板口径：可搜索品类词前置，自造词殿后）
 gh repo view --json description,repositoryTopics -q '.description, .repositoryTopics[].name'
 # 4. 官网门面（源码不在本仓 = 仓内门禁盲区）：文档链接可达性人工核查
-#    （v1.4.6 审查实证 3 链接 404：文档已下沉 docs/、FDE.md 实为 GUIDE.md）
+#    （审查实证 3 链接 404：文档已下沉 docs/、FDE.md 实为 GUIDE.md）
 curl -sI https://sofagent.ai | head -1
 ```
 
-- **裸名状态（v1.4.6 起总包正式态）**：裸名 `sofagent` 升级为聚合安装入口（`engine/umbrella/`，bin `sofagent` 薄转发 @sofagent/audit CLI + dependencies 四功能包 audit/mcp/orchestrator/daemon）——`npm i -g sofagent` 一条命令装齐全功能，与 install.sh 等效。前态 `0.0.1` 占位包（2026-09-07 防抢注壳）无需 unpublish，总包随主线跳版发布后 latest 自动指向本版。每版 publish 后做一次直觉安装冒烟：`npm i -g sofagent` → `sofagent --help` 可跑 → `npm r -g sofagent` 还原。
-- **官网改版是仓外动作**：官网源码不在本仓，本步骤只能「发现」不能「修复」——发现 404 / 口径漂移后转项目负责人处理仓外源码（v1.4.6 拍板：短期可先下掉官网 about 中失效的描述段，止血优于留死链）。
+- **裸名状态（v1.4.6 起总包正式态）**：裸名 `sofagent` 升级为聚合安装入口（`engine/umbrella/`，bin `sofagent` 薄转发 @sofagent/audit CLI + dependencies 四功能包 audit/mcp/orchestrator/daemon）——`npm i -g sofagent` 一条命令装齐全功能，与 install.sh 等效。前态 `0.0.1` 占位包（防抢注壳）无需 unpublish，总包随主线跳版发布后 latest 自动指向本版。每版 publish 后做一次直觉安装冒烟：`npm i -g sofagent` → `sofagent --help` 可跑 → `npm r -g sofagent` 还原。
+- **官网改版是仓外动作**：官网源码不在本仓，本步骤只能「发现」不能「修复」——发现 404 / 口径漂移后转项目负责人处理仓外源码（短期可先下掉官网 about 中失效的描述段，止血优于留死链）。

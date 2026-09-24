@@ -499,7 +499,9 @@
     "@sofagent/think": {
       "version": "1.4.9",
       "symbols": [
+        "ManualThinkReceipt",
         "ThinkEntryOptions",
+        "appendManualThinkEntry",
         "generateDataThink",
         "generateThinkEntry",
         "generateThinkFromEval"

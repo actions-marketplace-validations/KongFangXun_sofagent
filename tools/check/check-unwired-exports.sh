@@ -92,7 +92,15 @@ compactIfNeeded:engine/inject/src/load-chain/compactor.ts"
 #      engine/mcp/src/tools/router-session-push.ts（同语义管线，session 上行复用）。
 #      ⇒ 债务已清，条目**摘除**。摘除不同于续期/改目标版本，是本机制唯一认可的清偿动作。
 # 机制保留为空串：后续 SDK 先行债务按 `符号:reason:目标版本` 继续登记即可（登记即声明「尚无生产调用点」）。
-SDK_FACE_WAIVER=""
+#   decideEgress（v1.5.2 第五章登记）：出口治理**裁决接口**的面外实现形态——
+#     第五章马鞍边界明写「只做策略契约 + 审计挂链，不自建 egress proxy / 网络拦截器」，
+#     裁决函数按设计**由外部拦截器（egress proxy / OS 沙箱）消费**，故仓内零调用点是预期态。
+#     首个仓内消费方已排期：v1.5.4 第五章（AI 节点出站管控）——该版 devlog 明写
+#     「本版第五章（AI 节点）是 v1.5.2 第五章（出口治理）的第一个实装消费方」。
+#     不把它硬接到既有出站路径（webhook / cloud-exec）的原因：白名单默认空 = 全拒，
+#     接上去会让默认态打断全部出站推送——比登记债务更差。
+#     到期（v1.5.4 ≤ SSOT）未接线即自动转红，本条目即声明「此处有据可查的接线债」。
+SDK_FACE_WAIVER="decideEgress:出口裁决接口按设计由外部拦截器消费+首个仓内消费方排 v1.5.4 第五章:v1.5.4"
 
 # ── --since <prev-tag>：版本 diff 驱动模式 ──
 # 用 git diff <prev-tag>..HEAD 提取 engine/**/src/*.ts 新增的 @public 导出
@@ -299,7 +307,10 @@ if [ -n "$SINCE_TAG" ]; then
     | awk '
       function flush_block(    i, s) {
         for (i = 1; i <= bn; i++) {
-          s = bname[i]; gsub(/[[:space:]]/, "", s); gsub(/,$/, "", s)
+          s = bname[i]
+          # 别名形态 `internal as public` 取公开名（在去空白之前判，避免 as 落在名字内部误切）
+          if (s ~ /[[:space:]]as[[:space:]]/) sub(/^.*[[:space:]]as[[:space:]]/, "", s)
+          gsub(/[[:space:]]/, "", s); gsub(/,$/, "", s)
           if (s != "" && s !~ /^\/\//) print s
         }
         bn = 0
@@ -315,17 +326,44 @@ if [ -n "$SINCE_TAG" ]; then
         next
       }
       # 桶文件块导出：/* @public */ export {（进入采集态，到 } 退出）
-      # 🔴 三种块收尾形态都要认：①独立「}」②「} from './xxx';」③单行块
-      #   「export { a, b } from './x';」（整行含 } ——ENTER 正则排除行内含 }
-      #   的单行块，否则 collecting 悬开，后续注释/import 行被当符号采集，
-      #   v1.5.0 实锤：public-api.ts 单行块悬开 → import{ 等 8 条假红）
+      # 🔴 三种块形态全认：①多行块 ②多行块带 from ③**单行块**
+      #   「/* @public */ export { a, b } from './x';」
+      #   单行块必须**就地取符号并收尾**——否则 ENTER 进了采集态、而三条收尾规则
+      #   全落在同一行上被 next 跳过 ⇒ collecting 悬开，后续新增行（JSDoc 文本 /
+      #   测试描述）被当符号名采集 ⇒ 一片假红 + 真符号反被漏检。
+      #   （本处注释曾声称「ENTER 正则已排除行内含 } 的单行块」，而代码里从无该
+      #     排除——注释与实现分叉，故现在把这件事真正写进代码。）
       /^\+\/\* @public \*\/ export type \{/ { flush_block(); collecting = 0; next }
+      # 单行块先行（同行含 }）：就地入队 + 立即 flush，不进入采集态
+      /^\+\/\* @public \*\/ export \{[^}]*\}/ {
+        line = $0
+        sub(/^\+\/\* @public \*\/ export \{/, "", line)
+        sub(/\}.*$/, "", line)
+        n = split(line, parts, /,[[:space:]]*/)
+        for (i = 1; i <= n; i++) bname[++bn] = parts[i]
+        flush_block()
+        next
+      }
       /^\+\/\* @public \*\/ export \{/ { flush_block(); collecting = 1; next }
       collecting && /^\+\}/ { flush_block(); collecting = 0; next }
       collecting && /^\+\}[[:space:]]*from/ { flush_block(); collecting = 0; next }
       collecting && /\}/ && /from / { flush_block(); collecting = 0; next }
       collecting && /^\+/ { bname[++bn] = substr($0, 2) }
     ' | sort -u)
+
+  # 🔴 提取器自证（防 awk 状态机悬开）：抽出的名字必须是合法 JS 标识符。
+  #   若抽出「*」「*/」或 JSDoc / 测试描述文本，说明状态机悬开把非符号行当了符号
+  #   （历史实锤：单行 export 块未就地收尾 ⇒ 11 条假红 + 真符号漏检）。
+  #   此类故障宁可 exit 2 报错——它会把「提取器坏了」伪装成「一堆零接线导出」，
+  #   而假红会诱使维护者去给真符号加豁免，等于用豁免掩盖检查器故障。
+  if [ -n "$NEW_PUBLICS" ]; then
+    _np_bad=$(printf '%s\n' "$NEW_PUBLICS" | grep -vE '^[A-Za-z$][A-Za-z0-9_$]*$' || true)
+    if [ -n "$_np_bad" ]; then
+      echo -e "  ${RED}✗${NC} 提取器故障：新增导出名不是合法标识符（awk 状态机悬开，把注释/测试文本当符号采集）——拒绝把提取器故障伪装成零接线判定"
+      printf '%s\n' "$_np_bad" | head -5 | sed 's/^/      /'
+      exit 2
+    fi
+  fi
 
   if [ -z "$NEW_PUBLICS" ]; then
     echo -e "  ${GREEN}✓${NC} ${SINCE_TAG}..HEAD 无新增 @public 值导出"
@@ -513,6 +551,63 @@ if [ "$S2_FAIL" -gt 0 ]; then
   exit 1
 fi
 echo -e "  ${GREEN}✓${NC} S2 脱敏策略声明断言（①深扫接线 ②白名单 ③类型标注 ④eval 隔离）全过"
+
+# ============================================================
+# S3 路径常量消费门禁（v1.5.2 A-13 · 第四轮 P1-6/P1-7 收编）
+# 落点契约 fail-loud：命名含 _DIR/_FILE/_PATH 的 @public 路径常量零生产
+# 字符串消费 → finding。背景实案：SHADOW_GIT_DIR @public 登记在案但零消费，
+# 实现走 isomorphic-git.ts 11 处硬写——常量指向的不是实现用的路（迁移迁到死路）。
+# 同族防线：写读落点对账（install 写 + engine 读的 yml 对）以人工清单化维护
+# （全量实现超本批范围），见下方 WATCH_YML_PAIRS。
+# ============================================================
+S3_FAIL=0
+echo ""
+echo -e "${BOLD}── S3 路径常量消费门禁（@public 落点契约）──${NC}"
+
+# ① 从 core 包桶文件提取 @public 路径常量（命名含 _DIR/_FILE/_PATH 的导出符号）
+PATH_CONSTS=$(grep -oE "export const [A-Z][A-Z0-9_]*_(DIR|FILE|PATH)" engine/core/src/data-paths.ts 2>/dev/null \
+  | grep -oE "[A-Z][A-Z0-9_]*_(DIR|FILE|PATH)" | sort -u || true)
+for pc in $PATH_CONSTS; do
+  # 生产消费 = engine/ 内 .ts 文件（非定义文件、非测试、非 dist）的**导入或引用**
+  _pc_hits=$(grep -rnw "$pc" engine/ --include='*.ts' 2>/dev/null \
+    | grep -v "/dist/" | grep -v node_modules | grep -v "\.test\.ts" | grep -v "__tests__" \
+    | grep -v "engine/core/src/data-paths.ts" \
+    | grep -v ":[[:space:]]*//" | grep -v ":[[:space:]]*\*" \
+    | grep -vE ":[0-9]+:[[:space:]]*export" \
+    | head -3 || true)
+  if [ -z "$_pc_hits" ]; then
+    echo -e "  ${YELLOW}⚠${NC} S3①：路径常量 ${pc} 零生产字符串消费（@public 声明面 > 实现消费面——落点契约疑似断链，接线或收编归位）"
+    # ⚠️ 观察项不阻断（SHADOW_GIT_DIR 本身是历史迁移目标登记，其「消费」形态是
+    # install.sh 迁移路径注释而非代码引用）——但必须在门禁输出里可见，防静默漂移。
+  else
+    echo -e "  ${GREEN}✓${NC} S3①：${pc} 生产消费在位（$(echo "$_pc_hits" | head -1 | cut -d: -f1-2)）"
+  fi
+done
+
+# ② install 写 + engine 读的 yml 落点对账（人工清单化——每对：写入路径:读取函数文件）
+# TODO（A-13 登记）：全量 yml 写读对账自动化超本批范围；当前人工维护此清单，
+#   新增 install 写入的 yml 必须同批登记读取方，否则此处找不到读取方即红。
+WATCH_YML_PAIRS="HOME_SCOPE/watch.yml:engine/core/src/config/watch-config.ts"  # HOME_SCOPE = ~/.sofagent（install.sh 的 SOFAGENT_HOME 变量——注释内不展开）
+_pair_w="${WATCH_YML_PAIRS%%:*}"
+_pair_r="${WATCH_YML_PAIRS#*:}"
+# 写入侧：install.sh 内出现该路径形态（~/.sofagent/<name> 由 $SOFAGENT_HOME/<name> 表达）
+if grep -q 'SOFAGENT_HOME/watch.yml' install.sh 2>/dev/null; then
+  # 读取侧：engine 内有 loadWatchConfig 消费该文件名
+  if grep -rnw "watch.yml" "$_pair_r" >/dev/null 2>&1; then
+    echo -e "  ${GREEN}✓${NC} S3②：watch.yml 写读落点对齐（install.sh 写 ~/.sofagent/watch.yml ↔ $_pair_r 读）"
+  else
+    echo -e "  ${RED}✗${NC} S3②：watch.yml 读取方 $_pair_r 零命中 watch.yml——写读落点断链"
+    S3_FAIL=$((S3_FAIL + 1))
+  fi
+else
+  echo -e "  ${RED}✗${NC} S3②：install.sh 未找到 SOFAGENT_HOME/watch.yml 写入面——清单与实现漂移"
+  S3_FAIL=$((S3_FAIL + 1))
+fi
+
+if [ "$S3_FAIL" -gt 0 ]; then
+  echo -e "${RED}${BOLD}✗ S3 路径常量消费门禁 ${S3_FAIL} 项断言失败${NC}"
+  exit 1
+fi
 
 echo -e "${GREEN}${BOLD}✓ 零接线导出门禁通过（豁免 ${WAIVED_COUNT} 项均在登记表）${NC}"
 exit 0
