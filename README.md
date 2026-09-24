@@ -59,7 +59,7 @@
 
 **五分钟戏剧演示**（v1.5.1 已交付，沙箱隔离、真实文件零接触）：`npx -y -p @sofagent/audit sofagent-audit demo`——一条命令跑完「沙箱构建 → 注入 → 故意违规 → 审计拦截 → 快照回滚 → HMAC 举证导出」五幕完整链路（`--speed fast` 60 秒精简版；产物落 `$SOFAGENT_DATA/demo`，不写用户家目录）。
 
-> 版本说明：v1.5.2 已开发完成、尚待发版（npm/tag/package.json 发版时统一同步）；当前 npm 可安装的最新版为 v1.5.1。
+> 版本说明：v1.5.2 已发版（2026-09-24）；npm 可安装最新版 `@sofagent/audit@1.5.2`（`latest` 通道为 1.5.1——阿尔法施工期分道，见 LIMITATIONS）。
 
 ## 该不该装？
 
@@ -185,7 +185,7 @@
 
 **版本阶段（装前必读）**：sofagent 处于**阿尔法施工期**（v1.x）——功能面快速变动，**不承诺接口稳定**，跨版本升级前先读 [CHANGELOG](./CHANGELOG.md)。自 **v2.0.0** 起进入**贝塔阶段**。
 
-对应的 npm 发布通道策略：**施工期版本照常发布到 `latest`**——`npx @sofagent/audit` 默认拉到的即当前最新版，无需指定标签。实测于 2026-09-24：`npm view @sofagent/audit dist-tags` 为 `{ latest: '1.5.1' }`（v1.5.2 发版后此值会更新，以实跑为准）；**v2.0.0 发布后 `latest` 指向 2.0**。
+对应的 npm 发布通道策略：**施工期版本以 `--tag alpha` 发布、`latest` 保持稳定通道**——`npx @sofagent/audit` 默认拉到的是最近一个「latest 版」，施工期新版需显式 `npx -p @sofagent/audit@<版本>` 或 `@alpha` 指定（v1.5.2 起 alpha 分道；`latest` 与 `alpha` 的当前指向以 `npm view @sofagent/audit dist-tags` 实跑为准）；**v2.0.0 贝塔版起恢复默认通道发布**。
 
 > ⚠️ **企业用户先读** [LIMITATIONS §三](./docs/LIMITATIONS.md#三安全与信任模型局限)——`config.yml` 默认**非 fail-closed**（规则可被 Agent 篡改绕过），多租户**写入侧**隔离尚未落地（v0 已交付查询侧隔离：orgId 过滤 + data/<tenant>/ 路径地基，见 LIMITATIONS）。强合规场景建议 CI 兜底 + 文件权限锁（`chmod 400 .sofagent/config.yml`——辅助层，对同用户进程无效，见 [LIMITATIONS §三](./docs/LIMITATIONS.md)），不要用单机默认配置直接上生产。
 >
@@ -206,7 +206,7 @@ npx -y -p @sofagent/audit sofagent-audit
 **完整安装**（Node.js ≥ 18，先下载审查再执行）——**装在企业跑 AI 节点的设备上**：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/KongFangXun/sofagent/refs/tags/v1.5.1/bootstrap.sh -o bootstrap.sh
+curl -fsSL https://raw.githubusercontent.com/KongFangXun/sofagent/refs/tags/v1.5.2/bootstrap.sh -o bootstrap.sh
 less bootstrap.sh          # 先看一眼脚本内容，确认安全
 bash bootstrap.sh && rm bootstrap.sh
 ```
